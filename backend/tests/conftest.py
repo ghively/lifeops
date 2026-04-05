@@ -177,9 +177,12 @@ def mock_async_qdrant_client():
                 mock_storage["counters"][collection_name] = mock_storage["counters"].get(collection_name, 0) + 1
             elif isinstance(point, dict):
                 # Convert dict to PointStruct for storage
+                vector = point.get("vector", [0.1] * 384)
+                if vector is None:
+                    vector = []
                 mock_point = qdrant_models.PointStruct(
                     id=point["id"],
-                    vector=point.get("vector", [0.1] * 384),
+                    vector=vector,
                     payload=point.get("payload", {}),
                 )
                 mock_storage["points"][point["id"]] = mock_point
