@@ -8,8 +8,6 @@ from typing import DefaultDict, List, Set
 from fastapi import WebSocket
 from pydantic import BaseModel, ValidationError
 
-from app.services.agent.sandbox import tool_approval_manager
-
 logger = logging.getLogger(__name__)
 
 
@@ -177,6 +175,7 @@ class WebSocketManager:
         if message.type == "agent.approval_response":
             request_id = str(message.data.get("request_id") or "")
             approved = bool(message.data.get("approved"))
+            from app.services.agent.sandbox import tool_approval_manager
             if not request_id or tool_approval_manager.get_payload(request_id) is None:
                 await websocket.send_json({"type": "error", "data": {"message": "Unknown approval request"}})
                 return
