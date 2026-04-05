@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createEditor, Descendant, Transforms, Editor, Element as SlateElement, BaseEditor, Text, Range, NodeEntry, Node } from 'slate'
 import { Slate, Editable, withReact, ReactEditor, RenderLeafProps } from 'slate-react'
 import { withHistory } from 'slate-history'
+import { createPortal } from 'react-dom'
 import {
   Plus,
   CheckSquare,
   Type,
   Heading1,
   List,
+  ListOrdered,
   Quote,
   Code,
   ArrowRightToLine,
@@ -83,6 +85,64 @@ const SLASH_COMMANDS: Record<string, BlockType> = {
   quote: 'quote',
   code: 'code',
 }
+
+const SLASH_COMMAND_ITEMS: Array<{
+  key: string
+  type: BlockType
+  label: string
+  description: string
+  icon: typeof Type
+}> = [
+  {
+    key: 'todo',
+    type: 'todo',
+    label: '/todo',
+    description: 'Add a checkbox task item',
+    icon: CheckSquare,
+  },
+  {
+    key: 'heading',
+    type: 'heading',
+    label: '/heading',
+    description: 'Turn this block into a heading',
+    icon: Heading1,
+  },
+  {
+    key: 'bullet',
+    type: 'bullet',
+    label: '/bullet',
+    description: 'Create a bulleted list item',
+    icon: List,
+  },
+  {
+    key: 'numbered',
+    type: 'numbered',
+    label: '/numbered',
+    description: 'Create a numbered list item',
+    icon: ListOrdered,
+  },
+  {
+    key: 'quote',
+    type: 'quote',
+    label: '/quote',
+    description: 'Format as a block quote',
+    icon: Quote,
+  },
+  {
+    key: 'code',
+    type: 'code',
+    label: '/code',
+    description: 'Format as a code block',
+    icon: Code,
+  },
+  {
+    key: 'paragraph',
+    type: 'paragraph',
+    label: '/paragraph',
+    description: 'Switch back to plain text',
+    icon: Type,
+  },
+]
 
 const createBlockId = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -260,6 +320,8 @@ export function OutlinerEditor({
 }: OutlinerEditorProps) {
   const navigate = useNavigate()
   const editor = useMemo(() => withHistory(withReact(createEditor())), [])
+  const editorContainerRef = useRef<HTMLDivElement | null>(null)
+  const slashMenuRef = useRef<HTMLDivElement | null>(null)
   const initialSignature = useMemo(() => JSON.stringify(initialBlocks), [initialBlocks])
   const [value, setValue] = useState<Descendant[]>(() => {
     if (initialBlocks.length === 0) {
@@ -278,6 +340,11 @@ export function OutlinerEditor({
   const sendCursor = useCollaborationStore((s) => s.sendCursor)
   const collabStatus = useCollaborationStore((s) => s.status)
   const { decorate: collabDecorate } = useCollaborativeCursors(editor, enableCollaboration ? objectId : undefined)
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false)
+  const [slashQuery, setSlashQuery] = useState('')
+  const [slashTargetPath, setSlashTargetPath] = useState<number[] | null>(null)
+  const [slashPosition, setSlashPosition] = useState({ top: 0, left: 0 })
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
 
   useEffect(() => {
     if (initialBlocks.length === 0) {
@@ -292,6 +359,107 @@ export function OutlinerEditor({
       children: block.children,
     })))
   }, [initialBlocks, initialSignature])
+
+  const closeSlashMenu = useCallback(() => {
+    setSlashMenuOpen(false)
+    setSlashQuery('')
+    setSlashTargetPath(null)
+    setSelectedSlashIndex(0)
+  }, [])
+
+  const updateSlashMenuPosition = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) {
+      return
+    }
+
+    const range = selection.getRangeAt(0).cloneRange()
+    let rect = range.getBoundingClientRect()
+
+    if (rect.width === 0 && rect.height === 0) {
+      const markerRange = range.cloneRange()
+      markerRange.collapse(false)
+      rect = markerRange.getBoundingClientRect()
+    }
+
+    if (rect.width === 0 && rect.height === 0 && editorContainerRef.current) {
+      rect = editorContainerRef.current.getBoundingClientRect()
+    }
+
+    setSlashPosition({
+      top: rect.bottom + window.scrollY + 8,
+      left: rect.left + window.scrollX,
+    })
+  }, [])
+
+  const filteredSlashCommands = useMemo(() => {
+    const normalizedQuery = slashQuery.trim().toLowerCase()
+    return SLASH_COMMAND_ITEMS.filter((item) => item.key.includes(normalizedQuery))
+  }, [slashQuery])
+
+  useEffect(() => {
+    if (!slashMenuOpen) {
+      return
+    }
+
+    if (filteredSlashCommands.length === 0) {
+      setSelectedSlashIndex(0)
+      return
+    }
+
+    setSelectedSlashIndex((current) => Math.min(current, filteredSlashCommands.length - 1))
+  }, [filteredSlashCommands, slashMenuOpen])
+
+  const applySlashCommand = useCallback((type: BlockType, targetPath?: number[]) => {
+    const path = targetPath ?? slashTargetPath
+    if (!path) {
+      return
+    }
+
+    const text = Editor.string(editor, path)
+    const textPath = path.concat(0)
+
+    Transforms.setNodes(editor, { type }, { at: path })
+    Transforms.delete(editor, {
+      at: {
+        anchor: { path: textPath, offset: 0 },
+        focus: { path: textPath, offset: text.length },
+      },
+    })
+    Transforms.select(editor, Editor.start(editor, textPath))
+    ReactEditor.focus(editor)
+    closeSlashMenu()
+  }, [closeSlashMenu, editor, slashTargetPath])
+
+  useEffect(() => {
+    if (!slashMenuOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as globalThis.Node | null
+      if (target && slashMenuRef.current?.contains(target)) {
+        return
+      }
+      closeSlashMenu()
+    }
+
+    const handleViewportUpdate = () => updateSlashMenuPosition()
+
+    document.addEventListener('mousedown', handlePointerDown)
+    window.addEventListener('resize', handleViewportUpdate)
+    window.addEventListener('scroll', handleViewportUpdate, true)
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      window.removeEventListener('resize', handleViewportUpdate)
+      window.removeEventListener('scroll', handleViewportUpdate, true)
+    }
+  }, [closeSlashMenu, slashMenuOpen, updateSlashMenuPosition])
 
   const handleLinkClick = useCallback((type: 'wiki' | 'block', linkValue: string) => {
     if (type === 'block') {
@@ -361,6 +529,39 @@ export function OutlinerEditor({
   const onKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (readOnly) return
 
+    if (slashMenuOpen) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        if (filteredSlashCommands.length > 0) {
+          setSelectedSlashIndex((current) => (current + 1) % filteredSlashCommands.length)
+        }
+        return
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (filteredSlashCommands.length > 0) {
+          setSelectedSlashIndex((current) => (current - 1 + filteredSlashCommands.length) % filteredSlashCommands.length)
+        }
+        return
+      }
+
+      if (event.key === 'Enter') {
+        const selectedCommand = filteredSlashCommands[selectedSlashIndex]
+        if (selectedCommand) {
+          event.preventDefault()
+          applySlashCommand(selectedCommand.type)
+          return
+        }
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeSlashMenu()
+        return
+      }
+    }
+
     if (event.key === ' ') {
       const [match] = Editor.nodes(editor, {
         match: (node) => SlateElement.isElement(node) && Editor.isBlock(editor, node),
@@ -372,13 +573,7 @@ export function OutlinerEditor({
         const nextType = text.startsWith('/') ? SLASH_COMMANDS[text.slice(1).toLowerCase()] : undefined
         if (nextType) {
           event.preventDefault()
-          Transforms.setNodes(editor, { type: nextType }, { at: path })
-          Transforms.delete(editor, {
-            at: {
-              anchor: { path: path.concat(0), offset: 0 },
-              focus: { path: path.concat(0), offset: text.length },
-            },
-          })
+          applySlashCommand(nextType, path)
           return
         }
       }
@@ -441,10 +636,47 @@ export function OutlinerEditor({
         }
       }
     }
-  }, [editor, readOnly, value.length])
+  }, [
+    applySlashCommand,
+    closeSlashMenu,
+    editor,
+    filteredSlashCommands,
+    readOnly,
+    selectedSlashIndex,
+    slashMenuOpen,
+    value.length,
+  ])
 
   const handleChange = useCallback((newValue: Descendant[]) => {
     setValue(newValue)
+
+    const { selection } = editor
+    if (!readOnly && selection && Range.isCollapsed(selection)) {
+      const [match] = Editor.nodes(editor, {
+        at: selection,
+        match: (node) => SlateElement.isElement(node) && Editor.isBlock(editor, node),
+        mode: 'lowest',
+      })
+
+      if (match) {
+        const [, path] = match
+        const text = Editor.string(editor, path)
+        const slashMatch = text.match(/^\/([^\s]*)$/)
+
+        if (slashMatch) {
+          setSlashMenuOpen(true)
+          setSlashQuery(slashMatch[1])
+          setSlashTargetPath(path)
+          updateSlashMenuPosition()
+        } else if (slashMenuOpen) {
+          closeSlashMenu()
+        }
+      } else if (slashMenuOpen) {
+        closeSlashMenu()
+      }
+    } else if (slashMenuOpen) {
+      closeSlashMenu()
+    }
 
     // Broadcast cursor to collaborators
     if (enableCollaboration) {
@@ -461,7 +693,7 @@ export function OutlinerEditor({
     })) as BlockElement[]
 
     onChange?.(blocks)
-  }, [onChange, enableCollaboration, editor, sendCursor])
+  }, [closeSlashMenu, editor, enableCollaboration, onChange, readOnly, sendCursor, slashMenuOpen, updateSlashMenuPosition])
 
   const addBlock = useCallback(() => {
     if (readOnly) return
@@ -511,7 +743,7 @@ export function OutlinerEditor({
         </div>
       )}
 
-      <div className="py-4 pb-24 sm:pb-4">
+      <div ref={editorContainerRef} className="py-4 pb-24 sm:pb-4">
         <Slate editor={editor} initialValue={value} onChange={handleChange}>
           {!readOnly && (
             <div className="mb-3 flex gap-2 overflow-x-auto sm:hidden">
@@ -538,6 +770,43 @@ export function OutlinerEditor({
             aria-label="Outliner editor"
           />
         </Slate>
+
+        {slashMenuOpen && filteredSlashCommands.length > 0 && typeof document !== 'undefined' && createPortal(
+          <div
+            ref={slashMenuRef}
+            className="z-50 min-w-[280px] overflow-hidden rounded-lg border bg-card p-1 text-card-foreground shadow-md"
+            style={{
+              position: 'absolute',
+              top: slashPosition.top,
+              left: slashPosition.left,
+            }}
+          >
+            {filteredSlashCommands.map((item, index) => {
+              const Icon = item.icon
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={cn(
+                    'flex w-full items-start gap-3 rounded-md px-3 py-2 text-left transition-colors',
+                    index === selectedSlashIndex ? 'bg-muted' : 'hover:bg-muted/60'
+                  )}
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    applySlashCommand(item.type)
+                  }}
+                >
+                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="text-sm font-medium">{item.label}</span>
+                    <span className="text-xs text-muted-foreground">{item.description}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>,
+          document.body
+        )}
 
         {!readOnly && (
           <Button variant="ghost" className="mt-2 w-full justify-start gap-2 text-muted-foreground" onClick={addBlock}>
