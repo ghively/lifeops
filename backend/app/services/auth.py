@@ -29,6 +29,11 @@ class AuthService:
         self._secret_warning_logged = False
         if not self.secret_key:
             self.secret_key = self._load_or_create_persisted_secret()
+        if os.getenv("DEBUG") != "true" and not os.getenv("JWT_SECRET_KEY"):
+            logger.warning(
+                "SECURITY: JWT_SECRET_KEY not set in environment. Using persisted file secret. "
+                "This is insecure for multi-replica production deployments."
+            )
 
         self.access_token_expire_minutes = getattr(settings, 'access_token_expire_minutes', 1440)  # 24h default
         self.refresh_token_expire_days = getattr(settings, 'refresh_token_expire_days', 7)  # 7 days default

@@ -143,8 +143,10 @@ async def websocket_endpoint(websocket: WebSocket, agent_name: str = "system"):
             data = await websocket.receive_text()
             await websocket_manager.handle_message(websocket, data)
     except WebSocketDisconnect:
+        logger.debug("WebSocket disconnected for agent '%s'", agent_name)
         websocket_manager.disconnect(websocket)
     except Exception:
+        logger.exception("Unhandled WebSocket error for agent '%s'", agent_name)
         websocket_manager.disconnect(websocket)
         raise
 

@@ -5,7 +5,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.constants import COLLECTION_BLOCKS, COLLECTION_OBJECTS
 from app.database.qdrant_client import qdrant_manager
+from app.database.sqlite import sqlite_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.models.objects import ObjectCreate, ObjectListResponse, ObjectUpdate
@@ -16,6 +18,33 @@ from app.utils.time import utc_now_iso
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _point_vector(point) -> list[float] | None:
+    vector = getattr(point, "vector", None)
+    if isinstance(vector, dict):
+        return next(iter(vector.values()), None)
+    return vector
+
+
+async def _rollback_sqlite(operation: str) -> None:
+    connection = getattr(sqlite_manager, "connection", None)
+    if connection is None:
+        return
+    try:
+        await connection.rollback()
+    except Exception as exc:
+        logger.error("SQLite rollback failed during %s: %s", operation, exc)
+
+
+async def _restore_qdrant_snapshot(client, collection_name: str, snapshot_points: list[dict], operation: str, delete_ids: list[str] | None = None) -> None:
+    try:
+        if snapshot_points:
+            await client.upsert(collection_name=collection_name, points=snapshot_points)
+        if delete_ids:
+            await client.delete(collection_name=collection_name, points_selector=delete_ids)
+    except Exception as exc:
+        logger.error("Qdrant rollback failed during %s for %s: %s", operation, collection_name, exc)
 
 
 def _merge_properties(existing: dict, incoming: Optional[dict]) -> dict:
@@ -47,7 +76,7 @@ async def _delete_blocks_for_object(client, object_id: str) -> None:
     next_offset = None
     while True:
         blocks, next_offset = await client.scroll(
-            collection_name="blocks",
+            collection_name=COLLECTION_BLOCKS,
             scroll_filter={"must": [{"key": "object_id", "match": {"value": object_id}}]},
             offset=next_offset,
             limit=100,
@@ -56,7 +85,7 @@ async def _delete_blocks_for_object(client, object_id: str) -> None:
         )
         for block in blocks:
             await relation_service.remove_block_references(str(block.id))
-            await client.delete(collection_name="blocks", points_selector=[str(block.id)])
+            await client.delete(collection_name=COLLECTION_BLOCKS, points_selector=[str(block.id)])
         if next_offset is None:
             break
 
@@ -75,7 +104,7 @@ async def list_objects(
     query_filter = {"must": [{"key": "type", "match": {"value": type}}]} if type else None
 
     points, next_offset = await client.scroll(
-        collection_name="objects",
+        collection_name=COLLECTION_OBJECTS,
         scroll_filter=query_filter,
         offset=_normalize_scroll_offset(offset),
         limit=limit,
@@ -91,7 +120,7 @@ async def list_objects(
 
     return ObjectListResponse(
         objects=objects,
-        total=await _count_collection(client, "objects", query_filter),
+        total=await _count_collection(client, COLLECTION_OBJECTS, query_filter),
         next_offset=str(next_offset) if next_offset is not None else None,
     )
 
@@ -102,7 +131,7 @@ async def get_object(object_id: str, request: Request, current_user: dict = Depe
     """Get a single object by ID."""
     client = qdrant_manager.get_async_client()
     results = await client.retrieve(
-        collection_name="objects",
+        collection_name=COLLECTION_OBJECTS,
         ids=[object_id],
         with_payload=True,
         with_vectors=False,
@@ -135,11 +164,18 @@ async def create_object(obj: ObjectCreate, request: Request, current_user: dict 
         "layout": obj.layout or "default",
     }
 
-    await client.upsert(
-        collection_name="objects",
-        points=[{"id": object_id, "vector": embedding.tolist(), "payload": payload}],
-    )
-    await relation_service.sync_object_links(object_id, obj.title, content)
+    try:
+        await client.upsert(
+            collection_name=COLLECTION_OBJECTS,
+            points=[{"id": object_id, "vector": embedding.tolist(), "payload": payload}],
+        )
+        await relation_service.sync_object_links(object_id, obj.title, content)
+    except Exception as exc:
+        logger.error("Failed to create object %s: %s", object_id, exc)
+        await _rollback_sqlite("create_object")
+        await _restore_qdrant_snapshot(client, COLLECTION_OBJECTS, [], "create_object", delete_ids=[object_id])
+        raise
+
     await websocket_manager.broadcast(WebSocketEvents.object_created(object_id, obj.type, obj.title))
     return payload
 
@@ -155,10 +191,10 @@ async def update_object(
     """Partial update for an object."""
     client = qdrant_manager.get_async_client()
     existing = await client.retrieve(
-        collection_name="objects",
+        collection_name=COLLECTION_OBJECTS,
         ids=[object_id],
         with_payload=True,
-        with_vectors=False,
+        with_vectors=True,
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Object not found")
@@ -190,16 +226,29 @@ async def update_object(
     if not changes:
         return payload
 
-    if "title" in changes or "content" in changes:
-        embedding = await embedding_service.embed_text(payload.get("content") or payload.get("title", ""))
-        await client.upsert(
-            collection_name="objects",
-            points=[{"id": object_id, "vector": embedding.tolist(), "payload": payload}],
-        )
-    else:
-        await client.set_payload(collection_name="objects", payload=payload, points=[object_id])
+    original_point = {
+        "id": object_id,
+        "vector": _point_vector(existing[0]),
+        "payload": dict(existing[0].payload or {}),
+    }
 
-    await relation_service.sync_object_links(object_id, payload.get("title", ""), payload.get("content", ""))
+    try:
+        if "title" in changes or "content" in changes:
+            embedding = await embedding_service.embed_text(payload.get("content") or payload.get("title", ""))
+            await client.upsert(
+                collection_name=COLLECTION_OBJECTS,
+                points=[{"id": object_id, "vector": embedding.tolist(), "payload": payload}],
+            )
+        else:
+            await client.set_payload(collection_name=COLLECTION_OBJECTS, payload=payload, points=[object_id])
+
+        await relation_service.sync_object_links(object_id, payload.get("title", ""), payload.get("content", ""))
+    except Exception as exc:
+        logger.error("Failed to update object %s: %s", object_id, exc)
+        await _rollback_sqlite("update_object")
+        await _restore_qdrant_snapshot(client, COLLECTION_OBJECTS, [original_point], "update_object")
+        raise
+
     await websocket_manager.broadcast(WebSocketEvents.object_updated(object_id, changes))
     return payload
 
@@ -210,18 +259,54 @@ async def delete_object(object_id: str, request: Request, current_user: dict = D
     """Delete an object and cleanup related blocks and relations."""
     client = qdrant_manager.get_async_client()
     existing = await client.retrieve(
-        collection_name="objects",
+        collection_name=COLLECTION_OBJECTS,
         ids=[object_id],
-        with_payload=False,
-        with_vectors=False,
+        with_payload=True,
+        with_vectors=True,
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Object not found")
 
-    await _delete_blocks_for_object(client, object_id)
+    block_points, _ = await client.scroll(
+        collection_name=COLLECTION_BLOCKS,
+        scroll_filter={"must": [{"key": "object_id", "match": {"value": object_id}}]},
+        limit=5000,
+        with_payload=True,
+        with_vectors=True,
+    )
+    object_snapshot = [
+        {
+            "id": object_id,
+            "vector": _point_vector(existing[0]),
+            "payload": dict(existing[0].payload or {}),
+        }
+    ]
+    block_snapshot = [
+        {
+            "id": str(point.id),
+            "vector": _point_vector(point),
+            "payload": dict(point.payload or {}),
+        }
+        for point in block_points
+    ]
+    block_ids = [str(point.id) for point in block_points]
 
-    await relation_service.remove_relations_for_entity(object_id)
-    await client.delete(collection_name="objects", points_selector=[object_id])
+    try:
+        for block_id in block_ids:
+            await relation_service.remove_block_references(block_id)
+
+        if block_ids:
+            await client.delete(collection_name=COLLECTION_BLOCKS, points_selector=block_ids)
+
+        await relation_service.remove_relations_for_entity(object_id)
+        await client.delete(collection_name=COLLECTION_OBJECTS, points_selector=[object_id])
+    except Exception as exc:
+        logger.error("Failed to delete object %s: %s", object_id, exc)
+        await _rollback_sqlite("delete_object")
+        await _restore_qdrant_snapshot(client, COLLECTION_BLOCKS, block_snapshot, "delete_object")
+        await _restore_qdrant_snapshot(client, COLLECTION_OBJECTS, object_snapshot, "delete_object")
+        raise
+
     await websocket_manager.broadcast(WebSocketEvents.object_deleted(object_id))
     return {"message": "Object deleted", "id": object_id}
 
