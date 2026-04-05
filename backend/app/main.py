@@ -5,16 +5,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-try:
-    from slowapi import _rate_limit_exceeded_handler
-    from slowapi.errors import RateLimitExceeded
-    from slowapi.middleware import SlowAPIMiddleware
-except ImportError:  # pragma: no cover - used in offline CI/dev environments
-    from app.vendor.slowapi_compat import (
-        RateLimitExceeded,
-        SlowAPIMiddleware,
-        _rate_limit_exceeded_handler,
-    )
+from app.vendor.slowapi_compat import (
+    RateLimitExceeded,
+    SlowAPIMiddleware,
+    _rate_limit_exceeded_handler,
+)
 
 from app.config import settings
 from app.database.qdrant_client import qdrant_manager
