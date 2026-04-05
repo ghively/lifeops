@@ -1,0 +1,22 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:3010",
+      "localStorage": [
+        {
+          "name": "auth-storage",
+          "value": "{\"state\":{\"user\":{\"id\":\"279897c3-92ec-46ca-a2ad-8acfb2242dc2\",\"email\":\"e2ewalk@test.com\",\"username\":\"e2ewalk\",\"display_name\":null,\"is_active\":true,\"created_at\":\"2026-04-05T05:26:09.340794\",\"updated_at\":\"2026-04-05T05:26:09.340794\"},\"isAuthenticated\":true},\"version\":0}"
+        },
+        {
+          "name": "refresh_token",
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyNzk4OTdjMy05MmVjLTQ2Y2EtYTJhZC04YWNmYjIyNDJkYzIiLCJ0eXBlIjoicmVmcmVzaCIsImlhdCI6MTc3NTM3MzcyNywiZXhwIjoxNzc1OTc4NTI3LCJqdGkiOiIyMDg5OWIxZS05Y2E4LTQ4MDgtYTEyNS1lYmJhZjE1MTE2YTIifQ.FvnjRlzf0wS-pq1viwOZxxVJ03RqdqteIWEMbLGCxYg"
+        },
+        {
+          "name": "access_token",
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyNzk4OTdjMy05MmVjLTQ2Y2EtYTJhZC04YWNmYjIyNDJkYzIiLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzc1MzczNzI3LCJleHAiOjE3NzU0NjAxMjd9.tIjQr3BJ5FvaBC9CBEsZQ360y6gNlsgoL_5pMmJxUQU"
+        }
+      ]
+    }
+  ]
+}
