@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Auth enforcement** — All CRUD routes now require JWT authentication (C1 fix)
+- **Rate limiting** — In-memory rate limiter: auth 5/min, write 30/min, read 60/min (C2 fix)
+- **Pagination** — Fixed list_objects to use proper Qdrant scroll API instead of fetching 10K records (C3 fix)
+- **JWT persistence** — JWT secret persisted to disk, survives container restarts (C4 fix)
+- **WebSocket auth** — WebSocket connections require JWT via query param or header
+
+### Fixed
+- Build: Excluded test files from TypeScript compilation
+- Build: Resolved duplicate `refreshToken` identifier in auth store
+- Build: Fixed Axios interceptor type narrowing
+- Build: Removed phantom `ypy`/`ypy-websocket` dependencies (never imported)
+- Build: Regenerated `package-lock.json` for CRDT dependencies
+- Fixed slowapi/Starlette compatibility by using vendor in-memory rate limiter
+
+### Infrastructure
+- Added `backend/app/vendor/slowapi_compat.py` — zero-dependency in-memory rate limiter
+- Added `backend/app/data/` to `.gitignore` for runtime data
+- Added JWT secret file persistence at `data/.jwt_secret`
+
+### Removed
+- `slowapi` external dependency (replaced by vendor fallback)
+
+## [0.1.0] - 2026-04-04
+
 ### Added
 - Initial MVP release with full-stack implementation
 - Object-based note system with block-level editing

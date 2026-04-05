@@ -174,7 +174,7 @@ export class APIError extends Error {
 
 // Axios instance
 export const api = axios.create({
-  baseURL: `${API_BASE_URL}/api`,
+  baseURL: `${API_BASE_URL}/api/v1`,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -219,7 +219,7 @@ api.interceptors.response.use(
 
         // Try to refresh token
         const response = await axios.post<AuthTokens>(
-          `${API_BASE_URL}/api/auth/refresh`,
+          `${API_BASE_URL}/api/v1/auth/refresh`,
           { refresh_token: refreshToken },
           { headers: { 'Content-Type': 'application/json' } }
         )

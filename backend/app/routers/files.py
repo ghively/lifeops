@@ -1,10 +1,11 @@
 """Files Router - File management and indexing"""
 import uuid
 import logging
-import hashlib
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from typing import List, Optional
+
+from app.utils import compute_file_hash
 
 from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
@@ -16,19 +17,6 @@ from app.utils.time import utc_now_iso
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-def compute_file_hash(file_path: str) -> str:
-    """Compute SHA-256 hash of a file"""
-    sha256_hash = hashlib.sha256()
-    try:
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                sha256_hash.update(chunk)
-        return sha256_hash.hexdigest()
-    except Exception as e:
-        logger.error(f"Error computing hash for {file_path}: {e}")
-        return ""
 
 
 @router.get("")

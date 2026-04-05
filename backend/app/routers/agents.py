@@ -3,7 +3,8 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from app.database.qdrant_client import qdrant_manager
 from app.middleware.auth import get_current_user
@@ -16,6 +17,13 @@ from app.utils.time import utc_now_iso
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class ChatRequest(BaseModel):
+    content: str
+    session_id: Optional[str] = "main"
+    related_task: Optional[str] = None
+
 
 DEFAULT_AGENTS = [
     {"name": "researcher", "description": "Research and information gathering agent", "capabilities": ["search", "summarize", "analyze"]},
@@ -110,12 +118,12 @@ async def get_agent(name: str, request: Request, current_user: dict = Depends(ge
 
 @router.post("/{name}/chat")
 @write_rate_limit
-async def chat_with_agent(name: str, request: Request, data: dict, current_user: dict = Depends(get_current_user)):
+async def chat_with_agent(name: str, request: Request, data: ChatRequest = Body(...), current_user: dict = Depends(get_current_user)):
     """Send a message to an agent and store chat logs."""
     client = qdrant_manager.get_async_client()
-    content = data.get("content", "").strip()
-    session_id = data.get("session_id") or "main"
-    related_task = data.get("related_task")
+    content = data.content.strip()
+    session_id = data.session_id or "main"
+    related_task = data.related_task
     if not content:
         raise HTTPException(status_code=400, detail="content is required")
 

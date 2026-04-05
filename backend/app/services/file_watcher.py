@@ -1,7 +1,6 @@
 """File Watcher Service - Watches folders for changes and indexes files."""
 from __future__ import annotations
 import ast
-import hashlib
 import json
 import logging
 import mimetypes
@@ -18,6 +17,7 @@ from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
 from app.services.embedding import embedding_service
 from app.services.websocket_manager import WebSocketEvents, websocket_manager
+from app.utils import compute_file_hash
 from app.utils.time import utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -25,14 +25,6 @@ logger = logging.getLogger(__name__)
 TEXT_EXTENSIONS = {".md", ".txt", ".py", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml", ".html", ".css", ".sh"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 CODE_EXTENSIONS = {".py", ".js", ".ts", ".tsx"}
-
-
-def compute_file_hash(file_path: str) -> str:
-    sha256_hash = hashlib.sha256()
-    with open(file_path, "rb") as file_handle:
-        for chunk in iter(lambda: file_handle.read(8192), b""):
-            sha256_hash.update(chunk)
-    return sha256_hash.hexdigest()
 
 
 class FileChangeHandler(FileSystemEventHandler):

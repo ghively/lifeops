@@ -140,10 +140,20 @@ Add folders to watch via Settings → Watched Folders:
 2. Choose semantic or exact search
 3. Results ranked by relevance
 
-## API Endpoints
+### API Endpoints
 
-### Objects
-- `GET /api/objects` - List objects
+> **All endpoints require JWT authentication.** Register/login to obtain a token, then include it as `Authorization: Bearer <token>`.
+
+#### Authentication
+- `POST /api/auth/register` - Create account (username, email, password, display_name)
+- `POST /api/auth/login` - Login (email, password) → returns access_token + refresh_token
+- `POST /api/auth/refresh` - Refresh access token
+- `POST /api/auth/logout` - Logout (invalidate refresh token)
+- `POST /api/auth/forgot-password` - Request password reset
+- `POST /api/auth/reset-password` - Reset password with token
+
+#### Objects (requires auth)
+- `GET /api/objects?limit=10&offset=0` - List objects (paginated)
 - `POST /api/objects` - Create object
 - `GET /api/objects/{id}` - Get object
 - `PUT /api/objects/{id}` - Update object
@@ -155,30 +165,39 @@ Add folders to watch via Settings → Watched Folders:
 - `PUT /api/blocks/{id}` - Update block
 - `POST /api/blocks/batch-update` - Batch update blocks
 
-### Tasks
+### Tasks (requires auth)
 - `GET /api/tasks` - List tasks
 - `POST /api/tasks/{id}/assign` - Assign to agent
 - `POST /api/tasks/{id}/status` - Update status
 
-### Agents
+### Agents (requires auth)
 - `GET /api/agents` - List agents
 - `POST /api/agents/{name}/chat` - Send message
 - `GET /api/agents/{name}/chat` - Get chat history
 
-### Search
+### Search (requires auth)
 - `GET /api/search?q={query}` - Semantic search
 - `GET /api/search/similar/{id}` - Find similar
 
-### Files
+### Files (requires auth)
 - `GET /api/files` - List files
 - `POST /api/files/{id}/reindex` - Reindex file
 
-### Settings
+### Settings (requires auth)
 - `GET /api/settings` - Get settings
 - `PUT /api/settings` - Update settings
 - `GET /api/settings/watched-folders` - List watched folders
 - `POST /api/settings/watched-folders` - Add folder
 - `DELETE /api/settings/watched-folders/{id}` - Remove folder
+
+### Rate Limiting
+| Endpoint Type | Limit |
+|---|---|
+| Auth (login, register, reset) | 5 requests/minute |
+| Write (POST, PUT, DELETE) | 30 requests/minute |
+| Read (GET) | 60 requests/minute |
+
+Rate limit headers are included in responses: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
 
 ## Development
 

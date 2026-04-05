@@ -1,4 +1,5 @@
 """Backup Service - Handles all backup operations"""
+import asyncio
 import os
 import uuid
 import subprocess
@@ -142,16 +143,18 @@ class BackupService:
             os.makedirs(git_dir, exist_ok=True)
             
             if not os.path.exists(os.path.join(git_dir, ".git")):
-                subprocess.run(
+                await asyncio.to_thread(
+                    subprocess.run,
                     ["git", "clone", git_repo, "."],
                     cwd=git_dir,
-                    check=True
+                    check=True,
                 )
             
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "pull"],
                 cwd=git_dir,
-                check=True
+                check=True,
             )
             
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -159,20 +162,23 @@ class BackupService:
             
             await self._export_markdown_to_dir(export_subdir)
             
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "add", "."],
                 cwd=git_dir,
-                check=True
+                check=True,
             )
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "commit", "-m", f"Auto-export {timestamp}"],
                 cwd=git_dir,
-                check=False
+                check=False,
             )
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "push"],
                 cwd=git_dir,
-                check=True
+                check=True,
             )
 
             logger.info("Git sync completed")

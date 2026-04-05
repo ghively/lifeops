@@ -99,16 +99,16 @@ app.add_middleware(
 app.add_middleware(SlowAPIMiddleware)
 
 # Include routers
-app.include_router(auth_router.router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(objects.router, prefix="/api/objects", tags=["Objects"])
-app.include_router(blocks.router, prefix="/api/blocks", tags=["Blocks"])
-app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
-app.include_router(search.router, prefix="/api/search", tags=["Search"])
-app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
-app.include_router(files.router, prefix="/api/files", tags=["Files"])
-app.include_router(relations.router, prefix="/api/relations", tags=["Relations"])
-app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
-app.include_router(collaboration.router, prefix="/api/collaboration", tags=["Collaboration"])
+app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["Authentication"])
+app.include_router(objects.router, prefix="/api/v1/objects", tags=["Objects"])
+app.include_router(blocks.router, prefix="/api/v1/blocks", tags=["Blocks"])
+app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["Tasks"])
+app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
+app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
+app.include_router(files.router, prefix="/api/v1/files", tags=["Files"])
+app.include_router(relations.router, prefix="/api/v1/relations", tags=["Relations"])
+app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["Settings"])
+app.include_router(collaboration.router, prefix="/api/v1/collaboration", tags=["Collaboration"])
 
 
 @app.get("/health")

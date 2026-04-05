@@ -1,12 +1,28 @@
 """Tasks Router - Task management and assignment."""
+import asyncio
 import logging
 import os
 import uuid
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from app.config import settings
+
+
+class AssignTaskRequest(BaseModel):
+    agent_name: str
+    priority: str = "medium"
+    include_context: bool = True
+    additional_context: List[str] = Field(default_factory=list)
+
+
+class UpdateTaskStatusRequest(BaseModel):
+    status: str
+    current_action: Optional[str] = None
+    notes: Optional[str] = None
+    agent_name: Optional[str] = None
 from app.database.qdrant_client import qdrant_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
@@ -33,7 +49,8 @@ def _task_counts(tasks: list, key: str):
     return counts
 
 
-async def _write_to_heartbeat(task_id: str, agent_name: str, task: dict, context: dict):
+def _write_to_heartbeat_sync(task_id: str, agent_name: str, task: dict, context: dict):
+    """Synchronous file I/O for heartbeat — call via asyncio.to_thread()."""
     os.makedirs(os.path.dirname(HEARTBEAT_PATH), exist_ok=True)
     lines = [
         f"## {utc_now_iso()} | @{agent_name} | task:{task_id}",
@@ -130,19 +147,17 @@ async def get_task(task_id: str, request: Request, current_user: dict = Depends(
 @write_rate_limit
 async def assign_task(
     task_id: str,
-    data: dict,
-    request: Request,
-    background_tasks: BackgroundTasks,
+    data: AssignTaskRequest = Body(...),
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
     current_user: dict = Depends(get_current_user),
 ):
     """Assign a task to an agent with context."""
     client = qdrant_manager.get_async_client()
-    agent_name = data.get("agent_name")
-    priority = data.get("priority", "medium")
-    include_context = bool(data.get("include_context", True))
-    additional_context = data.get("additional_context") or []
-    if not agent_name:
-        raise HTTPException(status_code=400, detail="agent_name is required")
+    agent_name = data.agent_name
+    priority = data.priority
+    include_context = data.include_context
+    additional_context = data.additional_context
     if priority not in VALID_PRIORITIES:
         raise HTTPException(status_code=400, detail=f"Invalid priority: {priority}")
 
@@ -175,7 +190,7 @@ async def assign_task(
         )
         properties["status"] = "in-progress"
     else:
-        await _write_to_heartbeat(task_id, agent_name, task, context)
+        await asyncio.to_thread(_write_to_heartbeat_sync, task_id, agent_name, task, context)
         memory_id = str(uuid.uuid4())
         heartbeat_content = f"{task.get('title', '')}\n\n{task.get('content', '')}"
         embedding = await embedding_service.embed_text(heartbeat_content)
@@ -226,16 +241,16 @@ async def assign_task(
 @write_rate_limit
 async def update_task_status(
     task_id: str,
-    data: dict,
-    request: Request,
+    data: UpdateTaskStatusRequest = Body(...),
+    request: Request = None,
     current_user: dict = Depends(get_current_user),
 ):
     """Update task status, current action, and notes."""
     client = qdrant_manager.get_async_client()
-    status = data.get("status")
-    current_action = data.get("current_action")
-    notes = data.get("notes")
-    agent_name = data.get("agent_name")
+    status = data.status
+    current_action = data.current_action
+    notes = data.notes
+    agent_name = data.agent_name
 
     if status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}")
