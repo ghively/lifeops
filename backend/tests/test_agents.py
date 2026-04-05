@@ -11,7 +11,7 @@ class TestAgentsRouter:
 
     async def test_list_agents(self, test_client):
         """Test listing all agents."""
-        response = await test_client.get("/api/agents")
+        response = await test_client.get("/api/v1/agents")
 
         assert response.status_code == 200
         data = response.json()
@@ -20,7 +20,7 @@ class TestAgentsRouter:
 
     async def test_get_agent_success(self, test_client):
         """Test getting a specific agent by name."""
-        response = await test_client.get("/api/agents/test-agent")
+        response = await test_client.get("/api/v1/agents/test-agent")
 
         # May return 404 if agent doesn't exist
         assert response.status_code in [200, 404]
@@ -31,7 +31,7 @@ class TestAgentsRouter:
 
     async def test_get_agent_not_found(self, test_client):
         """Test getting a non-existent agent."""
-        response = await test_client.get("/api/agents/non-existent-agent")
+        response = await test_client.get("/api/v1/agents/non-existent-agent")
 
         assert response.status_code == 404
 
@@ -43,7 +43,7 @@ class TestAgentsRouter:
         }
 
         response = await test_client.post(
-            "/api/agents/test-agent/chat",
+            "/api/v1/agents/test-agent/chat",
             json=chat_data
         )
 
@@ -58,7 +58,7 @@ class TestAgentsRouter:
         }
 
         response = await test_client.post(
-            "/api/agents/test-agent/chat",
+            "/api/v1/agents/test-agent/chat",
             json=chat_data
         )
 
@@ -73,7 +73,7 @@ class TestAgentsRouter:
         }
 
         response = await test_client.post(
-            "/api/agents/test-agent/chat",
+            "/api/v1/agents/test-agent/chat",
             json=chat_data
         )
 
@@ -82,7 +82,7 @@ class TestAgentsRouter:
     async def test_get_chat_history_empty(self, test_client):
         """Test getting chat history for a new session."""
         response = await test_client.get(
-            "/api/agents/test-agent/chat",
+            "/api/v1/agents/test-agent/chat",
             params={"session_id": "new-session"}
         )
 
@@ -93,7 +93,7 @@ class TestAgentsRouter:
     async def test_get_chat_history_with_data(self, test_client):
         """Test getting chat history with existing messages."""
         response = await test_client.get(
-            "/api/agents/test-agent/chat",
+            "/api/v1/agents/test-agent/chat",
             params={"session_id": "test-session", "limit": 10}
         )
 
@@ -104,7 +104,7 @@ class TestAgentsRouter:
     async def test_get_chat_history_pagination(self, test_client):
         """Test getting chat history with pagination."""
         response = await test_client.get(
-            "/api/agents/test-agent/chat",
+            "/api/v1/agents/test-agent/chat",
             params={"session_id": "test-session", "limit": 5, "offset": 0}
         )
 
@@ -115,7 +115,7 @@ class TestAgentsRouter:
     async def test_get_agent_tasks(self, test_client):
         """Test getting tasks assigned to an agent."""
         response = await test_client.get(
-            "/api/agents/test-agent/tasks",
+            "/api/v1/agents/test-agent/tasks",
             params={"status": "in-progress"}
         )
 
@@ -125,7 +125,7 @@ class TestAgentsRouter:
 
     async def test_get_agent_tasks_all(self, test_client):
         """Test getting all tasks for an agent."""
-        response = await test_client.get("/api/agents/test-agent/tasks")
+        response = await test_client.get("/api/v1/agents/test-agent/tasks")
 
         assert response.status_code == 200
         data = response.json()
@@ -133,14 +133,14 @@ class TestAgentsRouter:
 
     async def test_get_agent_tasks(self, test_client):
         """Test getting tasks for an agent."""
-        response = await test_client.get("/api/agents/coder/tasks")
+        response = await test_client.get("/api/v1/agents/coder/tasks")
         assert response.status_code == 200
         data = response.json()
         assert "tasks" in data
 
     async def test_get_agent_tasks_with_status(self, test_client):
         """Test getting tasks for an agent filtered by status."""
-        response = await test_client.get("/api/agents/coder/tasks", params={"status": "todo"})
+        response = await test_client.get("/api/v1/agents/coder/tasks", params={"status": "todo"})
         assert response.status_code == 200
         data = response.json()
         assert "tasks" in data

@@ -11,7 +11,7 @@ class TestObjectsRouter:
 
     async def test_list_objects_empty(self, test_client):
         """Test listing objects when none exist."""
-        response = await test_client.get("/api/objects")
+        response = await test_client.get("/api/v1/objects")
         assert response.status_code == 200
         data = response.json()
         assert "objects" in data
@@ -21,14 +21,14 @@ class TestObjectsRouter:
     async def test_list_objects_with_data(self, test_client):
         """Test listing objects with existing data."""
         # Create an object first
-        create_resp = await test_client.post("/api/objects", json={
+        create_resp = await test_client.post("/api/v1/objects", json={
             "title": "Test Object",
             "content": "Test content",
             "type": "note",
         })
         assert create_resp.status_code == 200
 
-        response = await test_client.get("/api/objects")
+        response = await test_client.get("/api/v1/objects")
         assert response.status_code == 200
         data = response.json()
         assert "objects" in data
@@ -37,7 +37,7 @@ class TestObjectsRouter:
     async def test_list_objects_with_filters(self, test_client):
         """Test listing objects with query filters."""
         response = await test_client.get(
-            "/api/objects",
+            "/api/v1/objects",
             params={"type": "note", "limit": 10}
         )
         assert response.status_code == 200
@@ -47,7 +47,7 @@ class TestObjectsRouter:
     async def test_get_object_success(self, test_client):
         """Test getting a specific object by ID."""
         # Create an object first
-        create_resp = await test_client.post("/api/objects", json={
+        create_resp = await test_client.post("/api/v1/objects", json={
             "title": "Test Object",
             "content": "Test content",
             "type": "note",
@@ -55,7 +55,7 @@ class TestObjectsRouter:
         assert create_resp.status_code == 200
         obj_id = create_resp.json()["id"]
 
-        response = await test_client.get(f"/api/objects/{obj_id}")
+        response = await test_client.get(f"/api/v1/objects/{obj_id}")
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == obj_id
@@ -63,7 +63,7 @@ class TestObjectsRouter:
 
     async def test_get_object_not_found(self, test_client):
         """Test getting a non-existent object."""
-        response = await test_client.get("/api/objects/non-existent-id")
+        response = await test_client.get("/api/v1/objects/non-existent-id")
         assert response.status_code == 404
         data = response.json()
         assert "detail" in data
@@ -75,7 +75,7 @@ class TestObjectsRouter:
             "content": "New content",
             "type": "note",
         }
-        response = await test_client.post("/api/objects", json=object_data)
+        response = await test_client.post("/api/v1/objects", json=object_data)
         assert response.status_code == 200
         data = response.json()
         assert "id" in data
@@ -85,13 +85,13 @@ class TestObjectsRouter:
     async def test_create_object_missing_required(self, test_client):
         """Test creating an object with missing required fields."""
         object_data = {"content": "Content without title"}
-        response = await test_client.post("/api/objects", json=object_data)
+        response = await test_client.post("/api/v1/objects", json=object_data)
         assert response.status_code in [422, 400]
 
     async def test_update_object_success(self, test_client):
         """Test updating an existing object."""
         # Create an object first
-        create_resp = await test_client.post("/api/objects", json={
+        create_resp = await test_client.post("/api/v1/objects", json={
             "title": "Original Title",
             "content": "Original content",
             "type": "note",
@@ -100,7 +100,7 @@ class TestObjectsRouter:
         obj_id = create_resp.json()["id"]
 
         update_data = {"title": "Updated Title", "content": "Updated content"}
-        response = await test_client.put(f"/api/objects/{obj_id}", json=update_data)
+        response = await test_client.put(f"/api/v1/objects/{obj_id}", json=update_data)
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == obj_id
@@ -108,13 +108,13 @@ class TestObjectsRouter:
 
     async def test_update_object_not_found(self, test_client):
         """Test updating a non-existent object."""
-        response = await test_client.put("/api/objects/non-existent", json={"title": "Updated"})
+        response = await test_client.put("/api/v1/objects/non-existent", json={"title": "Updated"})
         assert response.status_code == 404
 
     async def test_delete_object_success(self, test_client):
         """Test deleting an object."""
         # Create an object first
-        create_resp = await test_client.post("/api/objects", json={
+        create_resp = await test_client.post("/api/v1/objects", json={
             "title": "To Delete",
             "content": "Will be deleted",
             "type": "note",
@@ -122,19 +122,19 @@ class TestObjectsRouter:
         assert create_resp.status_code == 200
         obj_id = create_resp.json()["id"]
 
-        response = await test_client.delete(f"/api/objects/{obj_id}")
+        response = await test_client.delete(f"/api/v1/objects/{obj_id}")
         assert response.status_code == 200
         data = response.json()
         assert "message" in data
 
     async def test_delete_object_not_found(self, test_client):
         """Test deleting a non-existent object."""
-        response = await test_client.delete("/api/objects/non-existent")
+        response = await test_client.delete("/api/v1/objects/non-existent")
         assert response.status_code == 404
 
     async def test_get_object_relations(self, test_client):
         """Test getting relations for an object."""
-        response = await test_client.get("/api/objects/test-object-1/relations")
+        response = await test_client.get("/api/v1/objects/test-object-1/relations")
         assert response.status_code == 200
         data = response.json()
         assert "relations" in data
@@ -150,7 +150,7 @@ class TestObjectsRouter:
                 "status": "active"
             },
         }
-        response = await test_client.post("/api/objects", json=object_data)
+        response = await test_client.post("/api/v1/objects", json=object_data)
         assert response.status_code == 200
         data = response.json()
         assert "properties" in data
@@ -170,7 +170,7 @@ class TestObjectsRouter:
             "icon": "📝",
             "layout": "default",
         }
-        response = await test_client.post("/api/objects", json=object_data)
+        response = await test_client.post("/api/v1/objects", json=object_data)
         assert response.status_code == 200
         data = response.json()
         assert data["title"] == object_data["title"]

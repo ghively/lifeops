@@ -11,7 +11,7 @@ class TestSettingsRouter:
 
     async def test_get_settings(self, test_client, mock_sqlite_manager):
         """Test getting application settings."""
-        response = await test_client.get("/api/settings")
+        response = await test_client.get("/api/v1/settings")
 
         assert response.status_code == 200
         data = response.json()
@@ -25,7 +25,7 @@ class TestSettingsRouter:
             "embedding_model": "all-MiniLM-L6-v2",
         }
 
-        response = await test_client.put("/api/settings", json=update_data)
+        response = await test_client.put("/api/v1/settings", json=update_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -37,7 +37,7 @@ class TestSettingsRouter:
             "backup_snapshots": False,
         }
 
-        response = await test_client.put("/api/settings", json=update_data)
+        response = await test_client.put("/api/v1/settings", json=update_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -45,7 +45,7 @@ class TestSettingsRouter:
 
     async def test_get_watched_folders_empty(self, test_client, mock_sqlite_manager):
         """Test getting watched folders when none exist."""
-        response = await test_client.get("/api/settings/watched-folders")
+        response = await test_client.get("/api/v1/settings/watched-folders")
 
         assert response.status_code == 200
         data = response.json()
@@ -62,7 +62,7 @@ class TestSettingsRouter:
         }
 
         response = await test_client.post(
-            "/api/settings/watched-folders",
+            "/api/v1/settings/watched-folders",
             json=folder_data
         )
 
@@ -78,7 +78,7 @@ class TestSettingsRouter:
         }
 
         response = await test_client.post(
-            "/api/settings/watched-folders",
+            "/api/v1/settings/watched-folders",
             json=folder_data
         )
 
@@ -86,7 +86,7 @@ class TestSettingsRouter:
 
     async def test_remove_watched_folder(self, test_client, mock_sqlite_manager):
         """Test removing a watched folder."""
-        response = await test_client.delete("/api/settings/watched-folders/folder-id-1")
+        response = await test_client.delete("/api/v1/settings/watched-folders/folder-id-1")
 
         assert response.status_code in [200, 404]
 
@@ -96,7 +96,7 @@ class TestSettingsRouter:
             "type": "snapshot",
         }
 
-        response = await test_client.post("/api/settings/backup", json=backup_data)
+        response = await test_client.post("/api/v1/settings/backup", json=backup_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -108,7 +108,7 @@ class TestSettingsRouter:
             "type": "markdown",
         }
 
-        response = await test_client.post("/api/settings/backup", json=backup_data)
+        response = await test_client.post("/api/v1/settings/backup", json=backup_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -120,7 +120,7 @@ class TestSettingsRouter:
             "type": "git",
         }
 
-        response = await test_client.post("/api/settings/backup", json=backup_data)
+        response = await test_client.post("/api/v1/settings/backup", json=backup_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -132,7 +132,7 @@ class TestSettingsRouter:
             "type": "invalid_type",
         }
 
-        response = await test_client.post("/api/settings/backup", json=backup_data)
+        response = await test_client.post("/api/v1/settings/backup", json=backup_data)
 
         assert response.status_code == 400
 

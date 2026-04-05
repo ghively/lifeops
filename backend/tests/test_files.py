@@ -11,7 +11,7 @@ class TestFilesRouter:
 
     async def test_list_files_empty(self, test_client):
         """Test listing files when none exist."""
-        response = await test_client.get("/api/files")
+        response = await test_client.get("/api/v1/files")
         assert response.status_code == 200
         data = response.json()
         assert "files" in data
@@ -20,13 +20,13 @@ class TestFilesRouter:
     async def test_list_files_with_data(self, test_client):
         """Test listing files after indexing."""
         # Index a file via content endpoint
-        await test_client.post("/api/files/test-file-1/content", json={
+        await test_client.post("/api/v1/files/test-file-1/content", json={
             "path": "/test/document.md",
             "content": "Test file content",
             "content_type": "text/markdown",
         })
 
-        response = await test_client.get("/api/files")
+        response = await test_client.get("/api/v1/files")
         assert response.status_code == 200
         data = response.json()
         assert "files" in data
@@ -35,37 +35,37 @@ class TestFilesRouter:
     async def test_get_file_success(self, test_client):
         """Test getting a file by ID."""
         # Index a file first
-        await test_client.post("/api/files/test-file-2/content", json={
+        await test_client.post("/api/v1/files/test-file-2/content", json={
             "path": "/test/readme.md",
             "content": "Readme content",
         })
 
-        response = await test_client.get("/api/files/test-file-2")
+        response = await test_client.get("/api/v1/files/test-file-2")
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "test-file-2"
 
     async def test_get_file_not_found(self, test_client):
         """Test getting a non-existent file."""
-        response = await test_client.get("/api/files/non-existent")
+        response = await test_client.get("/api/v1/files/non-existent")
         assert response.status_code == 404
 
     async def test_reindex_file_success(self, test_client):
         """Test reindexing a file."""
         # Index a file first
-        await test_client.post("/api/files/test-file-3/content", json={
+        await test_client.post("/api/v1/files/test-file-3/content", json={
             "path": "/tmp/test-reindex.md",
             "content": "Reindex content",
         })
 
-        response = await test_client.post("/api/files/test-file-3/reindex")
+        response = await test_client.post("/api/v1/files/test-file-3/reindex")
         assert response.status_code == 200
         data = response.json()
         assert "message" in data
 
     async def test_reindex_file_not_found(self, test_client):
         """Test reindexing a non-existent file."""
-        response = await test_client.post("/api/files/non-existent/reindex")
+        response = await test_client.post("/api/v1/files/non-existent/reindex")
         assert response.status_code == 404
 
     async def test_file_notification(self, test_client):
@@ -74,18 +74,18 @@ class TestFilesRouter:
             "event_type": "created",
             "path": "/test/new-file.md",
         }
-        response = await test_client.post("/api/files/notify", json=data)
+        response = await test_client.post("/api/v1/files/notify", json=data)
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
 
     async def test_file_notification_missing_fields(self, test_client):
         """Test file notification with missing fields."""
-        response = await test_client.post("/api/files/notify", json={})
+        response = await test_client.post("/api/v1/files/notify", json={})
         assert response.status_code == 400
 
     async def test_index_file_content(self, test_client):
         """Test indexing file content."""
-        response = await test_client.post("/api/files/test-file-4/content", json={
+        response = await test_client.post("/api/v1/files/test-file-4/content", json={
             "path": "/test/index-me.md",
             "content": "Content to index",
             "content_type": "text/markdown",
@@ -97,14 +97,14 @@ class TestFilesRouter:
 
     async def test_index_file_content_missing_path(self, test_client):
         """Test indexing file content without path."""
-        response = await test_client.post("/api/files/test-file-5/content", json={
+        response = await test_client.post("/api/v1/files/test-file-5/content", json={
             "content": "No path",
         })
         assert response.status_code == 400
 
     async def test_file_delete_notification(self, test_client):
         """Test file delete notification."""
-        response = await test_client.post("/api/files/notify", json={
+        response = await test_client.post("/api/v1/files/notify", json={
             "event_type": "deleted",
             "path": "/test/deleted-file.md",
         })
@@ -112,7 +112,7 @@ class TestFilesRouter:
 
     async def test_file_move_notification(self, test_client):
         """Test file move notification."""
-        response = await test_client.post("/api/files/notify", json={
+        response = await test_client.post("/api/v1/files/notify", json={
             "event_type": "moved",
             "path": "/test/old-path.md",
             "dest_path": "/test/new-path.md",
