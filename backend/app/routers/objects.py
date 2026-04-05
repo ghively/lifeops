@@ -1,5 +1,6 @@
 """Objects Router - CRUD operations for objects."""
 import logging
+import re
 import uuid
 from typing import Optional
 
@@ -18,6 +19,8 @@ from app.utils.time import utc_now_iso
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+TAG_PATTERN = re.compile(r"#([a-zA-Z0-9_-]+)")
+MENTION_PATTERN = re.compile(r"@([a-zA-Z0-9_-]+)")
 
 
 def _point_vector(point) -> list[float] | None:
@@ -70,6 +73,54 @@ async def _count_collection(client, collection_name: str, scroll_filter: Optiona
         exact=True,
     )
     return int(count.count)
+
+
+def _unique_preserving_order(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+def _parse_tags_from_content(content: str) -> list[str]:
+    return _unique_preserving_order(TAG_PATTERN.findall(content or ""))
+
+
+async def _parse_mentions_from_content(client, content: str) -> list[str]:
+    requested_mentions = _unique_preserving_order(MENTION_PATTERN.findall(content or ""))
+    if not requested_mentions:
+        return []
+
+    agent_records, _ = await client.scroll(
+        collection_name=COLLECTION_OBJECTS,
+        scroll_filter={"must": [{"key": "type", "match": {"value": "agent"}}]},
+        limit=100,
+        with_payload=True,
+        with_vectors=False,
+    )
+    agent_names = {
+        payload_name
+        for point in agent_records
+        for payload_name in [
+            (point.payload or {}).get("properties", {}).get("agent_name") or (point.payload or {}).get("title")
+        ]
+        if payload_name
+    }
+    return [mention for mention in requested_mentions if mention in agent_names]
+
+
+async def _enrich_properties_from_content(client, object_id: str, payload: dict) -> dict:
+    properties = dict(payload.get("properties") or {})
+    content = payload.get("content") or payload.get("title", "")
+
+    parsed_tags = _parse_tags_from_content(content)
+    if parsed_tags:
+        properties["tags"] = _unique_preserving_order([*(properties.get("tags") or []), *parsed_tags])
+
+    parsed_mentions = await _parse_mentions_from_content(client, content)
+    if parsed_mentions:
+        properties["mentions"] = _unique_preserving_order([*(properties.get("mentions") or []), *parsed_mentions])
+
+    payload["properties"] = properties
+    await client.set_payload(collection_name=COLLECTION_OBJECTS, payload=payload, points=[object_id])
+    return payload
 
 
 async def _delete_blocks_for_object(client, object_id: str) -> None:
@@ -169,6 +220,7 @@ async def create_object(obj: ObjectCreate, request: Request, current_user: dict 
             collection_name=COLLECTION_OBJECTS,
             points=[{"id": object_id, "vector": embedding.tolist(), "payload": payload}],
         )
+        payload = await _enrich_properties_from_content(client, object_id, payload)
         await relation_service.sync_object_links(object_id, obj.title, content)
     except Exception as exc:
         logger.error("Failed to create object %s: %s", object_id, exc)
@@ -242,6 +294,7 @@ async def update_object(
         else:
             await client.set_payload(collection_name=COLLECTION_OBJECTS, payload=payload, points=[object_id])
 
+        payload = await _enrich_properties_from_content(client, object_id, payload)
         await relation_service.sync_object_links(object_id, payload.get("title", ""), payload.get("content", ""))
     except Exception as exc:
         logger.error("Failed to update object %s: %s", object_id, exc)

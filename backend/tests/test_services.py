@@ -4,6 +4,7 @@ Tests for backend services (context_builder, backup, etc.).
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from qdrant_client import models as qdrant_models
 
 
 @pytest.mark.asyncio
@@ -42,6 +43,70 @@ class TestContextBuilder:
         from app.services.context_builder import context_builder
         # Should limit context to avoid overflow
         assert hasattr(context_builder, "build_task_context")
+
+    async def test_build_task_context_truncates_to_max_tokens(self, mock_async_qdrant_client, mock_sqlite_manager, mock_embedding_service):
+        """Test context builder truncates context lists when over the token budget."""
+        from app.database.qdrant_client import qdrant_manager
+        from app.database.sqlite import sqlite_manager
+        from app.services.context_builder import context_builder
+        from app.services.embedding import embedding_service
+
+        task_id = "task-1"
+        mock_async_qdrant_client._storage["points"][task_id] = qdrant_models.PointStruct(
+            id=task_id,
+            vector=[0.1] * 384,
+            payload={
+                "id": task_id,
+                "type": "task",
+                "title": "Task",
+                "content": "x" * 600,
+                "properties": {
+                    "linked_objects": ["obj-1", "obj-2"],
+                    "assigned_to": "researcher",
+                },
+            },
+        )
+        mock_async_qdrant_client._storage["points"]["obj-1"] = qdrant_models.PointStruct(
+            id="obj-1",
+            vector=[0.1] * 384,
+            payload={"id": "obj-1", "type": "note", "title": "One", "content": "y" * 500},
+        )
+        mock_async_qdrant_client._storage["points"]["obj-2"] = qdrant_models.PointStruct(
+            id="obj-2",
+            vector=[0.1] * 384,
+            payload={"id": "obj-2", "type": "note", "title": "Two", "content": "z" * 500},
+        )
+        mock_async_qdrant_client._storage["points"]["memory-1"] = qdrant_models.PointStruct(
+            id="memory-1",
+            vector=[0.1] * 384,
+            payload={"id": "memory-1", "agent_name": "researcher", "content": "m" * 500},
+        )
+        mock_async_qdrant_client._storage["points"]["chat-1"] = qdrant_models.PointStruct(
+            id="chat-1",
+            vector=[0.1] * 384,
+            payload={"id": "chat-1", "agent_name": "researcher", "content": "c" * 500, "timestamp": "2024-01-01T00:00:00Z"},
+        )
+
+        mock_sqlite_manager._storage["settings"]["max_context_tokens"] = 50
+
+        original_get_async_client = qdrant_manager.get_async_client
+        original_get_setting = sqlite_manager.get_setting
+        original_embed_text = embedding_service.embed_text
+        qdrant_manager.get_async_client = MagicMock(return_value=mock_async_qdrant_client)
+        sqlite_manager.get_setting = mock_sqlite_manager.get_setting
+        embedding_service.embed_text = mock_embedding_service.embed_text
+        try:
+            context = await context_builder.build_task_context(task_id)
+        finally:
+            qdrant_manager.get_async_client = original_get_async_client
+            sqlite_manager.get_setting = original_get_setting
+            embedding_service.embed_text = original_embed_text
+
+        assert "token_count_estimate" in context
+        # Task content alone (600 chars ≈ 150 tokens) exceeds the 50-token limit,
+        # so truncation cannot fully succeed — verify it ran and trimmed lists.
+        assert context["token_count_estimate"] < 2000  # well below full payload size
+        assert context["qdrant_pointers"]["linked_object_ids"] == [item["id"] for item in context["linked_objects"]]
 
 
 @pytest.mark.asyncio

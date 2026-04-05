@@ -12,6 +12,59 @@ logger = logging.getLogger(__name__)
 class ContextBuilder:
     """Builds context for task assignment."""
 
+    @staticmethod
+    def _estimate_token_count(value) -> int:
+        return max(1, len(str(value)) // 4) if value else 0
+
+    def _context_token_count(self, context: Dict) -> int:
+        return self._estimate_token_count(context)
+
+    def _truncate_to_token_limit(self, context: Dict) -> Dict:
+        max_tokens = int(context.get("max_context_tokens") or 4000)
+        token_count_estimate = self._context_token_count(context)
+        if token_count_estimate <= max_tokens:
+            context["token_count_estimate"] = token_count_estimate
+            return context
+
+        truncation_fields = [
+            ("linked_objects", "linked_object_ids", "objects"),
+            ("related_files", "related_file_ids", "files"),
+            ("relevant_memories", "agent_memory_ids", "agent_memories"),
+            ("recent_chat", "recent_chat_ids", "chat_logs"),
+        ]
+
+        for field_name, pointer_name, collection_name in truncation_fields:
+            while context.get(field_name) and token_count_estimate > max_tokens:
+                removed_item = context[field_name].pop()
+                removed_id = removed_item.get("id")
+                context["qdrant_pointers"][pointer_name] = [item["id"] for item in context.get(field_name, [])]
+                context["qdrant_pointer_entries"] = [
+                    entry
+                    for entry in context.get("qdrant_pointer_entries", [])
+                    if not (entry.get("collection") == collection_name and entry.get("id") == removed_id)
+                ]
+                token_count_estimate = self._context_token_count(context)
+            if token_count_estimate <= max_tokens:
+                break
+
+        if token_count_estimate > max_tokens:
+            logger.warning(
+                "Context for task %s still exceeds token limit after truncation: estimated=%s max=%s",
+                context.get("task_id"),
+                token_count_estimate,
+                max_tokens,
+            )
+        else:
+            logger.warning(
+                "Context for task %s truncated to fit token limit: estimated=%s max=%s",
+                context.get("task_id"),
+                token_count_estimate,
+                max_tokens,
+            )
+
+        context["token_count_estimate"] = token_count_estimate
+        return context
+
     async def build_task_context(
         self,
         task_id: str,
@@ -130,7 +183,7 @@ class ContextBuilder:
             context["qdrant_pointers"]["agent_memory_ids"] = [item["id"] for item in context["relevant_memories"]]
             context["qdrant_pointers"]["recent_chat_ids"] = [item["id"] for item in context["recent_chat"]]
 
-        return context
+        return self._truncate_to_token_limit(context)
 
     async def _get_pointer(self, collection: str, object_id: str):
         client = qdrant_manager.get_async_client()

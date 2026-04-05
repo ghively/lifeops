@@ -3,6 +3,7 @@ Tests for the objects router.
 """
 
 import pytest
+from qdrant_client import models as qdrant_models
 
 
 @pytest.mark.asyncio
@@ -176,3 +177,64 @@ class TestObjectsRouter:
         assert data["title"] == object_data["title"]
         assert data["icon"] == object_data["icon"]
         assert data["layout"] == object_data["layout"]
+
+    async def test_create_object_parses_tags_and_mentions(self, test_client_with_store):
+        """Test creating an object parses tags and valid agent mentions from content."""
+        client, store = test_client_with_store
+        store["points"]["agent-1"] = qdrant_models.PointStruct(
+            id="agent-1",
+            vector=[0.1] * 384,
+            payload={
+                "id": "agent-1",
+                "type": "agent",
+                "title": "researcher",
+                "content": "Research agent",
+                "properties": {"agent_name": "researcher"},
+            },
+        )
+        store["counters"]["objects"] += 1
+
+        response = await client.post("/api/v1/objects", json={
+            "title": "Mentioned Object",
+            "content": "Working with #alpha #beta and @researcher plus @unknown and #alpha",
+            "type": "note",
+            "properties": {"tags": ["seed"]},
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["properties"]["tags"] == ["seed", "alpha", "beta"]
+        assert data["properties"]["mentions"] == ["researcher"]
+
+    async def test_update_object_parses_tags_and_mentions(self, test_client_with_store):
+        """Test updating an object refreshes parsed tags and valid agent mentions."""
+        client, store = test_client_with_store
+        store["points"]["agent-1"] = qdrant_models.PointStruct(
+            id="agent-1",
+            vector=[0.1] * 384,
+            payload={
+                "id": "agent-1",
+                "type": "agent",
+                "title": "writer",
+                "content": "Writing agent",
+                "properties": {"agent_name": "writer"},
+            },
+        )
+        store["counters"]["objects"] += 1
+
+        create_resp = await client.post("/api/v1/objects", json={
+            "title": "Original",
+            "content": "Nothing parsed here",
+            "type": "note",
+        })
+        object_id = create_resp.json()["id"]
+
+        response = await client.put(f"/api/v1/objects/{object_id}", json={
+            "content": "Updated with #release @writer @missing",
+            "properties": {"tags": ["manual"]},
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["properties"]["tags"] == ["manual", "release"]
+        assert data["properties"]["mentions"] == ["writer"]

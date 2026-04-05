@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class ObjectProperties(BaseModel):
     """Object properties"""
     tags: List[str] = Field(default_factory=list)
+    mentions: List[str] = Field(default_factory=list)
     status: Optional[str] = None
     priority: Optional[str] = None
     assigned_to: Optional[str] = None

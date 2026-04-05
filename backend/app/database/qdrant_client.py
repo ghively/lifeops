@@ -123,6 +123,7 @@ class QdrantManager:
                 "type": PayloadSchemaType.KEYWORD,
                 "title": PayloadSchemaType.TEXT,
                 "properties.tags": PayloadSchemaType.KEYWORD,
+                "properties.mentions": PayloadSchemaType.KEYWORD,
                 "properties.status": PayloadSchemaType.KEYWORD,
                 "properties.priority": PayloadSchemaType.KEYWORD,
                 "properties.assigned_to": PayloadSchemaType.KEYWORD,

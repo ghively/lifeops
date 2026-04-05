@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pagination** — Fixed list_objects to use proper Qdrant scroll API instead of fetching 10K records (C3 fix)
 - **JWT persistence** — JWT secret persisted to disk, survives container restarts (C4 fix)
 - **WebSocket auth** — WebSocket connections require JWT via query param or header
+- **Password reset token leak** — Reset tokens no longer returned in API response body (CRITICAL)
+- **JWT secret warning** — Logs SECURITY warning when JWT_SECRET_KEY not set in production
 
 ### Fixed
 - Build: Excluded test files from TypeScript compilation
@@ -21,11 +23,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build: Removed phantom `ypy`/`ypy-websocket` dependencies (never imported)
 - Build: Regenerated `package-lock.json` for CRDT dependencies
 - Fixed slowapi/Starlette compatibility by using vendor in-memory rate limiter
+- Resolved `utils.py` vs `utils/` package import conflict (S3 follow-up)
+- Updated all test URLs to `/api/v1/` prefix; accept 422 for validation errors
+
+### Changed
+- **API versioning** — All routes now under `/api/v1/` prefix; frontend baseURL updated (S5)
+- **Typed request bodies** — Pydantic models for tasks assign/status and agents chat endpoints (S1)
+- **Async I/O** — Heartbeat file writes and backup subprocess wrapped with `asyncio.to_thread()` (S2)
+- **Deduplicated `compute_file_hash`** — Consolidated to `app/utils.py` (S3)
+- **`.env.example` completed** — 32 env vars documented with types and descriptions (was 6) (S4)
+- **Block pagination** — Limit param default 100, max 500 (was 5000)
+- **Batch Qdrant operations** — Single upsert/delete calls instead of N+1 loops in block sync
+- **Data integrity** — try/except rollback around multi-store Qdrant+SQLite operations
+- **Concurrent embeddings** — `asyncio.gather` for parallel embedding generation in block sync
+- **Centralized constants** — New `app/constants.py` with collection name constants
+- **WebSocket error handling** — Separate WebSocketDisconnect (debug) from app exceptions (traceback)
+
+### Tests
+- Added password reset token leak regression test
+- Fixed test mock to handle `vector=None` in batch block upserts
+- All 255 tests passing
 
 ### Infrastructure
 - Added `backend/app/vendor/slowapi_compat.py` — zero-dependency in-memory rate limiter
 - Added `backend/app/data/` to `.gitignore` for runtime data
 - Added JWT secret file persistence at `data/.jwt_secret`
+- Added `backend/app/constants.py` — centralized collection name constants
 
 ### Removed
 - `slowapi` external dependency (replaced by vendor fallback)
