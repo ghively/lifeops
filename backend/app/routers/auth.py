@@ -209,8 +209,6 @@ async def request_password_reset(request: Request, data: PasswordResetRequest):
 
     return {
         "message": "If an account with this email exists, a password reset token has been sent",
-        # Only include token in development for testing
-        "_dev_token": reset_token if reset_token else None,
     }
 
 
