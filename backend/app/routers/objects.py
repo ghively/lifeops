@@ -96,14 +96,22 @@ async def _parse_mentions_from_content(client, content: str) -> list[str]:
         with_vectors=False,
     )
     agent_names = {
-        payload_name
+        payload_name.lower()
         for point in agent_records
         for payload_name in [
             (point.payload or {}).get("properties", {}).get("agent_name") or (point.payload or {}).get("title")
         ]
         if payload_name
     }
-    return [mention for mention in requested_mentions if mention in agent_names]
+    # Deduplicate by lowercase to avoid storing @Sampler and @sampler separately
+    seen = set()
+    result = []
+    for mention in requested_mentions:
+        lower = mention.lower()
+        if lower in agent_names and lower not in seen:
+            seen.add(lower)
+            result.append(mention)
+    return result
 
 
 async def _enrich_properties_from_content(client, object_id: str, payload: dict) -> dict:

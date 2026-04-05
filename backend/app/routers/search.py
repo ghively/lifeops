@@ -12,6 +12,9 @@ from app.services.embedding import embedding_service
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Search uses optional authentication so public/shared knowledge bases can be
+# searched without requiring a logged-in user. When a user is present, this can
+# later be extended to include user-specific search behavior and results.
 SEARCH_COLLECTIONS = ["objects", "blocks", "relations", "files", "images", "code", "agent_memories", "chat_logs"]
 TEXT_FIELDS = ["title", "content", "context", "content_text", "content_preview", "description", "name"]
 

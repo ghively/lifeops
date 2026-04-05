@@ -1,5 +1,6 @@
 """File Watcher Service - Watches folders for changes and indexes files."""
 from __future__ import annotations
+import asyncio
 import ast
 import json
 import logging
@@ -188,7 +189,7 @@ class FileWatcherService:
                 (count["count"], folder_id),
             )
 
-    async def _extract_content(self, file_path: str, extension: str) -> str:
+    def _extract_content_sync(self, file_path: str, extension: str) -> str:
         if extension == ".pdf":
             import fitz
 
@@ -203,6 +204,9 @@ class FileWatcherService:
             return ""
         with open(file_path, "r", encoding="utf-8", errors="ignore") as file_handle:
             return file_handle.read()
+
+    async def _extract_content(self, file_path: str, extension: str) -> str:
+        return await asyncio.to_thread(self._extract_content_sync, file_path, extension)
 
     async def _upsert_file_record(self, file_path: str, checksum: str, mime_type: str, content_text: str, object_id: str) -> str:
         client = qdrant_manager.get_async_client()
