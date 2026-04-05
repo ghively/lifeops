@@ -1,5 +1,8 @@
 # Knowledge OS
 
+[![Tests](https://img.shields.io/badge/tests-256%20passing-brightgreen)](https://github.com/ghively/knowledge-os)
+[![Version](https://img.shields.io/badge/version-v0.2.0-blue)](https://github.com/ghively/knowledge-os)
+
 A **Capacities/Anytype-inspired knowledge management system** with **OpenClaw agent integration**. Built on **Qdrant** for semantic search and vector storage.
 
 ## Features
@@ -10,6 +13,11 @@ A **Capacities/Anytype-inspired knowledge management system** with **OpenClaw ag
 - **Block references & backlinks** - Link between any blocks, not just pages
 - **Semantic search** - Find content by meaning, not just keywords
 - **Real-time updates** - WebSocket-powered live collaboration
+
+### Smart Content
+- **#tag parsing** - Tags are extracted from content and stored in `properties.tags`
+- **@mention parsing** - `@agent` mentions are validated against the agents collection, case-insensitive, and stored in `properties.mentions`
+- **Context token enforcement** - Agent task context is truncated to `MAX_CONTEXT_TOKENS` (default `4000`)
 
 ### AI Agent Integration
 - **OpenClaw integration** - Direct API connection to your agent system
@@ -66,7 +74,7 @@ A **Capacities/Anytype-inspired knowledge management system** with **OpenClaw ag
 ### 1. Clone and Configure
 
 ```bash
-git clone <repository>
+git clone https://github.com/ghively/knowledge-os.git
 cd knowledge-os
 
 # Copy environment template
@@ -115,6 +123,14 @@ Add folders to watch via Settings → Watched Folders:
 - `~/Projects` - Code projects
 - Any other path accessible to Docker
 
+## Security
+
+- **JWT authentication** - Required on all CRUD endpoints; search endpoints can be accessed without JWT when configured to allow optional auth
+- **Rate limiting** - Auth endpoints: `5/min`, write endpoints: `30/min`, read endpoints: `60/min`
+- **Password reset safety** - Password reset tokens are never returned in API responses
+- **Persistent JWT secret** - The JWT signing secret persists across container restarts
+- **Rate limit headers** - Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`
+
 ## Usage
 
 ### Creating Notes
@@ -142,88 +158,89 @@ Add folders to watch via Settings → Watched Folders:
 
 ### API Endpoints
 
-> **All endpoints require JWT authentication.** Register/login to obtain a token, then include it as `Authorization: Bearer <token>`.
+> **JWT authentication is required on all CRUD endpoints.** Register/login to obtain a token, then include it as `Authorization: Bearer <token>`. Search endpoints support optional authentication.
 
 #### Authentication
-- `POST /api/auth/register` - Create account (username, email, password, display_name)
-- `POST /api/auth/login` - Login (email, password) → returns access_token + refresh_token
-- `POST /api/auth/refresh` - Refresh access token
-- `POST /api/auth/logout` - Logout (invalidate refresh token)
-- `POST /api/auth/forgot-password` - Request password reset
-- `POST /api/auth/reset-password` - Reset password with token
+- `POST /api/v1/auth/register` - Create account (username, email, password, display_name)
+- `POST /api/v1/auth/login` - Login (email, password) → returns access_token + refresh_token
+- `POST /api/v1/auth/refresh` - Refresh access token
+- `POST /api/v1/auth/logout` - Logout (invalidate refresh token)
+- `POST /api/v1/auth/forgot-password` - Request password reset
+- `POST /api/v1/auth/reset-password` - Reset password with token
 
 #### Objects (requires auth)
-- `GET /api/objects?limit=10&offset=0` - List objects (paginated)
-- `POST /api/objects` - Create object
-- `GET /api/objects/{id}` - Get object
-- `PUT /api/objects/{id}` - Update object
-- `DELETE /api/objects/{id}` - Delete object
+- `GET /api/v1/objects?limit=10&offset=0` - List objects (paginated)
+- `POST /api/v1/objects` - Create object
+- `GET /api/v1/objects/{id}` - Get object
+- `PUT /api/v1/objects/{id}` - Update object
+- `DELETE /api/v1/objects/{id}` - Delete object
 
 ### Blocks
-- `GET /api/blocks/object/{object_id}` - Get blocks for object
-- `POST /api/blocks` - Create block
-- `PUT /api/blocks/{id}` - Update block
-- `POST /api/blocks/batch-update` - Batch update blocks
+- `GET /api/v1/blocks/object/{object_id}` - Get blocks for object
+- `POST /api/v1/blocks` - Create block
+- `PUT /api/v1/blocks/{id}` - Update block
+- `POST /api/v1/blocks/batch-update` - Batch update blocks
 
 ### Tasks (requires auth)
-- `GET /api/tasks` - List tasks
-- `POST /api/tasks/{id}/assign` - Assign to agent
-- `POST /api/tasks/{id}/status` - Update status
+- `GET /api/v1/tasks` - List tasks
+- `POST /api/v1/tasks/{id}/assign` - Assign to agent
+- `POST /api/v1/tasks/{id}/status` - Update status
 
 ### Agents (requires auth)
-- `GET /api/agents` - List agents
-- `POST /api/agents/{name}/chat` - Send message
-- `GET /api/agents/{name}/chat` - Get chat history
+- `GET /api/v1/agents` - List agents
+- `POST /api/v1/agents/{name}/chat` - Send message
+- `GET /api/v1/agents/{name}/chat` - Get chat history
 
-### Search (requires auth)
-- `GET /api/search?q={query}` - Semantic search
-- `GET /api/search/similar/{id}` - Find similar
+### Search (optional auth)
+- `GET /api/v1/search?q={query}` - Semantic search
+- `GET /api/v1/search/similar/{id}` - Find similar
 
 ### Files (requires auth)
-- `GET /api/files` - List files
-- `POST /api/files/{id}/reindex` - Reindex file
+- `GET /api/v1/files` - List files
+- `POST /api/v1/files/{id}/reindex` - Reindex file
 
 ### Settings (requires auth)
-- `GET /api/settings` - Get settings
-- `PUT /api/settings` - Update settings
-- `GET /api/settings/watched-folders` - List watched folders
-- `POST /api/settings/watched-folders` - Add folder
-- `DELETE /api/settings/watched-folders/{id}` - Remove folder
+- `GET /api/v1/settings` - Get settings
+- `PUT /api/v1/settings` - Update settings
+- `GET /api/v1/settings/watched-folders` - List watched folders
+- `POST /api/v1/settings/watched-folders` - Add folder
+- `DELETE /api/v1/settings/watched-folders/{id}` - Remove folder
+- `POST /api/v1/settings/backup` - Trigger backup/export
 
-### Rate Limiting
-| Endpoint Type | Limit |
-|---|---|
-| Auth (login, register, reset) | 5 requests/minute |
-| Write (POST, PUT, DELETE) | 30 requests/minute |
-| Read (GET) | 60 requests/minute |
-
-Rate limit headers are included in responses: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+### WebSockets
+- `ws://localhost:8010/ws/system` - System updates
+- `ws://localhost:8010/ws/agents/{name}` - Agent-specific updates
 
 ## Development
 
-### Frontend
+### Docker Compose Workflow
+
+```bash
+cp .env.example .env
+docker-compose up --build
+```
+
+### Common Commands
+
+```bash
+docker-compose up --build -d
+docker-compose down
+docker-compose logs -f backend
+docker-compose logs -f frontend
+```
+
+### With File Watcher
+
+```bash
+docker-compose --profile with-watcher up --build
+```
+
+### Frontend Development
 
 ```bash
 cd frontend
 npm install
 VITE_API_URL=http://127.0.0.1:8010 npm run dev
-```
-
-### Backend
-
-```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-PORT=8010 uvicorn app.main:app --host 127.0.0.1 --port 8010
-```
-
-### File Watcher (Standalone)
-
-```bash
-cd backend
-python file_watcher.py
 ```
 
 ## Backup & Recovery
@@ -242,7 +259,7 @@ curl -X POST http://localhost:6335/snapshots/recover \
 
 ### Export to Markdown
 ```bash
-curl -X POST http://localhost:8010/api/settings/backup \
+curl -X POST http://localhost:8010/api/v1/settings/backup \
   -H "Content-Type: application/json" \
   -d '{"type": "markdown"}'
 ```
@@ -280,5 +297,5 @@ MIT License - See LICENSE file
 
 ## Support
 
-- GitHub Issues: [Report bugs](https://github.com/yourusername/knowledge-os/issues)
-- Documentation: [Wiki](https://github.com/yourusername/knowledge-os/wiki)
+- GitHub Issues: [Report bugs](https://github.com/ghively/knowledge-os/issues)
+- Documentation: [Wiki](https://github.com/ghively/knowledge-os/wiki)
