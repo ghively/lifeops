@@ -98,12 +98,12 @@ export function SearchPage() {
   return (
     <div className="h-full flex flex-col">
       {/* Search Header */}
-      <div className="border-b p-4 bg-card">
+      <div className="border-b bg-card p-4">
         <div className="max-w-3xl mx-auto">
           <h1 className="text-2xl font-bold mb-4">Search</h1>
           
-          <div className="flex gap-2">
-            <div className="flex-1 relative">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 value={query}
@@ -122,7 +122,7 @@ export function SearchPage() {
           </div>
 
           {/* Search Type Toggle */}
-          <div className="flex gap-2 mt-3">
+          <div className="mt-3 flex flex-wrap gap-2">
             <Button
               variant={searchType === 'semantic' ? 'secondary' : 'ghost'}
               size="sm"

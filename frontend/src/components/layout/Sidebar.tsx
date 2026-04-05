@@ -27,8 +27,11 @@ import { useAuthStore } from '@/stores/auth'
 
 interface SidebarProps {
   collapsed: boolean
+  isMobile?: boolean
+  mobileOpen?: boolean
   onToggle: () => void
   onAgentClick?: (agent: AgentItem) => void
+  onNavigate?: () => void
 }
 
 const spaces = [
@@ -44,7 +47,7 @@ const quickLinks = [
   { id: 'inbox', name: 'Inbox', icon: Inbox, href: '/inbox' },
 ]
 
-export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
+export function Sidebar({ collapsed, isMobile = false, mobileOpen = false, onToggle, onAgentClick, onNavigate }: SidebarProps) {
   const location = useLocation()
   const { user, logout } = useAuthStore()
   const [spacesOpen, setSpacesOpen] = useState(true)
@@ -84,7 +87,17 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
     }
   }
 
-  if (collapsed) {
+  const sidebarClasses = cn(
+    'border-r bg-card flex flex-col',
+    isMobile
+      ? 'fixed inset-y-0 left-0 z-40 w-[min(85vw,20rem)] transform shadow-xl transition-transform duration-200'
+      : collapsed
+      ? 'w-14'
+      : 'w-64',
+    isMobile && (mobileOpen ? 'translate-x-0' : '-translate-x-full'),
+  )
+
+  if (!isMobile && collapsed) {
     return (
       <div className="w-14 border-r bg-card flex flex-col items-center py-4">
         <Button aria-label="Toggle sidebar" data-testid="sidebar-toggle" variant="ghost" size="icon" onClick={onToggle} className="mb-4">
@@ -93,7 +106,7 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
         
         <div className="flex flex-col gap-2">
           {spaces.map((space) => (
-            <Link key={space.id} to={space.href}>
+            <Link key={space.id} to={space.href} onClick={onNavigate}>
               <Button
                 variant={location.pathname === space.href ? 'secondary' : 'ghost'}
                 size="icon"
@@ -128,7 +141,16 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
   }
 
   return (
-    <div className="w-64 border-r bg-card flex flex-col">
+    <>
+    {isMobile && mobileOpen && (
+      <button
+        type="button"
+        aria-label="Close navigation"
+        className="fixed inset-0 z-30 bg-black/35 lg:hidden"
+        onClick={onToggle}
+      />
+    )}
+    <div className={sidebarClasses}>
       {/* Header */}
       <div className="h-14 border-b flex items-center justify-between px-4">
         <Link to="/" className="font-semibold text-lg">
@@ -144,7 +166,7 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
           {/* Quick Links */}
           <div className="space-y-1">
             {quickLinks.map((link) => (
-              <Link key={link.id} to={link.href}>
+              <Link key={link.id} to={link.href} onClick={onNavigate}>
                 <Button
                   variant={location.pathname === link.href ? 'secondary' : 'ghost'}
                   className="w-full justify-start gap-2"
@@ -167,7 +189,7 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
             <CollapsibleContent>
               <div className="space-y-1 pt-1">
                 {spaces.map((space) => (
-                  <Link key={space.id} to={space.href}>
+                  <Link key={space.id} to={space.href} onClick={onNavigate}>
                     <Button
                       variant={location.pathname === space.href ? 'secondary' : 'ghost'}
                       className="w-full justify-start gap-2"
@@ -231,7 +253,7 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
                 <div className="text-sm text-muted-foreground px-3 py-2">No recent objects</div>
               ) : (
                 recentObjects.map((object: ObjectItem) => (
-                  <Link key={object.id} to={`/object/${object.id}`}>
+                  <Link key={object.id} to={`/object/${object.id}`} onClick={onNavigate}>
                     <Button variant="ghost" className="w-full justify-start gap-2">
                       <span>{object.icon || '📄'}</span>
                       <span className="truncate">{object.title}</span>
@@ -292,7 +314,7 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
           </div>
         )}
 
-        <Link to="/settings">
+        <Link to="/settings" onClick={onNavigate}>
           <Button
             variant={location.pathname === '/settings' ? 'secondary' : 'ghost'}
             className="w-full justify-start gap-2"
@@ -313,5 +335,6 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
         </Button>
       </div>
     </div>
+    </>
   )
 }

@@ -56,6 +56,14 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  html, body, #root {
+    min-height: 100%;
+  }
+
+  body {
+    overscroll-behavior-y: contain;
+  }
 }
 
 /* Custom scrollbar */
@@ -88,6 +96,11 @@
 
 .block-actions {
   @apply opacity-0 transition-opacity;
+}
+
+.touch-manipulation {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Task styles */

@@ -29,6 +29,9 @@ function App() {
   useEffect(() => {
     // Connect to WebSocket on mount
     connect()
+    return () => {
+      useWebSocketStore.getState().disconnect()
+    }
   }, [connect])
 
   return (

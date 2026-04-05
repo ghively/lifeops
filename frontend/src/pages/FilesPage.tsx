@@ -127,8 +127,8 @@ export function FilesPage() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="border-b p-4 bg-card">
-        <div className="flex items-center justify-between mb-4">
+      <div className="border-b bg-card p-4">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <Folder className="h-6 w-6" />
@@ -187,7 +187,7 @@ export function FilesPage() {
                   <div
                     key={file.id}
                     data-testid="file-row"
-                    className="flex items-center gap-3 p-3 hover:bg-muted rounded-lg cursor-pointer group"
+                    className="group flex flex-col gap-3 rounded-lg p-3 transition-colors hover:bg-muted sm:flex-row sm:items-center"
                     onClick={() => setSearchParams({ file: file.id })}
                   >
                     <Icon className={cn("h-5 w-5", getFileColor(contentType))} />
@@ -195,7 +195,7 @@ export function FilesPage() {
                       <div className="font-medium truncate">{file.filename || file.name}</div>
                       <div className="text-sm text-muted-foreground truncate">{file.path}</div>
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
                       {file.size_bytes !== undefined && (
                         <span className="hidden sm:inline">{formatFileSize(file.size_bytes)}</span>
                       )}
@@ -220,7 +220,7 @@ export function FilesPage() {
                         data-testid="file-reindex-button"
                         variant="ghost"
                         size="icon"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="self-end opacity-100 transition-opacity sm:self-auto sm:opacity-0 sm:group-hover:opacity-100"
                         onClick={(e) => handleReindex(file.id, e)}
                         disabled={reindexMutation.isPending}
                       >
@@ -286,7 +286,7 @@ export function FilesPage() {
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-4 py-4">
-                <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
                   <div>
                     <span className="text-muted-foreground">Path:</span>
                     <p className="font-mono mt-1">{selectedFile.path}</p>

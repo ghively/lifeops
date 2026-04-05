@@ -88,12 +88,12 @@ export function AgentsPage() {
   return (
     <div className="h-full flex">
       <div className={cn(
-        "flex-1 p-6 overflow-auto transition-all",
-        chatOpen && "mr-96"
+        'flex-1 overflow-auto p-4 transition-all sm:p-6',
+        chatOpen && 'sm:mr-96'
       )}>
         <div className="max-w-5xl mx-auto">
           {/* Header */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-2xl font-bold flex items-center gap-2">
                 <Bot className="h-6 w-6" />
@@ -110,7 +110,7 @@ export function AgentsPage() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-4 gap-4 mb-6">
+          <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
             <div className="p-4 bg-card border rounded-lg">
               <div className="text-2xl font-bold">{agents.length}</div>
               <div className="text-sm text-muted-foreground">Total Agents</div>
@@ -130,7 +130,7 @@ export function AgentsPage() {
           </div>
 
           {/* Agent List */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {agents.length === 0 ? (
               <div className="col-span-2 text-center py-12 text-muted-foreground">
                 <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />

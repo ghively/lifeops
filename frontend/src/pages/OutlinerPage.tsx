@@ -129,6 +129,17 @@ export function OutlinerPage() {
   })
 
   // Create block mutation
+  const editorBlocks = useMemo(() => (
+    blocks.map((b: BlockItem) => ({
+      id: b.id,
+      type: (b.type as BlockElement['type']) || 'paragraph',
+      content: b.content,
+      level: b.level || 0,
+      checked: Boolean(b.properties?.checked),
+      children: [{ text: b.content }],
+    }))
+  ), [blocks])
+
   // Handle title edit
   const handleTitleSave = useCallback(() => {
     if (id && editedTitle !== objectData?.title) {
@@ -170,7 +181,7 @@ export function OutlinerPage() {
   // Loading state
   if (objectLoading || blocksLoading) {
     return (
-      <div className="max-w-4xl mx-auto py-8 px-6">
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="animate-pulse">
           <div className="h-8 bg-muted rounded w-1/3 mb-4" />
           <div className="h-4 bg-muted rounded w-1/4 mb-8" />
@@ -187,7 +198,7 @@ export function OutlinerPage() {
   // No object selected - show welcome
   if (!id) {
     return (
-      <div className="max-w-4xl mx-auto py-8 px-6">
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="text-center py-20">
           <div className="text-6xl mb-4">📝</div>
           <h1 className="text-3xl font-bold mb-4">Welcome to Knowledge OS</h1>
@@ -207,22 +218,12 @@ export function OutlinerPage() {
   const object = objectData as ObjectData
   const objectType = object?.type || 'page'
   const icon = object?.icon || (objectType === 'task' ? '✅' : objectType === 'agent' ? '🤖' : '📄')
-  const editorBlocks = useMemo(() => (
-    blocks.map((b: BlockItem) => ({
-      id: b.id,
-      type: (b.type as BlockElement['type']) || 'paragraph',
-      content: b.content,
-      level: b.level || 0,
-      checked: Boolean(b.properties?.checked),
-      children: [{ text: b.content }],
-    }))
-  ), [blocks])
 
   return (
     <ErrorBoundary>
-    <div className="max-w-4xl mx-auto py-8 px-6">
+    <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6 sm:py-8">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         <Button aria-label="Back" variant="ghost" size="sm" onClick={() => navigate('/')}>
           <ChevronLeft className="h-4 w-4 mr-1" />
           Back
@@ -235,7 +236,7 @@ export function OutlinerPage() {
 
       {/* Object Header */}
       <div className="mb-6">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex-1">
             {isEditing ? (
               <input
@@ -249,7 +250,7 @@ export function OutlinerPage() {
               />
             ) : (
               <h1 
-                className="text-3xl font-bold flex items-center gap-3 cursor-pointer hover:bg-muted/50 rounded px-2 -mx-2 py-1"
+                className="flex cursor-pointer items-start gap-3 rounded px-2 py-1 text-2xl font-bold hover:bg-muted/50 sm:-mx-2 sm:text-3xl"
                 onClick={() => {
                   setEditedTitle(object?.title || '')
                   setIsEditing(true)
@@ -260,7 +261,7 @@ export function OutlinerPage() {
               </h1>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 self-start">
             <Button aria-label="Share" data-testid="share-button" variant="ghost" size="icon">
               <Share className="h-4 w-4" />
             </Button>

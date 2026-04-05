@@ -128,7 +128,7 @@ export function SettingsPage() {
   return (
     <div className="h-full flex flex-col">
       <ScrollArea className="flex-1">
-        <div className="max-w-4xl mx-auto py-8 px-6">
+        <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
           {/* Header */}
           <div className="mb-6">
             <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -142,7 +142,7 @@ export function SettingsPage() {
 
           <div className="space-y-8">
             {/* OpenClaw Settings */}
-            <section className="bg-card border rounded-lg p-6">
+            <section className="rounded-lg border bg-card p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <Bot className="h-5 w-5" />
                 <h2 className="text-lg font-semibold">OpenClaw Integration</h2>
@@ -192,7 +192,7 @@ export function SettingsPage() {
             </section>
 
             {/* Watched Folders */}
-            <section className="bg-card border rounded-lg p-6">
+            <section className="rounded-lg border bg-card p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <Folder className="h-5 w-5" />
                 <h2 className="text-lg font-semibold">Watched Folders</h2>
@@ -209,7 +209,7 @@ export function SettingsPage() {
                   </div>
                 ) : (
                   watchedFolders.map((folder: WatchedFolder) => (
-                    <div key={folder.id} className="flex items-center justify-between p-3 bg-muted rounded-md">
+                    <div key={folder.id} className="flex flex-col gap-3 rounded-md bg-muted p-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <div className="font-medium">{folder.path}</div>
                         <div className="text-sm text-muted-foreground">
@@ -238,14 +238,14 @@ export function SettingsPage() {
             </section>
 
             {/* Backup Settings */}
-            <section className="bg-card border rounded-lg p-6">
+            <section className="rounded-lg border bg-card p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <Database className="h-5 w-5" />
                 <h2 className="text-lg font-semibold">Backup & Export</h2>
               </div>
               
               <div className="space-y-4">
-                <div className="flex items-start space-x-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:space-x-3">
                   <Checkbox
                     id="backup-snapshots"
                     checked={settings.backup_snapshots}
@@ -280,7 +280,7 @@ export function SettingsPage() {
                   </Button>
                 </div>
                 
-                <div className="flex items-start space-x-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:space-x-3">
                   <Checkbox
                     id="backup-markdown"
                     checked={settings.backup_markdown}
@@ -315,7 +315,7 @@ export function SettingsPage() {
                   </Button>
                 </div>
                 
-                <div className="flex items-start space-x-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:space-x-3">
                   <Checkbox
                     id="backup-git"
                     checked={settings.backup_git}
@@ -349,7 +349,7 @@ export function SettingsPage() {
                 </div>
 
                 {settings.backup_git && (
-                  <div className="pl-7">
+                  <div className="sm:pl-7">
                     <Label htmlFor="git-repo-url">Git Repository URL</Label>
                     <Input
                       id="git-repo-url"
@@ -364,7 +364,7 @@ export function SettingsPage() {
             </section>
 
             {/* Indexing Settings */}
-            <section className="bg-card border rounded-lg p-6">
+            <section className="rounded-lg border bg-card p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <RefreshCw className="h-5 w-5" />
                 <h2 className="text-lg font-semibold">Indexing</h2>

@@ -111,7 +111,7 @@ export function TasksPage() {
 
   if (isLoading) {
     return (
-      <div className="max-w-4xl mx-auto py-8 px-6">
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-muted rounded w-1/4" />
           <div className="h-4 bg-muted rounded w-1/2" />
@@ -126,10 +126,10 @@ export function TasksPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-6xl gap-6 px-6 py-8">
+    <div className="mx-auto flex max-w-6xl gap-6 px-4 py-6 sm:px-6 sm:py-8">
       <div className="min-w-0 flex-1">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <CheckSquare className="h-6 w-6" />
@@ -145,7 +145,7 @@ export function TasksPage() {
         </Button>
       </div>
 
-      <div className="mb-6 flex gap-2 rounded-lg border bg-card p-3">
+      <div className="mb-6 flex flex-col gap-2 rounded-lg border bg-card p-3 sm:flex-row">
         <Input
           value={newTaskTitle}
           onChange={(event) => setNewTaskTitle(event.target.value)}
@@ -205,7 +205,7 @@ export function TasksPage() {
               )}
               onClick={() => setSelectedTask(task)}
             >
-              <div className="flex items-start justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="font-medium">{task.title}</h3>
@@ -219,7 +219,7 @@ export function TasksPage() {
                     </span>
                   </div>
                   
-                  <div className="flex items-center gap-4 text-sm">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                     <span className={cn('font-medium', statusColors[task.properties?.status || 'todo'])}>
                       {statusLabels[task.properties?.status || 'todo']}
                     </span>
@@ -245,7 +245,7 @@ export function TasksPage() {
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-1 self-end sm:self-auto" onClick={(e) => e.stopPropagation()}>
                   {!task.properties?.assigned_to && task.properties?.status !== 'done' && (
                     <Button 
                       variant="ghost" 

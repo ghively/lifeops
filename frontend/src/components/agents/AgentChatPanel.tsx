@@ -113,7 +113,7 @@ export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) 
   if (!isOpen || !agent) return null
 
   return (
-    <div className="fixed inset-y-0 right-0 w-96 bg-background border-l border-border shadow-xl z-50 flex flex-col">
+    <div className="fixed inset-x-0 bottom-0 top-16 z-50 flex flex-col border-t border-border bg-background shadow-xl sm:inset-y-0 sm:left-auto sm:top-0 sm:w-96 sm:border-l sm:border-t-0">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-border bg-muted/50">
         <div className="flex items-center gap-3">
@@ -130,12 +130,12 @@ export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) 
           </div>
           <div>
             <h3 className="font-semibold text-sm">{agent.name}</h3>
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
               <span className={getStatusColor(agent.status)}>
                 {getStatusText(agent.status)}
               </span>
               {agent.current_task && (
-                <span className="truncate max-w-[120px]">• {agent.current_task}</span>
+                <span className="max-w-[160px] truncate">• {agent.current_task}</span>
               )}
             </p>
           </div>
@@ -192,7 +192,7 @@ export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) 
                   )}
                 </div>
                 <div className={cn(
-                  "max-w-[75%] rounded-lg px-3 py-2 text-sm",
+                  'max-w-[85%] rounded-lg px-3 py-2 text-sm sm:max-w-[75%]',
                   msg.role === 'user'
                     ? 'bg-primary text-primary-foreground'
                     : msg.role === 'system'

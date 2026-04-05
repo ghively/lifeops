@@ -10,6 +10,8 @@ import {
   List,
   Quote,
   Code,
+  ArrowRightToLine,
+  ArrowLeftToLine,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
@@ -226,7 +228,7 @@ const Toolbar = ({ editor }: { editor: Editor }) => {
   }
 
   return (
-    <div className="flex items-center gap-1 border-b bg-muted/50 p-2">
+    <div className="hidden items-center gap-1 overflow-x-auto border-b bg-muted/50 p-2 sm:flex">
       <Button aria-label="Type" title="Type" variant="ghost" size="sm" onClick={() => toggleBlock('paragraph')} className={cn(isBlockActive(editor, 'paragraph') && 'bg-muted')}>
         <Type className="h-4 w-4" />
       </Button>
@@ -469,6 +471,25 @@ export function OutlinerEditor({
     Transforms.insertNodes(editor, newBlock as Descendant, { at: [value.length] })
   }, [editor, readOnly, value.length])
 
+  const adjustBlockLevel = useCallback((direction: 'in' | 'out') => {
+    const [match] = Editor.nodes(editor, {
+      match: (node) => SlateElement.isElement(node) && Editor.isBlock(editor, node),
+      mode: 'lowest',
+    })
+
+    if (!match) {
+      return
+    }
+
+    const [node, path] = match
+    const currentLevel = (node as CustomElement).level || 0
+    const nextLevel = direction === 'in'
+      ? Math.min(currentLevel + 1, 6)
+      : Math.max(currentLevel - 1, 0)
+
+    Transforms.setNodes(editor, { level: nextLevel }, { at: path })
+  }, [editor])
+
   // Leaf renderer with collaboration support
   const renderLeaf = useMemo(
     () => renderLeafFactory(handleLinkClick),
@@ -490,8 +511,22 @@ export function OutlinerEditor({
         </div>
       )}
 
-      <div className="py-4">
+      <div className="py-4 pb-24 sm:pb-4">
         <Slate editor={editor} initialValue={value} onChange={handleChange}>
+          {!readOnly && (
+            <div className="mb-3 flex gap-2 overflow-x-auto sm:hidden">
+              <Button variant="outline" size="sm" className="min-h-11 min-w-11 touch-manipulation" onClick={() => adjustBlockLevel('out')}>
+                <ArrowLeftToLine className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="sm" className="min-h-11 min-w-11 touch-manipulation" onClick={() => adjustBlockLevel('in')}>
+                <ArrowRightToLine className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="sm" className="min-h-11 touch-manipulation" onClick={addBlock}>
+                <Plus className="mr-2 h-4 w-4" />
+                New block
+              </Button>
+            </div>
+          )}
           <Editable
             renderElement={renderElement}
             renderLeaf={renderLeaf}
@@ -499,13 +534,13 @@ export function OutlinerEditor({
             onKeyDown={onKeyDown}
             placeholder="Type something... Use /todo, /heading, [[Wiki Links]], or ((block-id))"
             readOnly={readOnly}
-            className="min-h-[200px] outline-none"
+            className="min-h-[200px] touch-manipulation outline-none"
             aria-label="Outliner editor"
           />
         </Slate>
 
         {!readOnly && (
-          <Button variant="ghost" className="mt-2 w-full justify-start gap-2 text-muted-foreground" onClick={addBlock}>
+          <Button variant="ghost" className="mt-2 hidden w-full justify-start gap-2 text-muted-foreground sm:flex" onClick={addBlock}>
             <Plus className="h-4 w-4" />
             Add a block
           </Button>

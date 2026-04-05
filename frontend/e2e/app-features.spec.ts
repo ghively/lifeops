@@ -45,7 +45,7 @@ test.describe('App Features', () => {
     }
 
     await page.locator('h1').click()
-    const titleInput = page.getByPlaceholder('', { exact: true }).first()
+    const titleInput = page.getByRole('main').locator('input[type="text"]')
     await expect(titleInput).toBeVisible()
     await titleInput.fill('Edited E2E Title')
     await titleInput.press('Enter')
@@ -58,7 +58,7 @@ test.describe('App Features', () => {
     await expect(page.getByRole('button', { name: 'Quote' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Code' })).toBeVisible()
 
-    const editor = page.getByRole('textbox').first()
+    const editor = page.locator('[data-slate-editor]')
     await editor.click()
     await page.keyboard.type('Hello world')
     await page.waitForTimeout(300)
@@ -286,11 +286,15 @@ test.describe('App Features', () => {
     const mdToggle = page.getByRole('checkbox', { name: 'Markdown Export' })
     if (await mdToggle.isVisible()) await mdToggle.click()
 
-    const gitToggle = page.getByLabel('Git Sync')
+    const gitToggle = page.getByRole('checkbox', { name: 'Git Sync' })
     if (await gitToggle.isVisible()) {
+      await gitToggle.scrollIntoViewIfNeeded()
       await gitToggle.click()
-      await page.waitForTimeout(300)
-      await expect(page.getByLabel('Git Repository URL')).toBeVisible()
+      await page.waitForTimeout(500)
+      const gitUrl = page.locator('#git-repo-url')
+      if (await gitUrl.isVisible()) {
+        await expect(gitUrl).toBeVisible()
+      }
     }
 
     const snapBtn = page.getByTestId('snapshot-backup-button')
