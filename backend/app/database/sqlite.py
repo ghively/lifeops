@@ -88,15 +88,48 @@ class SQLiteManager:
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS agent_sessions (
                 id TEXT PRIMARY KEY,
+                agent_id TEXT,
                 agent_name TEXT NOT NULL,
                 task_id TEXT,
                 status TEXT DEFAULT 'active',
+                title TEXT,
                 started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 ended_at TIMESTAMP,
                 summary TEXT,
-                messages_count INTEGER DEFAULT 0
+                message_count INTEGER DEFAULT 0,
+                messages_count INTEGER DEFAULT 0,
+                metadata TEXT
             )
         """)
+
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS agent_messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tool_calls TEXT,
+                tool_results TEXT,
+                tokens_in INTEGER,
+                tokens_out INTEGER,
+                created_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+            )
+        """)
+
+        await self._ensure_columns(
+            "agent_sessions",
+            {
+                "agent_id": "TEXT",
+                "title": "TEXT",
+                "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "message_count": "INTEGER DEFAULT 0",
+                "metadata": "TEXT",
+            },
+        )
 
         # Users table
         await self.connection.execute("""
@@ -138,6 +171,18 @@ class SQLiteManager:
         """)
 
         await self.connection.commit()
+
+    async def _ensure_columns(self, table_name: str, columns: dict[str, str]):
+        """Add missing columns for existing tables."""
+        async with self.connection.execute(f"PRAGMA table_info({table_name})") as cursor:
+            existing_rows = await cursor.fetchall()
+        existing = {row[1] for row in existing_rows}
+        for column_name, column_type in columns.items():
+            if column_name in existing:
+                continue
+            await self.connection.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+            )
     
     async def execute(self, query: str, parameters: tuple = ()):
         """Execute a query"""
