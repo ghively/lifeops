@@ -28,6 +28,12 @@ class AgentRuntime:
         self.tool_registry = ToolRegistry()
         self.agent_loop = AgentLoop(self.llm_router, self.tool_registry)
 
+    async def start(self) -> None:
+        await self.tool_registry.mcp_manager.initialize()
+
+    async def stop(self) -> None:
+        await self.tool_registry.mcp_manager.shutdown()
+
     async def chat(
         self,
         *,
@@ -36,6 +42,8 @@ class AgentRuntime:
         session_id: Optional[str] = None,
     ) -> AsyncGenerator[StreamingEvent, None]:
         identity = self.identity_loader.load(agent_id)
+        if identity.mcp_servers:
+            await self.tool_registry.mcp_manager.ensure_servers(identity.mcp_servers, persist=False)
         session = await self.session_manager.get_session(session_id) if session_id else None
         if not session:
             session = await self.session_manager.create_session(agent_id=agent_id)

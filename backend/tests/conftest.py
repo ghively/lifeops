@@ -5,6 +5,7 @@ Shared pytest fixtures for Knowledge OS backend tests.
 import asyncio
 import os
 import sys
+from contextlib import ExitStack
 from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -300,6 +301,7 @@ def mock_sqlite_manager():
         "file_sync_status": {},
         "backup_log": [],
         "agent_sessions": {},
+        "mcp_server_configs": {},
     }
 
     async def mock_execute(query, params=None):
@@ -320,12 +322,24 @@ def mock_sqlite_manager():
     async def mock_get_setting(key, default=None):
         return storage["settings"].get(key, default)
 
+    async def mock_list_mcp_server_configs():
+        return list(storage["mcp_server_configs"].values())
+
+    async def mock_upsert_mcp_server_config(config):
+        storage["mcp_server_configs"][config["name"]] = dict(config)
+
+    async def mock_delete_mcp_server_config(name):
+        storage["mcp_server_configs"].pop(name, None)
+
     mock_manager.execute = mock_execute
     mock_manager.executemany = mock_executemany
     mock_manager.fetchone = mock_fetchone
     mock_manager.fetchall = mock_fetchall
     mock_manager.upsert_setting = mock_upsert_setting
     mock_manager.get_setting = mock_get_setting
+    mock_manager.list_mcp_server_configs = mock_list_mcp_server_configs
+    mock_manager.upsert_mcp_server_config = mock_upsert_mcp_server_config
+    mock_manager.delete_mcp_server_config = mock_delete_mcp_server_config
     mock_manager._storage = storage
 
     return mock_manager
@@ -453,27 +467,29 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
             "is_active": True,
         }
 
-    # Patch the singletons' methods
-    with patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client), \
-         patch.object(qdrant_manager, "get_client", return_value=mock_async_qdrant_client), \
-         patch.object(qdrant_manager, "async_client", mock_async_qdrant_client), \
-         patch.object(emb_svc, "embed_text", mock_embedding_service.embed_text), \
-         patch.object(emb_svc, "embed_texts", mock_embedding_service.embed_texts), \
-         patch.object(emb_svc, "embed_image", mock_embedding_service.embed_image), \
-         patch.object(sqlite_manager, "get_setting", mock_sqlite_manager.get_setting), \
-         patch.object(sqlite_manager, "upsert_setting", mock_sqlite_manager.upsert_setting), \
-         patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone), \
-         patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall), \
-         patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute), \
-         patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})), \
-         patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})), \
-         patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})), \
-         patch.object(context_builder, "build_task_context", AsyncMock(return_value={})), \
-         patch.object(file_watcher_service, "process_file", AsyncMock(return_value=None)), \
-         patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)), \
-         patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)), \
-         patch.object(backup_service, "run_backup", AsyncMock(return_value=None)):
-
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client))
+        stack.enter_context(patch.object(qdrant_manager, "get_client", return_value=mock_async_qdrant_client))
+        stack.enter_context(patch.object(qdrant_manager, "async_client", mock_async_qdrant_client))
+        stack.enter_context(patch.object(emb_svc, "embed_text", mock_embedding_service.embed_text))
+        stack.enter_context(patch.object(emb_svc, "embed_texts", mock_embedding_service.embed_texts))
+        stack.enter_context(patch.object(emb_svc, "embed_image", mock_embedding_service.embed_image))
+        stack.enter_context(patch.object(sqlite_manager, "get_setting", mock_sqlite_manager.get_setting))
+        stack.enter_context(patch.object(sqlite_manager, "upsert_setting", mock_sqlite_manager.upsert_setting))
+        stack.enter_context(patch.object(sqlite_manager, "list_mcp_server_configs", mock_sqlite_manager.list_mcp_server_configs))
+        stack.enter_context(patch.object(sqlite_manager, "upsert_mcp_server_config", mock_sqlite_manager.upsert_mcp_server_config))
+        stack.enter_context(patch.object(sqlite_manager, "delete_mcp_server_config", mock_sqlite_manager.delete_mcp_server_config))
+        stack.enter_context(patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone))
+        stack.enter_context(patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall))
+        stack.enter_context(patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute))
+        stack.enter_context(patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})))
+        stack.enter_context(patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})))
+        stack.enter_context(patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})))
+        stack.enter_context(patch.object(context_builder, "build_task_context", AsyncMock(return_value={})))
+        stack.enter_context(patch.object(file_watcher_service, "process_file", AsyncMock(return_value=None)))
+        stack.enter_context(patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)))
+        stack.enter_context(patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)))
+        stack.enter_context(patch.object(backup_service, "run_backup", AsyncMock(return_value=None)))
         app.dependency_overrides[get_current_user] = fake_current_user
         app.dependency_overrides[get_optional_user] = fake_current_user
         limiter_enabled = getattr(app.state.limiter, "enabled", True)
@@ -508,27 +524,29 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
             "is_active": True,
         }
 
-    # Patch the singletons' methods
-    with patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client), \
-         patch.object(qdrant_manager, "get_client", return_value=mock_async_qdrant_client), \
-         patch.object(qdrant_manager, "async_client", mock_async_qdrant_client), \
-         patch.object(emb_svc, "embed_text", mock_embedding_service.embed_text), \
-         patch.object(emb_svc, "embed_texts", mock_embedding_service.embed_texts), \
-         patch.object(emb_svc, "embed_image", mock_embedding_service.embed_image), \
-         patch.object(sqlite_manager, "get_setting", mock_sqlite_manager.get_setting), \
-         patch.object(sqlite_manager, "upsert_setting", mock_sqlite_manager.upsert_setting), \
-         patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone), \
-         patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall), \
-         patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute), \
-         patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})), \
-         patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})), \
-         patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})), \
-         patch.object(context_builder, "build_task_context", AsyncMock(return_value={})), \
-         patch.object(file_watcher_service, "process_file", AsyncMock(return_value=None)), \
-         patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)), \
-         patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)), \
-         patch.object(backup_service, "run_backup", AsyncMock(return_value=None)):
-
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client))
+        stack.enter_context(patch.object(qdrant_manager, "get_client", return_value=mock_async_qdrant_client))
+        stack.enter_context(patch.object(qdrant_manager, "async_client", mock_async_qdrant_client))
+        stack.enter_context(patch.object(emb_svc, "embed_text", mock_embedding_service.embed_text))
+        stack.enter_context(patch.object(emb_svc, "embed_texts", mock_embedding_service.embed_texts))
+        stack.enter_context(patch.object(emb_svc, "embed_image", mock_embedding_service.embed_image))
+        stack.enter_context(patch.object(sqlite_manager, "get_setting", mock_sqlite_manager.get_setting))
+        stack.enter_context(patch.object(sqlite_manager, "upsert_setting", mock_sqlite_manager.upsert_setting))
+        stack.enter_context(patch.object(sqlite_manager, "list_mcp_server_configs", mock_sqlite_manager.list_mcp_server_configs))
+        stack.enter_context(patch.object(sqlite_manager, "upsert_mcp_server_config", mock_sqlite_manager.upsert_mcp_server_config))
+        stack.enter_context(patch.object(sqlite_manager, "delete_mcp_server_config", mock_sqlite_manager.delete_mcp_server_config))
+        stack.enter_context(patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone))
+        stack.enter_context(patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall))
+        stack.enter_context(patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute))
+        stack.enter_context(patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})))
+        stack.enter_context(patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})))
+        stack.enter_context(patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})))
+        stack.enter_context(patch.object(context_builder, "build_task_context", AsyncMock(return_value={})))
+        stack.enter_context(patch.object(file_watcher_service, "process_file", AsyncMock(return_value=None)))
+        stack.enter_context(patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)))
+        stack.enter_context(patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)))
+        stack.enter_context(patch.object(backup_service, "run_backup", AsyncMock(return_value=None)))
         app.dependency_overrides[get_current_user] = fake_current_user
         app.dependency_overrides[get_optional_user] = fake_current_user
         limiter_enabled = getattr(app.state.limiter, "enabled", True)

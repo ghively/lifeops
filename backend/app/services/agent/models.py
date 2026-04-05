@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 SafetyLevel = Literal["safe", "internal", "external", "destructive"]
 ProviderName = Literal["openai", "anthropic", "ollama", "google"]
 MessageRole = Literal["system", "user", "assistant", "tool"]
 StreamingEventType = Literal["text_delta", "tool_start", "tool_result", "thinking", "done", "error"]
+MCPTransport = Literal["stdio", "http"]
+MCPServerState = Literal["connected", "disconnected", "error"]
 
 
 class LLMProviderConfig(BaseModel):
@@ -31,6 +33,41 @@ class CLIAgentConfig(BaseModel):
     description: str = ""
     enabled: bool = True
     env: Dict[str, str] = Field(default_factory=dict)
+
+
+class MCPServerConfig(BaseModel):
+    name: str
+    transport: MCPTransport
+    command: Optional[str] = None
+    args: List[str] = Field(default_factory=list)
+    env: Dict[str, str] = Field(default_factory=dict)
+    url: Optional[str] = None
+    headers: Dict[str, str] = Field(default_factory=dict)
+    timeout_seconds: int = 30
+    enabled: bool = True
+    auto_connect: bool = True
+
+    @model_validator(mode="after")
+    def validate_transport_fields(self) -> "MCPServerConfig":
+        if self.transport == "stdio" and not self.command:
+            raise ValueError("stdio MCP servers require a command")
+        if self.transport == "http" and not self.url:
+            raise ValueError("http MCP servers require a url")
+        return self
+
+
+class MCPServerStatus(BaseModel):
+    name: str
+    transport: MCPTransport
+    connected: bool = False
+    state: MCPServerState = "disconnected"
+    enabled: bool = True
+    auto_connect: bool = True
+    tool_count: int = 0
+    tools: List[Dict[str, Any]] = Field(default_factory=list)
+    error: Optional[str] = None
+    last_checked_at: Optional[str] = None
+    last_connected_at: Optional[str] = None
 
 
 class ToolDefinition(BaseModel):
@@ -118,4 +155,3 @@ class StreamingEvent(BaseModel):
     delta: Optional[str] = None
     tool_name: Optional[str] = None
     data: Dict[str, Any] = Field(default_factory=dict)
-

@@ -5,7 +5,12 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from app.services.agent.models import AgentIdentity, CLIAgentConfig, LLMProviderConfig
+from app.services.agent.models import AgentIdentity, CLIAgentConfig, LLMProviderConfig, MCPServerConfig
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - dependency installed in backend runtime
+    yaml = None
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +52,7 @@ max_tokens: 2048
 - gemini: analysis and research
 
 ## MCP Servers
-- placeholder: phase-2
+mcp_servers: []
 """,
 }
 
@@ -244,10 +249,43 @@ class IdentityLoader:
 
     def _build_mcp_servers(self, tool_sections: Dict[str, str]) -> List[Dict[str, Any]]:
         mcp_section = tool_sections.get("mcp servers", "")
+        if not mcp_section.strip():
+            return []
+
+        parsed: Any = None
+        if yaml is not None:
+            try:
+                parsed = yaml.safe_load(mcp_section)
+            except Exception:
+                logger.warning("Failed to parse MCP server config from TOOLS.md", exc_info=True)
+
+        if isinstance(parsed, dict) and isinstance(parsed.get("mcp_servers"), list):
+            configs: List[Dict[str, Any]] = []
+            for item in parsed["mcp_servers"]:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    configs.append(MCPServerConfig(**item).model_dump())
+                except Exception:
+                    logger.warning("Skipping invalid MCP server config in TOOLS.md: %s", item, exc_info=True)
+            return configs
+
         servers: List[Dict[str, Any]] = []
         for item in self._parse_bullets(mcp_section):
             name, _, description = item.partition(":")
-            servers.append({"name": name.strip(), "description": description.strip()})
+            clean_name = name.strip()
+            if not clean_name:
+                continue
+            servers.append(
+                MCPServerConfig(
+                    name=clean_name,
+                    transport="stdio",
+                    command=clean_name,
+                    auto_connect=False,
+                    enabled=True,
+                ).model_dump()
+                | {"description": description.strip()}
+            )
         return servers
 
     def _build_system_prompt(self, identity: AgentIdentity) -> str:

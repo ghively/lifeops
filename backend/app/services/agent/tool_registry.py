@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.database.qdrant_client import qdrant_manager
 from app.services.agent.cli_agent import CLIAgentTool
+from app.services.agent.mcp_client import MCPClientManager
 from app.services.agent.models import ToolDefinition, ToolResult
 from app.services.embedding import embedding_service
 from app.utils.time import utc_now_iso
@@ -44,20 +45,33 @@ class RuntimeTool:
 
 
 class ToolRegistry:
-    """Registers native, CLI, and stub MCP tools."""
+    """Registers native, CLI, and MCP tools."""
 
-    def __init__(self, cli_tool: Optional[CLIAgentTool] = None):
+    def __init__(self, cli_tool: Optional[CLIAgentTool] = None, mcp_manager: Optional[MCPClientManager] = None):
         self.cli_tool = cli_tool or CLIAgentTool()
+        self.mcp_manager = mcp_manager or MCPClientManager()
         self._tools: Dict[str, RuntimeTool] = {}
         self._register_native_tools()
         self._register_cli_tools()
-        self._register_mcp_stub()
 
     def list_tools(self) -> List[ToolDefinition]:
-        return [tool.definition for tool in self._tools.values()]
+        return [tool.definition for tool in self._tools.values()] + self.mcp_manager.list_tool_definitions()
 
     def list_openai_tools(self) -> List[Dict[str, Any]]:
-        return [tool.openai_schema() for tool in self._tools.values() if tool.definition.enabled]
+        schemas = [tool.openai_schema() for tool in self._tools.values() if tool.definition.enabled]
+        schemas.extend(
+            {
+                "type": "function",
+                "function": {
+                    "name": definition.name,
+                    "description": definition.description,
+                    "parameters": definition.parameters_schema or {"type": "object", "properties": {}},
+                },
+            }
+            for definition in self.mcp_manager.list_tool_definitions()
+            if definition.enabled
+        )
+        return schemas
 
     def get(self, name: str) -> RuntimeTool:
         if name not in self._tools:
@@ -65,7 +79,9 @@ class ToolRegistry:
         return self._tools[name]
 
     async def execute(self, name: str, arguments: Dict[str, Any]) -> ToolResult:
-        return await self.get(name).execute(arguments)
+        if name in self._tools:
+            return await self.get(name).execute(arguments)
+        return await self.mcp_manager.execute_tool(name, arguments)
 
     def _register(self, definition: ToolDefinition, executor: Callable[[Dict[str, Any]], Awaitable[ToolResult]]) -> None:
         self._tools[definition.name] = RuntimeTool(definition, executor)
@@ -180,18 +196,6 @@ class ToolRegistry:
                 ),
             )
 
-    def _register_mcp_stub(self) -> None:
-        self._register(
-            ToolDefinition(
-                name="mcp_tool_stub",
-                description="Placeholder MCP tool for Phase 2.",
-                parameters_schema={"type": "object", "properties": {"request": {"type": "string"}}},
-                safety_level="external",
-                source="mcp",
-            ),
-            self._mcp_stub,
-        )
-
     async def _create_object(self, arguments: Dict[str, Any]) -> ToolResult:
         client = qdrant_manager.get_async_client()
         object_id = str(uuid.uuid4())
@@ -278,6 +282,3 @@ class ToolRegistry:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(arguments["content"], encoding="utf-8")
         return ToolResult(tool_name="write_file", content=f"Wrote {path}", data={"path": str(path), "bytes": len(arguments['content'])})
-
-    async def _mcp_stub(self, arguments: Dict[str, Any]) -> ToolResult:
-        return ToolResult(tool_name="mcp_tool_stub", content="MCP client support arrives in Phase 2.", data=arguments)

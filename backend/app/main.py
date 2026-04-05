@@ -24,6 +24,7 @@ from app.services.auth import auth_service
 from app.services.file_watcher import file_watcher_service
 from app.services.websocket_manager import websocket_manager
 from app.services.collaboration import collaboration_manager
+from app.services.agent.runtime import agent_runtime
 
 # Import routers
 from app.routers import objects, blocks, tasks, search, agents, files, relations, settings as settings_router, auth as auth_router, collaboration, system, agent_chat
@@ -60,6 +61,9 @@ async def lifespan(app: FastAPI):
     logger.info("📦 Initializing collaboration service...")
     await collaboration_manager.start()
 
+    logger.info("📦 Initializing agent runtime...")
+    await agent_runtime.start()
+
     logger.info("✅ Knowledge OS Backend started successfully!")
     
     yield
@@ -70,6 +74,7 @@ async def lifespan(app: FastAPI):
     await file_watcher_service.stop()
     await backup_service.stop()
     await collaboration_manager.stop()
+    await agent_runtime.stop()
     await embedding_service.close()
     await sqlite_manager.close()
     await qdrant_manager.close()

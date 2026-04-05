@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings, Folder, Database, Bot, Save, Plus, Trash2, Loader2, RefreshCw, Download, GitBranch } from 'lucide-react'
+import { Settings, Folder, Database, Bot, Save, Plus, Trash2, Loader2, RefreshCw, Download, GitBranch, Plug, Cable, TerminalSquare, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -7,7 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { settingsApi } from '@/services/api'
+import { agentRuntimeApi, settingsApi, type MCPServerConfigInput, type MCPServerItem } from '@/services/api'
 
 interface WatchedFolder {
   id: string
@@ -31,6 +31,33 @@ interface Settings {
   auto_index: boolean
 }
 
+const EMPTY_MCP_SERVER: MCPServerConfigInput = {
+  name: '',
+  transport: 'stdio',
+  command: '',
+  args: [],
+  env: {},
+  url: '',
+  timeout_seconds: 30,
+  enabled: true,
+  auto_connect: true,
+}
+
+function parseKeyValueLines(value: string) {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((acc, line) => {
+      const [key, ...rest] = line.split('=')
+      if (!key || rest.length === 0) {
+        return acc
+      }
+      acc[key.trim()] = rest.join('=').trim()
+      return acc
+    }, {})
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const [settings, setSettings] = useState<Settings>({
@@ -50,6 +77,10 @@ export function SettingsPage() {
   const [addFolderOpen, setAddFolderOpen] = useState(false)
   const [newFolderPath, setNewFolderPath] = useState('')
   const [newFolderRecursive, setNewFolderRecursive] = useState(true)
+  const [mcpServer, setMcpServer] = useState<MCPServerConfigInput>(EMPTY_MCP_SERVER)
+  const [mcpArgsText, setMcpArgsText] = useState('')
+  const [mcpEnvText, setMcpEnvText] = useState('')
+  const [mcpTestResult, setMcpTestResult] = useState<{ success: boolean; tools: string[]; error?: string } | null>(null)
 
   // Fetch current settings
   const { data: currentSettings, isLoading: settingsLoading } = useQuery({
@@ -63,6 +94,12 @@ export function SettingsPage() {
     queryFn: settingsApi.getWatchedFolders,
   })
   const watchedFolders = watchedFoldersData?.folders ?? []
+
+  const { data: mcpServersData, isLoading: mcpServersLoading } = useQuery({
+    queryKey: ['mcp-servers'],
+    queryFn: agentRuntimeApi.listMCPServers,
+  })
+  const mcpServers = mcpServersData?.servers ?? []
 
   // Update local settings when data loads
   useEffect(() => {
@@ -103,6 +140,54 @@ export function SettingsPage() {
     mutationFn: (type: 'snapshot' | 'markdown' | 'git') => settingsApi.triggerBackup(type),
   })
 
+  const createMCPServerMutation = useMutation({
+    mutationFn: (data: MCPServerConfigInput) => agentRuntimeApi.createMCPServer(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] })
+      setMcpServer(EMPTY_MCP_SERVER)
+      setMcpArgsText('')
+      setMcpEnvText('')
+    },
+  })
+
+  const deleteMCPServerMutation = useMutation({
+    mutationFn: (name: string) => agentRuntimeApi.deleteMCPServer(name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] })
+    },
+  })
+
+  const connectMCPServerMutation = useMutation({
+    mutationFn: (name: string) => agentRuntimeApi.connectMCPServer(name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] })
+    },
+  })
+
+  const disconnectMCPServerMutation = useMutation({
+    mutationFn: (name: string) => agentRuntimeApi.disconnectMCPServer(name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] })
+    },
+  })
+
+  const testMCPServerMutation = useMutation({
+    mutationFn: (data: MCPServerConfigInput) => agentRuntimeApi.testMCPServer(data),
+    onSuccess: (result) => {
+      setMcpTestResult({
+        success: true,
+        tools: result.tools.map((tool) => tool.runtime_name),
+      })
+    },
+    onError: (error) => {
+      setMcpTestResult({
+        success: false,
+        tools: [],
+        error: error instanceof Error ? error.message : 'Connection test failed',
+      })
+    },
+  })
+
   const handleSave = () => {
     saveSettingsMutation.mutate(settings)
   }
@@ -115,6 +200,32 @@ export function SettingsPage() {
 
   const handleRemoveFolder = (folderId: string) => {
     removeFolderMutation.mutate(folderId)
+  }
+
+  const buildMCPPayload = (): MCPServerConfigInput => ({
+    ...mcpServer,
+    args: mcpArgsText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+    env: parseKeyValueLines(mcpEnvText),
+    timeout_seconds: Number(mcpServer.timeout_seconds || 30),
+  })
+
+  const handleCreateMCPServer = () => {
+    const payload = buildMCPPayload()
+    if (!payload.name.trim()) {
+      return
+    }
+    createMCPServerMutation.mutate(payload)
+  }
+
+  const handleTestMCPServer = () => {
+    const payload = buildMCPPayload()
+    if (!payload.name.trim()) {
+      return
+    }
+    testMCPServerMutation.mutate(payload)
   }
 
   if (settingsLoading) {
@@ -394,6 +505,206 @@ export function SettingsPage() {
                   value={settings.embedding_model}
                   onChange={(e) => setSettings({ ...settings, embedding_model: e.target.value })}
                 />
+              </div>
+            </section>
+
+            <section className="rounded-lg border bg-card p-4 sm:p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <Plug className="h-5 w-5" />
+                <h2 className="text-lg font-semibold">MCP Servers</h2>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                <div className="space-y-3">
+                  {mcpServersLoading ? (
+                    <div className="py-4 text-center">
+                      <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : mcpServers.length === 0 ? (
+                    <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                      No MCP servers configured yet.
+                    </div>
+                  ) : (
+                    mcpServers.map((server: MCPServerItem) => (
+                      <div key={server.name} className="rounded-md border p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 font-medium">
+                              {server.transport === 'stdio' ? <TerminalSquare className="h-4 w-4" /> : <Globe className="h-4 w-4" />}
+                              <span>{server.name}</span>
+                              <span className={`rounded-full px-2 py-0.5 text-xs ${server.state === 'connected' ? 'bg-emerald-100 text-emerald-700' : server.state === 'error' ? 'bg-red-100 text-red-700' : 'bg-muted text-muted-foreground'}`}>
+                                {server.state}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-sm text-muted-foreground">
+                              {server.tool_count} tools available
+                            </div>
+                            {server.error ? (
+                              <div className="mt-2 text-sm text-red-600">{server.error}</div>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 gap-2">
+                            {server.connected ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => disconnectMCPServerMutation.mutate(server.name)}
+                                disabled={disconnectMCPServerMutation.isPending}
+                              >
+                                Disconnect
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => connectMCPServerMutation.mutate(server.name)}
+                                disabled={connectMCPServerMutation.isPending}
+                              >
+                                <Cable className="mr-2 h-4 w-4" />
+                                Connect
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => deleteMCPServerMutation.mutate(server.name)}
+                              disabled={deleteMCPServerMutation.isPending}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        {server.tools.length > 0 ? (
+                          <div className="mt-3 space-y-2">
+                            {server.tools.map((tool) => (
+                              <div key={tool.runtime_name} className="rounded bg-muted px-3 py-2 text-sm">
+                                <div className="font-mono text-xs">{tool.runtime_name}</div>
+                                <div className="mt-1 text-muted-foreground">{tool.description}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="space-y-4 rounded-md border p-4">
+                  <div>
+                    <Label htmlFor="mcp-name">Server Name</Label>
+                    <Input
+                      id="mcp-name"
+                      value={mcpServer.name}
+                      onChange={(e) => setMcpServer({ ...mcpServer, name: e.target.value })}
+                      placeholder="filesystem"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="mcp-transport">Transport</Label>
+                    <select
+                      id="mcp-transport"
+                      className="mt-1 flex h-10 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={mcpServer.transport}
+                      onChange={(e) => setMcpServer({ ...mcpServer, transport: e.target.value as 'stdio' | 'http' })}
+                    >
+                      <option value="stdio">stdio</option>
+                      <option value="http">http</option>
+                    </select>
+                  </div>
+
+                  {mcpServer.transport === 'stdio' ? (
+                    <>
+                      <div>
+                        <Label htmlFor="mcp-command">Command</Label>
+                        <Input
+                          id="mcp-command"
+                          value={mcpServer.command || ''}
+                          onChange={(e) => setMcpServer({ ...mcpServer, command: e.target.value })}
+                          placeholder="npx"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="mcp-args">Args</Label>
+                        <textarea
+                          id="mcp-args"
+                          className="mt-1 min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                          value={mcpArgsText}
+                          onChange={(e) => setMcpArgsText(e.target.value)}
+                          placeholder="-y&#10;@anthropic/mcp-server-filesystem&#10;/app/data"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="mcp-env">Env</Label>
+                        <textarea
+                          id="mcp-env"
+                          className="mt-1 min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                          value={mcpEnvText}
+                          onChange={(e) => setMcpEnvText(e.target.value)}
+                          placeholder="BRAVE_API_KEY=sk-xxx"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <Label htmlFor="mcp-url">URL</Label>
+                      <Input
+                        id="mcp-url"
+                        value={mcpServer.url || ''}
+                        onChange={(e) => setMcpServer({ ...mcpServer, url: e.target.value })}
+                        placeholder="http://localhost:3001/mcp"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <Label htmlFor="mcp-timeout">Timeout (seconds)</Label>
+                    <Input
+                      id="mcp-timeout"
+                      type="number"
+                      value={mcpServer.timeout_seconds || 30}
+                      onChange={(e) => setMcpServer({ ...mcpServer, timeout_seconds: Number(e.target.value) })}
+                    />
+                  </div>
+
+                  <div className="flex items-start space-x-3">
+                    <Checkbox
+                      id="mcp-auto-connect"
+                      checked={mcpServer.auto_connect}
+                      onCheckedChange={(checked) => setMcpServer({ ...mcpServer, auto_connect: checked as boolean })}
+                    />
+                    <div>
+                      <Label htmlFor="mcp-auto-connect" className="font-medium">Auto-connect on startup</Label>
+                    </div>
+                  </div>
+
+                  {mcpTestResult ? (
+                    <div className={`rounded-md border px-3 py-2 text-sm ${mcpTestResult.success ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                      {mcpTestResult.success
+                        ? `Connection OK. Tools: ${mcpTestResult.tools.join(', ') || 'none'}`
+                        : mcpTestResult.error}
+                    </div>
+                  ) : null}
+
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleTestMCPServer}
+                      disabled={testMCPServerMutation.isPending}
+                    >
+                      {testMCPServerMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Cable className="mr-2 h-4 w-4" />}
+                      Test Connection
+                    </Button>
+                    <Button
+                      onClick={handleCreateMCPServer}
+                      disabled={createMCPServerMutation.isPending}
+                    >
+                      {createMCPServerMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                      Save Server
+                    </Button>
+                  </div>
+                </div>
               </div>
             </section>
           </div>

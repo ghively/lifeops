@@ -113,6 +113,41 @@ export interface RuntimeAgentMessage {
   metadata?: Record<string, unknown>
 }
 
+export interface MCPToolItem {
+  name: string
+  server_name: string
+  runtime_name: string
+  description: string
+  input_schema: Record<string, unknown>
+}
+
+export interface MCPServerItem {
+  name: string
+  transport: 'stdio' | 'http'
+  connected: boolean
+  state: 'connected' | 'disconnected' | 'error'
+  enabled: boolean
+  auto_connect: boolean
+  tool_count: number
+  tools: MCPToolItem[]
+  error?: string | null
+  last_checked_at?: string | null
+  last_connected_at?: string | null
+}
+
+export interface MCPServerConfigInput {
+  name: string
+  transport: 'stdio' | 'http'
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
+  timeout_seconds?: number
+  enabled?: boolean
+  auto_connect?: boolean
+}
+
 export interface FileItem {
   id: string
   name?: string
@@ -545,6 +580,27 @@ export const agentRuntimeApi = {
 
   getCLIAgentStatus: () =>
     api.get<CLIAgentStatus>('/agents/runtime/cli-status').then((r) => r.data),
+
+  listMCPServers: () =>
+    api.get<{ servers: MCPServerItem[] }>('/agents/runtime/mcp/servers').then((r) => r.data),
+
+  createMCPServer: (data: MCPServerConfigInput) =>
+    api.post<MCPServerItem>('/agents/runtime/mcp/servers', data).then((r) => r.data),
+
+  deleteMCPServer: (name: string) =>
+    api.delete<{ deleted: boolean; name: string }>(`/agents/runtime/mcp/servers/${encodeURIComponent(name)}`).then((r) => r.data),
+
+  connectMCPServer: (name: string) =>
+    api.post<MCPServerItem>(`/agents/runtime/mcp/servers/${encodeURIComponent(name)}/connect`).then((r) => r.data),
+
+  disconnectMCPServer: (name: string) =>
+    api.post<MCPServerItem>(`/agents/runtime/mcp/servers/${encodeURIComponent(name)}/disconnect`).then((r) => r.data),
+
+  getMCPServerTools: (name: string) =>
+    api.get<{ server: MCPServerItem; tools: MCPToolItem[] }>(`/agents/runtime/mcp/servers/${encodeURIComponent(name)}/tools`).then((r) => r.data),
+
+  testMCPServer: (data: MCPServerConfigInput) =>
+    api.post<{ success: boolean; tools: MCPToolItem[]; status: MCPServerItem }>('/agents/runtime/mcp/test', data).then((r) => r.data),
 
   chatWithAgent: async (data: AgentChatRequest): Promise<AgentChatResponse> => {
     const response = await fetch(`${getApiBaseUrl()}/agents/runtime/chat`, {

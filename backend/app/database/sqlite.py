@@ -119,6 +119,23 @@ class SQLiteManager:
             )
         """)
 
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS mcp_server_configs (
+                name TEXT PRIMARY KEY,
+                transport TEXT NOT NULL,
+                command TEXT,
+                args TEXT DEFAULT '[]',
+                env TEXT DEFAULT '{}',
+                url TEXT,
+                headers TEXT DEFAULT '{}',
+                timeout_seconds INTEGER DEFAULT 30,
+                enabled INTEGER DEFAULT 1,
+                auto_connect INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         await self._ensure_columns(
             "agent_sessions",
             {
@@ -128,6 +145,18 @@ class SQLiteManager:
                 "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                 "message_count": "INTEGER DEFAULT 0",
                 "metadata": "TEXT",
+            },
+        )
+
+        await self._ensure_columns(
+            "mcp_server_configs",
+            {
+                "headers": "TEXT DEFAULT '{}'",
+                "timeout_seconds": "INTEGER DEFAULT 30",
+                "enabled": "INTEGER DEFAULT 1",
+                "auto_connect": "INTEGER DEFAULT 1",
+                "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             },
         )
 
@@ -241,6 +270,71 @@ class SQLiteManager:
             return json.loads(row["value"])
         except json.JSONDecodeError:
             return row["value"]
+
+    async def list_mcp_server_configs(self):
+        """Fetch all persisted MCP server configs."""
+        rows = await self.fetchall(
+            """
+            SELECT name, transport, command, args, env, url, headers, timeout_seconds, enabled, auto_connect
+            FROM mcp_server_configs
+            ORDER BY name
+            """
+        )
+        configs = []
+        for row in rows:
+            configs.append(
+                {
+                    "name": row["name"],
+                    "transport": row["transport"],
+                    "command": row.get("command"),
+                    "args": json.loads(row.get("args") or "[]"),
+                    "env": json.loads(row.get("env") or "{}"),
+                    "url": row.get("url"),
+                    "headers": json.loads(row.get("headers") or "{}"),
+                    "timeout_seconds": int(row.get("timeout_seconds") or 30),
+                    "enabled": bool(row.get("enabled", 1)),
+                    "auto_connect": bool(row.get("auto_connect", 1)),
+                }
+            )
+        return configs
+
+    async def upsert_mcp_server_config(self, config: dict[str, Any]):
+        """Insert or update an MCP server config."""
+        await self.execute(
+            """
+            INSERT INTO mcp_server_configs (
+                name, transport, command, args, env, url, headers, timeout_seconds, enabled, auto_connect, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(name) DO UPDATE SET
+                transport = excluded.transport,
+                command = excluded.command,
+                args = excluded.args,
+                env = excluded.env,
+                url = excluded.url,
+                headers = excluded.headers,
+                timeout_seconds = excluded.timeout_seconds,
+                enabled = excluded.enabled,
+                auto_connect = excluded.auto_connect,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                config["name"],
+                config["transport"],
+                config.get("command"),
+                json.dumps(config.get("args", [])),
+                json.dumps(config.get("env", {})),
+                config.get("url"),
+                json.dumps(config.get("headers", {})),
+                int(config.get("timeout_seconds", 30)),
+                1 if config.get("enabled", True) else 0,
+                1 if config.get("auto_connect", True) else 0,
+            ),
+        )
+
+    async def delete_mcp_server_config(self, name: str):
+        """Delete an MCP server config by name."""
+        await self.execute("DELETE FROM mcp_server_configs WHERE name = ?", (name,))
     
     async def close(self):
         """Close database connection"""

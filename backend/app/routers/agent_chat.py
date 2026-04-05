@@ -6,10 +6,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
+from app.services.agent.models import MCPServerConfig
 from app.services.agent.runtime import agent_runtime
 
 router = APIRouter()
@@ -25,6 +26,23 @@ class RuntimeChatRequest(BaseModel):
 
 class RuntimeFileUpdateRequest(BaseModel):
     content: str
+
+
+class MCPServerCreateRequest(BaseModel):
+    name: str
+    transport: str
+    command: Optional[str] = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    url: Optional[str] = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout_seconds: int = 30
+    enabled: bool = True
+    auto_connect: bool = True
+
+
+class MCPTestRequest(MCPServerCreateRequest):
+    pass
 
 
 @router.post("/chat")
@@ -45,6 +63,85 @@ async def runtime_chat(
 @read_rate_limit
 async def cli_status(request: Request, current_user: dict = Depends(get_current_user)):
     return {"agents": agent_runtime.tool_registry.cli_tool.health_check()}
+
+
+@router.get("/mcp/servers")
+@read_rate_limit
+async def list_mcp_servers(request: Request, current_user: dict = Depends(get_current_user)):
+    return {"servers": [status.model_dump() for status in await agent_runtime.tool_registry.mcp_manager.list_servers()]}
+
+
+@router.post("/mcp/servers")
+@write_rate_limit
+async def create_mcp_server(
+    request: Request,
+    data: MCPServerCreateRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    config = MCPServerConfig(**data.model_dump())
+    status = await agent_runtime.tool_registry.mcp_manager.configure_server(config, persist=True)
+    if config.enabled and config.auto_connect:
+        try:
+            status = await agent_runtime.tool_registry.mcp_manager.connect_server(config.name)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return status.model_dump()
+
+
+@router.delete("/mcp/servers/{name}")
+@write_rate_limit
+async def delete_mcp_server(name: str, request: Request, current_user: dict = Depends(get_current_user)):
+    try:
+        await agent_runtime.tool_registry.mcp_manager.remove_server(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"deleted": True, "name": name}
+
+
+@router.post("/mcp/servers/{name}/connect")
+@write_rate_limit
+async def connect_mcp_server(name: str, request: Request, current_user: dict = Depends(get_current_user)):
+    try:
+        status = await agent_runtime.tool_registry.mcp_manager.connect_server(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return status.model_dump()
+
+
+@router.post("/mcp/servers/{name}/disconnect")
+@write_rate_limit
+async def disconnect_mcp_server(name: str, request: Request, current_user: dict = Depends(get_current_user)):
+    try:
+        status = await agent_runtime.tool_registry.mcp_manager.disconnect_server(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return status.model_dump()
+
+
+@router.get("/mcp/servers/{name}/tools")
+@read_rate_limit
+async def list_mcp_server_tools(name: str, request: Request, current_user: dict = Depends(get_current_user)):
+    try:
+        status = await agent_runtime.tool_registry.mcp_manager.get_server_status(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"server": status.model_dump(), "tools": agent_runtime.tool_registry.mcp_manager.list_server_tools(name)}
+
+
+@router.post("/mcp/test")
+@write_rate_limit
+async def test_mcp_server(
+    request: Request,
+    data: MCPTestRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    config = MCPServerConfig(**data.model_dump())
+    result = await agent_runtime.tool_registry.mcp_manager.test_connection(config)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 @router.get("")
