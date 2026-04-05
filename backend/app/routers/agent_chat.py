@@ -53,6 +53,37 @@ async def list_runtime_agents(request: Request, current_user: dict = Depends(get
     return {"agents": agent_runtime.list_agents()}
 
 
+@router.get("/sessions")
+@read_rate_limit
+async def list_runtime_sessions(
+    request: Request,
+    agent_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    return {"sessions": await agent_runtime.list_sessions(agent_id)}
+
+
+@router.get("/sessions/{session_id}/messages")
+@read_rate_limit
+async def get_runtime_session_messages(
+    session_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    return {"messages": await agent_runtime.get_session_messages(session_id)}
+
+
+@router.delete("/sessions/{session_id}")
+@write_rate_limit
+async def delete_runtime_session(
+    session_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    await agent_runtime.delete_session(session_id)
+    return {"deleted": True, "session_id": session_id}
+
+
 @router.post("/{agent_id}")
 @write_rate_limit
 async def create_runtime_agent(agent_id: str, request: Request, current_user: dict = Depends(get_current_user)):

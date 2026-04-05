@@ -1,230 +1,289 @@
-import { useState } from 'react'
-import { Bot, MessageSquare, Loader2, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Bot, Loader2, PencilLine, Plus, Rocket, Trash2 } from 'lucide-react'
+
+import { CLIAgentStatus } from '@/components/agents/CLIAgentStatus'
+import { MarkdownEditor, type AgentFileTab } from '@/components/agents/MarkdownEditor'
 import { Button } from '@/components/ui/button'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { agentsApi, type AgentItem } from '@/services/api'
-import { AgentChatPanel } from '@/components/agents/AgentChatPanel'
-import { cn } from '@/lib/utils'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { agentRuntimeApi, agentsApi, type AgentFile } from '@/services/api'
 
-interface Agent extends AgentItem {
-  last_seen?: string
-  total_tasks?: number
-  completed_tasks?: number
-}
-
-const statusColors = {
-  active: 'bg-blue-500',
-  busy: 'bg-blue-500',
-  idle: 'bg-green-500',
-  working: 'bg-blue-500',
-  error: 'bg-red-500',
-  offline: 'bg-gray-400',
-}
-
-const statusText = {
-  active: 'Active',
-  busy: 'Busy',
-  idle: 'Idle',
-  working: 'Working',
-  error: 'Error',
-  offline: 'Offline',
-}
+const DEFAULT_FILE: AgentFileTab = 'AGENT.md'
 
 export function AgentsPage() {
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
-  const [chatOpen, setChatOpen] = useState(false)
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [newAgentId, setNewAgentId] = useState('')
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<AgentFile['name']>(DEFAULT_FILE)
+  const [draftContent, setDraftContent] = useState('')
+  const [savedContent, setSavedContent] = useState('')
+  const [agentPendingDelete, setAgentPendingDelete] = useState<string | null>(null)
 
-  // Fetch agents
-  const { data: agentsData, isLoading, error } = useQuery({
+  const runtimeAgentsQuery = useQuery({
+    queryKey: ['runtime-agents'],
+    queryFn: agentRuntimeApi.list,
+  })
+
+  const allAgentsQuery = useQuery({
     queryKey: ['agents'],
     queryFn: agentsApi.list,
-    refetchInterval: 5000, // Poll every 5 seconds for status updates
   })
-  const agents = (agentsData?.agents ?? []) as Agent[]
 
-  // Refresh agents mutation
-  const refreshMutation = useMutation({
-    mutationFn: () => agentsApi.list(),
-    onSuccess: () => {
+  const cliStatusQuery = useQuery({
+    queryKey: ['runtime-cli-status'],
+    queryFn: agentRuntimeApi.getCLIAgentStatus,
+  })
+
+  useEffect(() => {
+    if (!selectedAgentId && runtimeAgentsQuery.data?.agents?.length) {
+      setSelectedAgentId(runtimeAgentsQuery.data.agents[0].id)
+    }
+  }, [runtimeAgentsQuery.data?.agents, selectedAgentId])
+
+  const selectedAgent = useMemo(
+    () => runtimeAgentsQuery.data?.agents.find((agent) => agent.id === selectedAgentId) || null,
+    [runtimeAgentsQuery.data?.agents, selectedAgentId]
+  )
+
+  const runtimeStatusByName = useMemo(() => {
+    return new Map((allAgentsQuery.data?.agents || []).map((agent) => [agent.name, agent]))
+  }, [allAgentsQuery.data?.agents])
+
+  const selectedAgentStatus = selectedAgent ? runtimeStatusByName.get(selectedAgent.id) : null
+
+  const fileQuery = useQuery({
+    queryKey: ['runtime-agent-file', selectedAgentId, selectedFile],
+    queryFn: () => agentRuntimeApi.getAgentFile(selectedAgentId!, selectedFile),
+    enabled: !!selectedAgentId,
+  })
+
+  useEffect(() => {
+    const nextContent = fileQuery.data?.content || ''
+    setDraftContent(nextContent)
+    setSavedContent(nextContent)
+  }, [fileQuery.data?.content, selectedAgentId, selectedFile])
+
+  const createAgentMutation = useMutation({
+    mutationFn: (agentId: string) => agentRuntimeApi.createAgent(agentId),
+    onSuccess: (createdAgent) => {
+      setNewAgentId('')
+      setSelectedAgentId(createdAgent.id)
+      queryClient.invalidateQueries({ queryKey: ['runtime-agents'] })
       queryClient.invalidateQueries({ queryKey: ['agents'] })
     },
   })
 
-  const handleAgentClick = (agent: Agent) => {
-    setSelectedAgent(agent)
-    setChatOpen(true)
+  const saveFileMutation = useMutation({
+    mutationFn: ({ agentId, fileName, content }: { agentId: string; fileName: AgentFile['name']; content: string }) =>
+      agentRuntimeApi.updateAgentFile(agentId, fileName, content),
+    onSuccess: () => {
+      setSavedContent(draftContent)
+      queryClient.invalidateQueries({ queryKey: ['runtime-agent-file', selectedAgentId, selectedFile] })
+    },
+  })
+
+  const deleteAgentMutation = useMutation({
+    mutationFn: (agentId: string) => agentRuntimeApi.deleteAgent(agentId),
+    onSuccess: (_, deletedAgentId) => {
+      if (selectedAgentId === deletedAgentId) {
+        const remaining = runtimeAgentsQuery.data?.agents.filter((agent) => agent.id !== deletedAgentId) || []
+        setSelectedAgentId(remaining[0]?.id || null)
+      }
+      setAgentPendingDelete(null)
+      queryClient.invalidateQueries({ queryKey: ['runtime-agents'] })
+      queryClient.invalidateQueries({ queryKey: ['agents'] })
+    },
+  })
+
+  const isDirty = draftContent !== savedContent
+
+  const handleCreateAgent = () => {
+    const trimmed = newAgentId.trim()
+    if (!trimmed) {
+      return
+    }
+    createAgentMutation.mutate(trimmed)
   }
 
-  const handleCloseChat = () => {
-    setChatOpen(false)
-    setSelectedAgent(null)
+  const handleSave = () => {
+    if (!selectedAgentId) {
+      return
+    }
+    saveFileMutation.mutate({ agentId: selectedAgentId, fileName: selectedFile, content: draftContent })
   }
 
-  const workingAgents = agents.filter((a: Agent) => ['active', 'busy', 'working'].includes(a.status)).length
-  const idleAgents = agents.filter((a: Agent) => a.status === 'idle').length
-  const offlineAgents = agents.filter((a: Agent) => a.status === 'offline').length
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-red-500">
-        <p>Error loading agents</p>
-        <Button variant="outline" onClick={() => refreshMutation.mutate()} className="mt-4">
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Retry
-        </Button>
-      </div>
-    )
+  const handleDiscard = () => {
+    setDraftContent(savedContent)
   }
 
   return (
-    <div className="h-full flex">
-      <div className={cn(
-        'flex-1 overflow-auto p-4 transition-all sm:p-6',
-        chatOpen && 'sm:mr-96'
-      )}>
-        <div className="max-w-5xl mx-auto">
-          {/* Header */}
-          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h1 className="text-2xl font-bold flex items-center gap-2">
-                <Bot className="h-6 w-6" />
-                Agents
-              </h1>
-              <p className="text-muted-foreground mt-1">
-                {agents.length} agent{agents.length !== 1 ? 's' : ''} connected
-              </p>
-            </div>
-            <Button variant="outline" onClick={() => refreshMutation.mutate()} disabled={refreshMutation.isPending}>
-              <RefreshCw className={cn("h-4 w-4 mr-2", refreshMutation.isPending && "animate-spin")} />
-              Refresh
-            </Button>
-          </div>
+    <div className="mx-auto flex h-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold">
+            <Bot className="h-6 w-6" />
+            Agents
+          </h1>
+          <p className="mt-1 text-muted-foreground">Create, edit, and launch runtime agents from their identity files.</p>
+        </div>
 
-          {/* Stats */}
-          <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <div className="p-4 bg-card border rounded-lg">
-              <div className="text-2xl font-bold">{agents.length}</div>
-              <div className="text-sm text-muted-foreground">Total Agents</div>
-            </div>
-            <div className="p-4 bg-card border rounded-lg">
-              <div className="text-2xl font-bold text-blue-500">{workingAgents}</div>
-              <div className="text-sm text-muted-foreground">Working</div>
-            </div>
-            <div className="p-4 bg-card border rounded-lg">
-              <div className="text-2xl font-bold text-green-500">{idleAgents}</div>
-              <div className="text-sm text-muted-foreground">Idle</div>
-            </div>
-            <div className="p-4 bg-card border rounded-lg">
-              <div className="text-2xl font-bold text-gray-400">{offlineAgents}</div>
-              <div className="text-sm text-muted-foreground">Offline</div>
-            </div>
-          </div>
-
-          {/* Agent List */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {agents.length === 0 ? (
-              <div className="col-span-2 text-center py-12 text-muted-foreground">
-                <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p className="text-lg font-medium">No agents configured</p>
-                <p className="text-sm">Add agents in settings to get started</p>
-              </div>
-            ) : (
-              agents.map((agent: Agent) => (
-                <div
-                  key={agent.id}
-                  data-testid="agent-card"
-                  className="p-4 bg-card border rounded-lg hover:shadow-sm transition-shadow cursor-pointer"
-                  onClick={() => handleAgentClick(agent)}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Bot className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium">@{agent.name}</h3>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <span className={cn("h-2 w-2 rounded-full", statusColors[agent.status as keyof typeof statusColors])} />
-                          <span className="capitalize">{statusText[agent.status as keyof typeof statusText]}</span>
-                          {agent.last_seen && (
-                            <>
-                              <span>•</span>
-                              <span>{new Date(agent.last_seen).toLocaleTimeString()}</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <Button 
-                      variant="ghost" 
-                      size="icon"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleAgentClick(agent)
-                      }}
-                    >
-                      <MessageSquare className="h-4 w-4" />
-                    </Button>
-                  </div>
-
-                  {agent.current_task && (
-                    <div className="mt-3 p-2 bg-muted rounded text-sm">
-                      <span className="text-muted-foreground">Current task:</span>{' '}
-                      <span className="font-medium">{agent.current_task}</span>
-                    </div>
-                  )}
-
-                  {agent.capabilities && agent.capabilities.length > 0 && (
-                    <div className="mt-3">
-                      <div className="text-sm text-muted-foreground mb-2">Capabilities</div>
-                      <div className="flex flex-wrap gap-2">
-                        {agent.capabilities.map((cap: string) => (
-                          <span
-                            key={cap}
-                            className="text-xs px-2 py-1 bg-muted rounded-full"
-                          >
-                            {cap}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {(agent.total_tasks !== undefined && agent.completed_tasks !== undefined) && (
-                    <div className="mt-3 flex items-center gap-4 text-sm text-muted-foreground">
-                      <span>Tasks: {agent.completed_tasks}/{agent.total_tasks}</span>
-                      {agent.total_tasks > 0 && (
-                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-primary rounded-full"
-                            style={{ width: `${(agent.completed_tasks / agent.total_tasks) * 100}%` }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
+        <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+          <Input
+            value={newAgentId}
+            onChange={(event) => setNewAgentId(event.target.value)}
+            placeholder="new-agent-id"
+            className="sm:w-64"
+          />
+          <Button onClick={handleCreateAgent} disabled={!newAgentId.trim() || createAgentMutation.isPending}>
+            {createAgentMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+            New Agent
+          </Button>
         </div>
       </div>
 
-      {/* Chat Panel */}
-      <AgentChatPanel
-        agent={selectedAgent}
-        isOpen={chatOpen}
-        onClose={handleCloseChat}
-      />
+      <div className="grid gap-6 xl:grid-cols-[20rem_minmax(0,1fr)]">
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">CLI Agents</CardTitle>
+              <CardDescription>Runtime availability for local CLI-backed tools.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {cliStatusQuery.isLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : <CLIAgentStatus status={cliStatusQuery.data} />}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Runtime Agents</CardTitle>
+              <CardDescription>{runtimeAgentsQuery.data?.agents.length || 0} agent identities on disk.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {runtimeAgentsQuery.isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading agents...
+                </div>
+              ) : runtimeAgentsQuery.data?.agents.length ? (
+                runtimeAgentsQuery.data.agents.map((agent) => {
+                  const status = runtimeStatusByName.get(agent.id)
+                  const selected = agent.id === selectedAgentId
+
+                  return (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      onClick={() => setSelectedAgentId(agent.id)}
+                      className={`w-full rounded-lg border p-3 text-left transition-colors ${selected ? 'border-primary bg-primary/5' : 'hover:bg-muted/60'}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium">{agent.id}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{agent.path}</div>
+                          {status ? (
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              Status: <span className="font-medium text-foreground">{status.status}</span>
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              navigate(`/agents/${encodeURIComponent(agent.id)}/chat`)
+                            }}
+                          >
+                            <Rocket className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setAgentPendingDelete(agent.id)
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-600" />
+                          </Button>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })
+              ) : (
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  No runtime agents exist yet. Create one to scaffold `AGENT.md`, `SOUL.md`, `MEMORY.md`, and `TOOLS.md`.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="min-h-[42rem]">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <PencilLine className="h-5 w-5" />
+              {selectedAgent ? `${selectedAgent.id} identity files` : 'Agent editor'}
+            </CardTitle>
+            <CardDescription>
+              {selectedAgentStatus
+                ? `${selectedAgentStatus.status} • ${selectedAgentStatus.description || 'Runtime identity and tool configuration'}`
+                : 'Select a runtime agent to edit its markdown identity files.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="h-[calc(100%-5rem)]">
+            {!selectedAgentId ? (
+              <div className="flex h-full items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+                Select or create an agent to start editing.
+              </div>
+            ) : fileQuery.isLoading ? (
+              <div className="flex h-full items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <MarkdownEditor
+                activeFile={selectedFile}
+                content={draftContent}
+                isDirty={isDirty}
+                isSaving={saveFileMutation.isPending}
+                onFileChange={(file) => setSelectedFile(file)}
+                onChange={setDraftContent}
+                onSave={handleSave}
+                onDiscard={handleDiscard}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Dialog open={!!agentPendingDelete} onOpenChange={(open) => !open && setAgentPendingDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete agent</DialogTitle>
+            <DialogDescription>
+              This removes the runtime agent directory and all four identity files from disk.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAgentPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => agentPendingDelete && deleteAgentMutation.mutate(agentPendingDelete)}
+              disabled={deleteAgentMutation.isPending}
+            >
+              {deleteAgentMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -54,6 +54,65 @@ export interface ChatMessage {
   metadata?: Record<string, unknown>
 }
 
+export interface RuntimeChatEvent {
+  type: 'text_delta' | 'tool_start' | 'tool_result' | 'thinking' | 'done' | 'error'
+  session_id?: string
+  agent_id?: string
+  message?: string
+  delta?: string
+  tool_name?: string
+  data?: Record<string, unknown>
+}
+
+export interface AgentChatRequest {
+  agent_id: string
+  message: string
+  session_id?: string | null
+}
+
+export interface AgentChatResponse {
+  response: Response
+}
+
+export interface CLIAgentAvailability {
+  installed: boolean
+  command?: string
+  description?: string
+  error?: string | null
+}
+
+export interface CLIAgentStatus {
+  agents: Record<string, CLIAgentAvailability>
+}
+
+export interface AgentFile {
+  name: 'AGENT.md' | 'SOUL.md' | 'MEMORY.md' | 'TOOLS.md'
+  content: string
+}
+
+export interface AgentSession {
+  id: string
+  agent_id: string
+  title?: string | null
+  created_at: string
+  updated_at: string
+  message_count: number
+  metadata?: Record<string, unknown>
+}
+
+export interface RuntimeAgentMessage {
+  id?: string
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  name?: string | null
+  tool_calls?: Array<Record<string, unknown>>
+  tool_results?: Array<Record<string, unknown>>
+  tokens_in?: number
+  tokens_out?: number
+  created_at?: string | null
+  metadata?: Record<string, unknown>
+}
+
 export interface FileItem {
   id: string
   name?: string
@@ -207,6 +266,31 @@ export const api = axios.create({
   timeout: 30000,
 })
 
+function getAuthToken() {
+  return localStorage.getItem('access_token')
+}
+
+function getApiBaseUrl() {
+  if (API_BASE_URL) {
+    return `${API_BASE_URL}/api/v1`
+  }
+
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/api/v1`
+  }
+
+  return '/api/v1'
+}
+
+export function createAuthenticatedRequestHeaders(init?: HeadersInit) {
+  const headers = new Headers(init)
+  const token = getAuthToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  return headers
+}
+
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
@@ -218,6 +302,24 @@ api.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 )
+
+// Mutex to prevent multiple simultaneous token refresh attempts
+let isRefreshing = false
+let failedQueue: Array<{
+  resolve: (token: string) => void
+  reject: (error: unknown) => void
+}> = []
+
+function processQueue(error: unknown, token: string | null = null) {
+  failedQueue.forEach(({ resolve, reject }) => {
+    if (token) {
+      resolve(token)
+    } else {
+      reject(error)
+    }
+  })
+  failedQueue = []
+}
 
 // Response interceptor for error handling and token refresh
 api.interceptors.response.use(
@@ -231,14 +333,30 @@ api.interceptors.response.use(
 
     // If 401 and not already tried to refresh
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+      // If already refreshing, queue this request
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({
+            resolve: (token: string) => {
+              originalRequest.headers.Authorization = `Bearer ${token}`
+              resolve(api(originalRequest))
+            },
+            reject,
+          })
+        })
+      }
+
       originalRequest._retry = true
+      isRefreshing = true
 
       try {
         const refreshToken = localStorage.getItem('refresh_token')
         if (!refreshToken) {
-          // No refresh token, redirect to login
+          // No refresh token, clear state and redirect once
           localStorage.removeItem('access_token')
           localStorage.removeItem('refresh_token')
+          isRefreshing = false
+          processQueue(error, null)
           window.location.href = '/login'
           return Promise.reject(error)
         }
@@ -258,11 +376,16 @@ api.interceptors.response.use(
           localStorage.setItem('refresh_token', refresh_token)
         }
 
+        isRefreshing = false
+        processQueue(null, access_token)
+
         // Retry original request
         originalRequest.headers.Authorization = `Bearer ${access_token}`
         return api(originalRequest)
       } catch (refreshError) {
-        // Refresh failed, clear tokens and redirect to login
+        isRefreshing = false
+        processQueue(refreshError, null)
+        // Refresh failed, clear tokens and redirect once
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
         window.location.href = '/login'
@@ -385,6 +508,69 @@ export const agentsApi = {
 
   getMemories: (name: string, query?: string) =>
     api.get<{ memories: unknown[] }>(`/agents/${name}/memories`, { params: { query } }).then((r) => r.data),
+}
+
+export const agentRuntimeApi = {
+  list: () =>
+    api.get<{ agents: Array<{ id: string; path: string }> }>('/agents/runtime').then((r) => r.data),
+
+  createAgent: (agentId: string) =>
+    api.post<{ id: string; path: string }>(`/agents/runtime/${agentId}`).then((r) => r.data),
+
+  deleteAgent: (agentId: string) =>
+    api.delete<{ deleted: boolean; agent_id: string }>(`/agents/runtime/${agentId}`).then((r) => r.data),
+
+  getAgentFile: async (agentId: string, name: AgentFile['name']) => {
+    const response = await api.get<string>(`/agents/runtime/${agentId}/files/${name}`, {
+      responseType: 'text' as const,
+    })
+
+    return {
+      name,
+      content: response.data,
+    } satisfies AgentFile
+  },
+
+  updateAgentFile: (agentId: string, name: AgentFile['name'], content: string) =>
+    api.put<{ updated: boolean; agent_id: string; file: string }>(`/agents/runtime/${agentId}/files/${name}`, { content }).then((r) => r.data),
+
+  getAgentSessions: (agentId?: string) =>
+    api.get<{ sessions: AgentSession[] }>('/agents/runtime/sessions', { params: { agent_id: agentId } }).then((r) => r.data),
+
+  getSessionMessages: (sessionId: string) =>
+    api.get<{ messages: RuntimeAgentMessage[] }>(`/agents/runtime/sessions/${sessionId}/messages`).then((r) => r.data),
+
+  deleteSession: (sessionId: string) =>
+    api.delete<{ deleted: boolean; session_id: string }>(`/agents/runtime/sessions/${sessionId}`).then((r) => r.data),
+
+  getCLIAgentStatus: () =>
+    api.get<CLIAgentStatus>('/agents/runtime/cli-status').then((r) => r.data),
+
+  chatWithAgent: async (data: AgentChatRequest): Promise<AgentChatResponse> => {
+    const response = await fetch(`${getApiBaseUrl()}/agents/runtime/chat`, {
+      method: 'POST',
+      headers: createAuthenticatedRequestHeaders({
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      }),
+      body: JSON.stringify(data),
+    })
+
+    if (!response.ok) {
+      let message = 'Failed to start agent chat'
+      try {
+        const payload = await response.json() as { detail?: string }
+        if (payload.detail) {
+          message = payload.detail
+        }
+      } catch {
+        // Ignore malformed error bodies.
+      }
+      throw new APIError(message, response.status)
+    }
+
+    return { response }
+  },
 }
 
 // Search API

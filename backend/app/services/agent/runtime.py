@@ -94,6 +94,17 @@ class AgentRuntime:
         identity = self.identity_loader.load(agent_id)
         return {"id": agent_id, "path": str(self.identity_loader.agent_dir(agent_id)), "identity": identity.model_dump()}
 
+    async def list_sessions(self, agent_id: Optional[str] = None) -> List[Dict[str, object]]:
+        sessions = await self.session_manager.list_sessions(agent_id)
+        return [session.model_dump() for session in sessions]
+
+    async def get_session_messages(self, session_id: str) -> List[Dict[str, object]]:
+        history = await self.session_manager.load_history(session_id, limit=200)
+        return [message.model_dump() for message in history]
+
+    async def delete_session(self, session_id: str) -> None:
+        await self.session_manager.delete_session(session_id)
+
     def delete_agent(self, agent_id: str) -> None:
         self.identity_loader.delete_agent(agent_id)
 

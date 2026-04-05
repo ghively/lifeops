@@ -9,6 +9,7 @@ import { OutlinerPage } from './pages/OutlinerPage'
 import { TasksPage } from './pages/TasksPage'
 import { FilesPage } from './pages/FilesPage'
 import { AgentsPage } from './pages/AgentsPage'
+import { AgentChatPage } from './pages/AgentChatPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SearchPage } from './pages/SearchPage'
 import { LoginPage } from './pages/LoginPage'
@@ -56,6 +57,7 @@ function App() {
                     <Route path="/tasks" element={<TasksPage />} />
                     <Route path="/files" element={<FilesPage />} />
                     <Route path="/agents" element={<AgentsPage />} />
+                    <Route path="/agents/:id/chat" element={<AgentChatPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                     <Route path="/logs" element={<LogsPage />} />
                     <Route path="/search" element={<SearchPage />} />

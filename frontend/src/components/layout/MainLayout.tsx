@@ -3,7 +3,6 @@ import { PanelLeft, Search, Settings, Bell, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Sidebar } from './Sidebar'
 import { Button } from '@/components/ui/button'
-import { AgentChatPanel } from '@/components/agents/AgentChatPanel'
 import { useNavigate } from 'react-router-dom'
 import { type AgentItem } from '@/services/api'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
@@ -19,8 +18,6 @@ export function MainLayout({ children }: MainLayoutProps) {
   const { isAuthenticated } = useAuthStore()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-  const [selectedAgent, setSelectedAgent] = useState<AgentItem | null>(null)
-  const [chatOpen, setChatOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const isMobile = useMediaQuery('(max-width: 1023px)')
   const { canInstall, install } = useInstallPrompt()
@@ -34,14 +31,8 @@ export function MainLayout({ children }: MainLayoutProps) {
   }, [isMobile])
 
   const handleAgentClick = (agent: AgentItem) => {
-    setSelectedAgent(agent)
-    setChatOpen(true)
     setMobileSidebarOpen(false)
-  }
-
-  const handleCloseChat = () => {
-    setChatOpen(false)
-    setSelectedAgent(null)
+    navigate(`/agents/${encodeURIComponent(agent.name)}/chat`)
   }
 
   const handleSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -92,8 +83,7 @@ export function MainLayout({ children }: MainLayoutProps) {
 
       {/* Main Content */}
       <div className={cn(
-        'flex min-h-screen flex-1 min-w-0 flex-col transition-all duration-300',
-        chatOpen && !isMobile && 'xl:mr-96'
+        'flex min-h-screen flex-1 min-w-0 flex-col transition-all duration-300'
       )}>
         {/* Header */}
         <header className="sticky top-0 z-30 border-b bg-card/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-card/85">
@@ -157,13 +147,6 @@ export function MainLayout({ children }: MainLayoutProps) {
           {children}
         </main>
       </div>
-
-      {/* Agent Chat Panel */}
-      <AgentChatPanel
-        agent={selectedAgent}
-        isOpen={chatOpen}
-        onClose={handleCloseChat}
-      />
     </div>
   )
 }
