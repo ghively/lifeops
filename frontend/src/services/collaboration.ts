@@ -79,13 +79,13 @@ export interface CollaborationCallbacks {
 function buildWsUrl(objectId: string): string {
   const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined
   if (configuredApiUrl) {
-    return `${configuredApiUrl.replace(/^http/, 'ws')}/api/collaboration/ws/${objectId}`
+    return `${configuredApiUrl.replace(/^http/, 'ws')}/api/v1/collaboration/ws/${objectId}`
   }
   if (typeof window !== 'undefined') {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/api/collaboration/ws/${objectId}`
+    return `${protocol}//${window.location.host}/api/v1/collaboration/ws/${objectId}`
   }
-  return `/api/collaboration/ws/${objectId}`
+  return `/api/v1/collaboration/ws/${objectId}`
 }
 
 // ---------------------------------------------------------------------------
