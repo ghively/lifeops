@@ -78,14 +78,20 @@ export interface CollaborationCallbacks {
 // ---------------------------------------------------------------------------
 function buildWsUrl(objectId: string): string {
   const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined
+  let baseUrl: string
   if (configuredApiUrl) {
-    return `${configuredApiUrl.replace(/^http/, 'ws')}/api/v1/collaboration/ws/${objectId}`
-  }
-  if (typeof window !== 'undefined') {
+    baseUrl = `${configuredApiUrl.replace(/^http/, 'ws')}`
+  } else if (typeof window !== 'undefined') {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/api/v1/collaboration/ws/${objectId}`
+    baseUrl = `${protocol}//${window.location.host}`
+  } else {
+    baseUrl = ''
   }
-  return `/api/v1/collaboration/ws/${objectId}`
+
+  // Append auth token as query param (WebSocket can't send custom headers in browsers)
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') : null
+  const wsPath = `/api/v1/collaboration/ws/${objectId}`
+  return token ? `${baseUrl}${wsPath}?token=${encodeURIComponent(token)}` : `${baseUrl}${wsPath}`
 }
 
 // ---------------------------------------------------------------------------
