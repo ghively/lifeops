@@ -2,7 +2,7 @@
 
 **Auditor:** Gemini 3 Pro (automated) + Knowledge-OS (QA review)
 **Scope:** Full SPECIFICATION.md re-audit against current codebase
-**Tests:** 258/258 passing
+**Tests:** 256/256 passing (removed 11 stubs, added 9 auth tests)
 
 ---
 
@@ -31,10 +31,10 @@
 
 | # | Issue | Severity | Details |
 |---|-------|----------|---------|
-| W1 | Search uses optional auth (`get_optional_user`) | Medium | search.py allows unauthenticated search. Not a CRUD endpoint, but worth documenting the decision. |
-| W2 | @mention parsing is case-sensitive | Low | `@Researcher` won't match agent `researcher`. Spec doesn't explicitly require case-insensitive matching. |
-| W3 | File watcher has sync I/O in `_extract_content` and `_scan_folder` | Medium | `file_watcher.py` bridges watchdog to async loop but extraction is synchronous. Could block event loop under heavy file load. |
-| W4 | WebSocket paths not versioned | Low | `/ws` not `/api/v1/ws`. Functional but inconsistent with REST versioning. |
+| W1 | Search uses optional auth (`get_optional_user`) | ~~Medium~~ ✅ FIXED | Documented rationale — intentional for public/shared KBs (commit 1ac08eb) |
+| W2 | @mention parsing is case-sensitive | ~~Low~~ ✅ FIXED | Case-insensitive matching, dedup by lowercase, preserves original casing (commit 1ac08eb) |
+| W3 | File watcher has sync I/O in `_extract_content` and `_scan_folder` | ~~Medium~~ ✅ FIXED | Extracted sync I/O to `_extract_content_sync`, wrapped with `asyncio.to_thread()` (commit 1ac08eb) |
+| W4 | WebSocket paths not versioned | Low | `/ws` not `/api/v1/ws`. Functional but inconsistent. Deferred — cosmetic only. |
 
 ## FAIL — Issues Found 🔴
 
