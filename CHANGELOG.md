@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-04
+
 ### Security
 - **Auth enforcement** — All CRUD routes now require JWT authentication (C1 fix)
 - **Rate limiting** — In-memory rate limiter: auth 5/min, write 30/min, read 60/min (C2 fix)
@@ -112,5 +114,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configured CORS for API endpoints
 - Added input validation on all endpoints
 
-[Unreleased]: https://github.com/ghively/knowledge-os/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ghively/knowledge-os/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ghively/knowledge-os/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ghively/knowledge-os/releases/tag/v0.1.0
