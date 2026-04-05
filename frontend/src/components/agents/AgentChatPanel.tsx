@@ -140,7 +140,7 @@ export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) 
             </p>
           </div>
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose}>
+        <Button aria-label="Close chat" variant="ghost" size="icon" onClick={onClose}>
           <X className="w-4 h-4" />
         </Button>
       </div>

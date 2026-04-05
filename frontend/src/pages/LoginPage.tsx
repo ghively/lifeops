@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom'
 import { Lock, Mail, User, AlertCircle } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth'
 import { Button } from '@/components/ui/button'
@@ -11,12 +11,16 @@ type Mode = 'login' | 'register'
 
 export function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const { login, register, isAuthenticated, isLoading, error, clearError } = useAuthStore()
 
-  const [mode, setMode] = useState<Mode>(() =>
-    searchParams.get('mode') === 'register' ? 'register' : 'login'
-  )
+  const [mode, setMode] = useState<Mode>(() => {
+    if (location.pathname === '/register' || searchParams.get('mode') === 'register') {
+      return 'register'
+    }
+    return 'login'
+  })
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState('')
@@ -40,6 +44,14 @@ export function LoginPage() {
   useEffect(() => {
     clearError()
   }, [mode, clearError])
+
+  useEffect(() => {
+    if (location.pathname === '/register' || searchParams.get('mode') === 'register') {
+      setMode('register')
+      return
+    }
+    setMode('login')
+  }, [location.pathname, searchParams])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()

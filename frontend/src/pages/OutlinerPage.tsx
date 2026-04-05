@@ -221,7 +221,7 @@ export function OutlinerPage() {
     <div className="max-w-4xl mx-auto py-8 px-6">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4">
-        <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
+        <Button aria-label="Back" variant="ghost" size="sm" onClick={() => navigate('/')}>
           <ChevronLeft className="h-4 w-4 mr-1" />
           Back
         </Button>
@@ -259,10 +259,10 @@ export function OutlinerPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon">
+            <Button aria-label="Share" data-testid="share-button" variant="ghost" size="icon">
               <Share className="h-4 w-4" />
             </Button>
-            <Button variant="ghost" size="icon">
+            <Button aria-label="More" data-testid="more-button" variant="ghost" size="icon">
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </div>

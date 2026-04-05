@@ -6,6 +6,7 @@ import {
   CheckSquare,
   Folder,
   Bot,
+  Search,
   Plus,
   ChevronRight,
   ChevronDown,
@@ -31,10 +32,11 @@ interface SidebarProps {
 }
 
 const spaces = [
-  { id: 'notes', name: 'Notes', icon: FileText, href: '/' },
+  { id: 'home', name: 'Home', icon: FileText, href: '/' },
   { id: 'tasks', name: 'Tasks', icon: CheckSquare, href: '/tasks' },
   { id: 'files', name: 'Files', icon: Folder, href: '/files' },
   { id: 'agents', name: 'Agents', icon: Bot, href: '/agents' },
+  { id: 'search', name: 'Search', icon: Search, href: '/search' },
 ]
 
 const quickLinks = [
@@ -85,7 +87,7 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
   if (collapsed) {
     return (
       <div className="w-14 border-r bg-card flex flex-col items-center py-4">
-        <Button variant="ghost" size="icon" onClick={onToggle} className="mb-4">
+        <Button aria-label="Toggle sidebar" data-testid="sidebar-toggle" variant="ghost" size="icon" onClick={onToggle} className="mb-4">
           <PanelLeft className="h-5 w-5" />
         </Button>
         
@@ -132,7 +134,7 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
         <Link to="/" className="font-semibold text-lg">
           Knowledge OS
         </Link>
-        <Button variant="ghost" size="icon" onClick={onToggle}>
+        <Button aria-label="Toggle sidebar" data-testid="sidebar-toggle" variant="ghost" size="icon" onClick={onToggle}>
           <PanelLeft className="h-5 w-5" />
         </Button>
       </div>
@@ -301,6 +303,7 @@ export function Sidebar({ collapsed, onToggle, onAgentClick }: SidebarProps) {
         </Link>
 
         <Button
+          aria-label="Logout"
           variant="ghost"
           className="w-full justify-start gap-2"
           onClick={() => logout()}

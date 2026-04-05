@@ -198,6 +198,7 @@ export function TasksPage() {
           tasks.map((task) => (
             <div
               key={task.id}
+              data-testid="task-row"
               className={cn(
                 'p-4 bg-card border rounded-lg border-l-4 hover:shadow-sm transition-shadow cursor-pointer',
                 priorityColors[task.properties?.priority || 'medium']

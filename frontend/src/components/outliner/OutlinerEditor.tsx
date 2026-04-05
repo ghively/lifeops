@@ -96,35 +96,44 @@ const createEmptyBlock = (type: BlockType = 'paragraph', level: number = 0): Blo
   children: [{ text: '' }],
 })
 
-const renderElement = (props: { attributes: React.HTMLAttributes<HTMLElement>; children: React.ReactNode; element: CustomElement }) => {
-  const { attributes, children, element } = props
-  const { type, level = 0, checked } = element
+const renderElementFactory = (
+  onTodoToggle?: (element: CustomElement) => void,
+) => {
+  return (props: { attributes: React.HTMLAttributes<HTMLElement>; children: React.ReactNode; element: CustomElement }) => {
+    const { attributes, children, element } = props
+    const { type, level = 0, checked } = element
 
-  const baseClasses = cn(
-    'py-1 px-2 -mx-2 rounded hover:bg-muted/30 transition-colors',
-    level > 0 && 'ml-4'
-  )
+    const baseClasses = cn(
+      'py-1 px-2 -mx-2 rounded hover:bg-muted/30 transition-colors',
+      level > 0 && 'ml-4'
+    )
 
-  switch (type) {
-    case 'heading':
-      return <h2 {...attributes} className={cn(baseClasses, 'mt-2 text-xl font-semibold')}>{children}</h2>
-    case 'todo':
-      return (
-        <div {...attributes} className={cn(baseClasses, 'flex items-start gap-2')}>
-          <input type="checkbox" checked={checked} className="mt-1.5 h-4 w-4 rounded border-gray-300" readOnly />
-          <span className={cn(checked && 'line-through text-muted-foreground')}>{children}</span>
-        </div>
-      )
-    case 'bullet':
-      return <ul {...attributes} className={cn(baseClasses, 'ml-6 list-disc')}><li>{children}</li></ul>
-    case 'numbered':
-      return <ol {...attributes} className={cn(baseClasses, 'ml-6 list-decimal')}><li>{children}</li></ol>
-    case 'quote':
-      return <blockquote {...attributes} className={cn(baseClasses, 'border-l-4 border-muted-foreground/30 pl-4 italic')}>{children}</blockquote>
-    case 'code':
-      return <pre {...attributes} className={cn(baseClasses, 'rounded bg-muted p-2 font-mono text-sm')}><code>{children}</code></pre>
-    default:
-      return <p {...attributes} className={baseClasses}>{children}</p>
+    switch (type) {
+      case 'heading':
+        return <h2 {...attributes} className={cn(baseClasses, 'mt-2 text-xl font-semibold')}>{children}</h2>
+      case 'todo':
+        return (
+          <div {...attributes} className={cn(baseClasses, 'flex items-start gap-2')}>
+            <input
+              type="checkbox"
+              checked={checked}
+              className="mt-1.5 h-4 w-4 rounded border-gray-300"
+              onChange={() => onTodoToggle?.(element)}
+            />
+            <span className={cn(checked && 'line-through text-muted-foreground')}>{children}</span>
+          </div>
+        )
+      case 'bullet':
+        return <ul {...attributes} className={cn(baseClasses, 'ml-6 list-disc')}><li>{children}</li></ul>
+      case 'numbered':
+        return <ol {...attributes} className={cn(baseClasses, 'ml-6 list-decimal')}><li>{children}</li></ol>
+      case 'quote':
+        return <blockquote {...attributes} className={cn(baseClasses, 'border-l-4 border-muted-foreground/30 pl-4 italic')}>{children}</blockquote>
+      case 'code':
+        return <pre {...attributes} className={cn(baseClasses, 'rounded bg-muted p-2 font-mono text-sm')}><code>{children}</code></pre>
+      default:
+        return <p {...attributes} className={baseClasses}>{children}</p>
+    }
   }
 }
 
@@ -218,22 +227,22 @@ const Toolbar = ({ editor }: { editor: Editor }) => {
 
   return (
     <div className="flex items-center gap-1 border-b bg-muted/50 p-2">
-      <Button variant="ghost" size="sm" onClick={() => toggleBlock('paragraph')} className={cn(isBlockActive(editor, 'paragraph') && 'bg-muted')}>
+      <Button aria-label="Type" title="Type" variant="ghost" size="sm" onClick={() => toggleBlock('paragraph')} className={cn(isBlockActive(editor, 'paragraph') && 'bg-muted')}>
         <Type className="h-4 w-4" />
       </Button>
-      <Button variant="ghost" size="sm" onClick={() => toggleBlock('heading')} className={cn(isBlockActive(editor, 'heading') && 'bg-muted')}>
+      <Button aria-label="Heading" title="Heading" variant="ghost" size="sm" onClick={() => toggleBlock('heading')} className={cn(isBlockActive(editor, 'heading') && 'bg-muted')}>
         <Heading1 className="h-4 w-4" />
       </Button>
-      <Button variant="ghost" size="sm" onClick={() => toggleBlock('todo')} className={cn(isBlockActive(editor, 'todo') && 'bg-muted')}>
+      <Button aria-label="Todo" title="Todo" variant="ghost" size="sm" onClick={() => toggleBlock('todo')} className={cn(isBlockActive(editor, 'todo') && 'bg-muted')}>
         <CheckSquare className="h-4 w-4" />
       </Button>
-      <Button variant="ghost" size="sm" onClick={() => toggleBlock('bullet')} className={cn(isBlockActive(editor, 'bullet') && 'bg-muted')}>
+      <Button aria-label="List" title="List" variant="ghost" size="sm" onClick={() => toggleBlock('bullet')} className={cn(isBlockActive(editor, 'bullet') && 'bg-muted')}>
         <List className="h-4 w-4" />
       </Button>
-      <Button variant="ghost" size="sm" onClick={() => toggleBlock('quote')} className={cn(isBlockActive(editor, 'quote') && 'bg-muted')}>
+      <Button aria-label="Quote" title="Quote" variant="ghost" size="sm" onClick={() => toggleBlock('quote')} className={cn(isBlockActive(editor, 'quote') && 'bg-muted')}>
         <Quote className="h-4 w-4" />
       </Button>
-      <Button variant="ghost" size="sm" onClick={() => toggleBlock('code')} className={cn(isBlockActive(editor, 'code') && 'bg-muted')}>
+      <Button aria-label="Code" title="Code" variant="ghost" size="sm" onClick={() => toggleBlock('code')} className={cn(isBlockActive(editor, 'code') && 'bg-muted')}>
         <Code className="h-4 w-4" />
       </Button>
     </div>
@@ -289,6 +298,21 @@ export function OutlinerEditor({
     }
     navigate(`/search?q=${encodeURIComponent(linkValue)}`)
   }, [navigate, objectId])
+
+  const handleTodoToggle = useCallback((element: CustomElement) => {
+    const [match] = Editor.nodes(editor, {
+      at: [],
+      match: (node) => SlateElement.isElement(node) && (node as CustomElement).id === element.id,
+      mode: 'all',
+    })
+
+    if (!match) {
+      return
+    }
+
+    const [, path] = match
+    Transforms.setNodes(editor, { checked: !element.checked }, { at: path })
+  }, [editor])
 
   // Base decorations (wiki links, block refs)
   const baseDecorate = useCallback(([node, path]: NodeEntry<Node>) => {
@@ -450,6 +474,10 @@ export function OutlinerEditor({
     () => renderLeafFactory(handleLinkClick),
     [handleLinkClick],
   )
+  const renderElement = useMemo(
+    () => renderElementFactory(handleTodoToggle),
+    [handleTodoToggle],
+  )
 
   return (
     <div className="outliner-editor relative">
@@ -472,6 +500,7 @@ export function OutlinerEditor({
             placeholder="Type something... Use /todo, /heading, [[Wiki Links]], or ((block-id))"
             readOnly={readOnly}
             className="min-h-[200px] outline-none"
+            aria-label="Outliner editor"
           />
         </Slate>
 

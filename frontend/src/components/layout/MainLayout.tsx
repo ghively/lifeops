@@ -52,6 +52,8 @@ export function MainLayout({ children }: MainLayoutProps) {
         <header className="h-14 border-b flex items-center justify-between px-4 bg-card">
           <div className="flex items-center gap-2">
             <Button
+              aria-label="Toggle sidebar"
+              data-testid="header-sidebar-toggle"
               variant="ghost"
               size="icon"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -75,11 +77,11 @@ export function MainLayout({ children }: MainLayoutProps) {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="relative">
+            <Button aria-label="Notifications" variant="ghost" size="icon" className="relative">
               <Bell className="h-5 w-5" />
               <span className="absolute top-1 right-1 h-2 w-2 bg-red-500 rounded-full" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => navigate('/settings')}>
+            <Button aria-label="Settings" variant="ghost" size="icon" onClick={() => navigate('/settings')}>
               <Settings className="h-5 w-5" />
             </Button>
           </div>

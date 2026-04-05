@@ -217,6 +217,8 @@ export function SettingsPage() {
                         </div>
                       </div>
                       <Button
+                        aria-label={`Remove watched folder ${folder.path}`}
+                        data-testid="remove-folder-button"
                         variant="ghost"
                         size="sm"
                         onClick={() => handleRemoveFolder(folder.id)}
@@ -267,6 +269,8 @@ export function SettingsPage() {
                     />
                   </div>
                   <Button
+                    aria-label="Trigger Qdrant snapshots backup"
+                    data-testid="snapshot-backup-button"
                     variant="ghost"
                     size="sm"
                     onClick={() => backupMutation.mutate('snapshot')}
@@ -300,6 +304,8 @@ export function SettingsPage() {
                     />
                   </div>
                   <Button
+                    aria-label="Trigger markdown export backup"
+                    data-testid="markdown-backup-button"
                     variant="ghost"
                     size="sm"
                     onClick={() => backupMutation.mutate('markdown')}

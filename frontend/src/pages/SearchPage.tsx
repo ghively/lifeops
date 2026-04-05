@@ -177,6 +177,7 @@ export function SearchPage() {
                 return (
                   <div
                     key={result.id}
+                    data-testid="search-result"
                     onClick={() => handleResultClick(result)}
                     className="p-4 border rounded-lg hover:bg-muted cursor-pointer transition-colors"
                   >

@@ -141,6 +141,7 @@ export function AgentsPage() {
               agents.map((agent: Agent) => (
                 <div
                   key={agent.id}
+                  data-testid="agent-card"
                   className="p-4 bg-card border rounded-lg hover:shadow-sm transition-shadow cursor-pointer"
                   onClick={() => handleAgentClick(agent)}
                 >

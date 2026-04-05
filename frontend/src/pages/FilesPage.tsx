@@ -186,6 +186,7 @@ export function FilesPage() {
                 return (
                   <div
                     key={file.id}
+                    data-testid="file-row"
                     className="flex items-center gap-3 p-3 hover:bg-muted rounded-lg cursor-pointer group"
                     onClick={() => setSearchParams({ file: file.id })}
                   >
@@ -215,6 +216,8 @@ export function FilesPage() {
                         </span>
                       )}
                       <Button
+                        aria-label={`Reindex ${file.filename || file.name || 'file'}`}
+                        data-testid="file-reindex-button"
                         variant="ghost"
                         size="icon"
                         className="opacity-0 group-hover:opacity-100 transition-opacity"
