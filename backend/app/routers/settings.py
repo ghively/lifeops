@@ -149,6 +149,14 @@ async def remove_watched_folder(
     return {"message": "Folder removed", "id": folder_id}
 
 
+@router.get("/openclaw-health")
+@read_rate_limit
+async def openclaw_health(request: Request, current_user: dict = Depends(get_current_user)):
+    """Check OpenClaw gateway connectivity."""
+    from app.services.openclaw import openclaw_service
+    return await openclaw_service.health_check()
+
+
 @router.post("/backup")
 @write_rate_limit
 async def trigger_backup(

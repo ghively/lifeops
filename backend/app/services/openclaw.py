@@ -1,4 +1,4 @@
-"""OpenClaw Service - Integration with OpenClaw gateway."""
+"""OpenClaw Service - Integration with OpenClaw gateway via /tools/invoke."""
 import logging
 from typing import Any, Dict, Optional
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class OpenClawService:
-    """Service for communicating with OpenClaw."""
+    """Service for communicating with OpenClaw gateway using /tools/invoke."""
 
     async def _runtime_settings(self) -> Dict[str, Any]:
         return {
@@ -20,68 +20,133 @@ class OpenClawService:
             "openclaw_enabled": await sqlite_manager.get_setting("openclaw_enabled", True),
         }
 
-    async def _request(self, method: str, path: str, payload: Optional[dict] = None) -> Dict[str, Any]:
+    async def _invoke_tool(self, tool: str, args: Optional[dict] = None, session_key: str = "main") -> Dict[str, Any]:
+        """Invoke a tool on the OpenClaw gateway via /tools/invoke."""
         runtime = await self._runtime_settings()
         if not runtime["openclaw_enabled"]:
-            return {"status": "disabled", "content": "OpenClaw integration disabled", "metadata": {}}
+            return {"status": "disabled", "content": "OpenClaw integration disabled"}
 
         headers = {"Content-Type": "application/json"}
         if runtime["openclaw_token"]:
             headers["Authorization"] = f"Bearer {runtime['openclaw_token']}"
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.request(
-                method,
-                f"{runtime['openclaw_url'].rstrip('/')}{path}",
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            if not response.content:
-                return {}
-            if "application/json" not in response.headers.get("content-type", ""):
-                return {"status": "ok", "content": response.text, "metadata": {}}
-            return response.json()
+        payload = {
+            "tool": tool,
+            "action": "json",
+            "args": args or {},
+            "sessionKey": session_key,
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                response = await client.post(
+                    f"{runtime['openclaw_url'].rstrip('/')}/tools/invoke",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+                if data.get("ok"):
+                    return {"status": "ok", **data.get("result", {})}
+                else:
+                    error = data.get("error", {})
+                    return {"status": "error", "content": error.get("message", str(error))}
+            except httpx.HTTPStatusError as exc:
+                logger.error("OpenClaw /tools/invoke HTTP %s: %s", exc.response.status_code, exc.response.text)
+                return {"status": "error", "content": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
+            except Exception as exc:
+                logger.error("OpenClaw /tools/invoke failed: %s", exc)
+                return {"status": "error", "content": str(exc)}
 
     async def send_message(self, agent_name: str, content: str, session_id: str = "main") -> Dict[str, Any]:
-        payload = {
-            "agent": agent_name,
-            "messages": [{"role": "user", "content": content}],
-        }
+        """Send a message to an agent via sessions_send."""
         try:
-            return await self._request("POST", f"/api/sessions/{session_id}/messages", payload)
+            result = await self._invoke_tool(
+                "sessions_send",
+                args={
+                    "sessionKey": f"agent:{agent_name}:{session_id}",
+                    "message": content,
+                },
+            )
+            # sessions_send doesn't return content directly — it queues the message
+            if result.get("status") == "ok":
+                return {"status": "ok", "content": "Message sent to agent"}
+            return result
         except Exception as exc:
             logger.error("OpenClaw send_message failed: %s", exc)
-            return {"status": "error", "content": str(exc), "metadata": {}}
+            return {"status": "error", "content": str(exc)}
 
     async def assign_task(self, agent_name: str, task_id: str, task_content: str, context: Optional[Dict] = None) -> Dict[str, Any]:
-        payload = {
-            "agent": agent_name,
-            "messages": [{
-                "role": "user",
-                "content": f"Task {task_id}\n\n{task_content}\n\nContext:\n{context or {}}",
-            }],
-        }
+        """Assign a task to an agent."""
+        ctx_text = "\n".join(f"  - {k}: {v}" for k, v in (context or {}).items()) if context else "None"
+        message = (
+            f"📋 New Task Assigned\n\n"
+            f"Task ID: {task_id}\n"
+            f"Title: {task_content}\n\n"
+            f"Context:\n{ctx_text}\n\n"
+            f"Please acknowledge this task and begin work."
+        )
         try:
-            return await self._request("POST", "/api/sessions/main/messages", payload)
+            result = await self._invoke_tool(
+                "sessions_send",
+                args={
+                    "sessionKey": f"agent:{agent_name}:main",
+                    "message": message,
+                },
+            )
+            if result.get("status") == "ok":
+                return {"status": "ok", "content": "Task assigned to agent"}
+            return result
         except Exception as exc:
             logger.error("OpenClaw assign_task failed: %s", exc)
-            return {"status": "error", "message": str(exc)}
+            return {"status": "error", "content": str(exc)}
 
     async def get_agent_status(self, agent_name: str) -> Dict[str, Any]:
+        """Get agent status by listing sessions and finding the agent."""
         try:
-            response = await self._request("GET", "/api/sessions")
-            sessions = response if isinstance(response, list) else response.get("sessions", [])
+            result = await self._invoke_tool("sessions_list", args={"limit": 50})
+            if result.get("status") != "ok":
+                return {"status": "offline"}
+
+            # sessions_list returns sessions — find matching agent
+            sessions = result.get("sessions", [])
             for session in sessions:
-                if session.get("agent") == agent_name or session.get("agent_name") == agent_name:
+                session_key = session.get("sessionKey", "")
+                if f"agent:{agent_name}:" in session_key:
+                    last_message = session.get("lastMessage", "")
                     return {
-                        "status": session.get("status", "idle"),
-                        "current_action": session.get("current_action"),
-                        "last_seen": session.get("updated_at") or session.get("last_seen"),
+                        "status": "active",
+                        "current_action": last_message[:100] if last_message else None,
+                        "last_seen": session.get("updatedAt"),
                     }
+
+            return {"status": "offline"}
         except Exception as exc:
             logger.debug("OpenClaw get_agent_status fallback for %s: %s", agent_name, exc)
-        return {"status": "offline"}
+            return {"status": "offline"}
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Check if the OpenClaw gateway is reachable."""
+        runtime = await self._runtime_settings()
+        if not runtime["openclaw_enabled"]:
+            return {"status": "disabled", "reachable": False}
+
+        headers = {"Content-Type": "application/json"}
+        if runtime["openclaw_token"]:
+            headers["Authorization"] = f"Bearer {runtime['openclaw_token']}"
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{runtime['openclaw_url'].rstrip('/')}/tools/invoke",
+                    headers=headers,
+                    json={"tool": "session_status", "action": "json", "args": {}},
+                )
+                if response.status_code == 200:
+                    return {"status": "ok", "reachable": True}
+                return {"status": "error", "reachable": False, "http_status": response.status_code}
+        except Exception as exc:
+            return {"status": "error", "reachable": False, "error": str(exc)}
 
 
 openclaw_service = OpenClawService()
