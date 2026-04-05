@@ -4,10 +4,12 @@ import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 
 from app.config import settings
 from app.database.qdrant_client import qdrant_manager
+from app.middleware.auth import get_current_user
+from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.models.tasks import TaskListResponse
 from app.services.context_builder import context_builder
 from app.services.embedding import embedding_service
@@ -59,11 +61,14 @@ async def _write_to_heartbeat(task_id: str, agent_name: str, task: dict, context
 
 
 @router.get("")
+@read_rate_limit
 async def list_tasks(
+    request: Request,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     assigned_to: Optional[str] = None,
     limit: int = Query(200, ge=1, le=1000),
+    current_user: dict = Depends(get_current_user),
 ):
     """List tasks with filters and counts."""
     client = qdrant_manager.get_async_client()
@@ -104,7 +109,8 @@ async def list_tasks(
 
 
 @router.get("/{task_id}")
-async def get_task(task_id: str):
+@read_rate_limit
+async def get_task(task_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get a single task."""
     client = qdrant_manager.get_async_client()
     result = await client.retrieve(
@@ -121,7 +127,14 @@ async def get_task(task_id: str):
 
 
 @router.post("/{task_id}/assign")
-async def assign_task(task_id: str, data: dict, background_tasks: BackgroundTasks):
+@write_rate_limit
+async def assign_task(
+    task_id: str,
+    data: dict,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     """Assign a task to an agent with context."""
     client = qdrant_manager.get_async_client()
     agent_name = data.get("agent_name")
@@ -210,7 +223,13 @@ async def assign_task(task_id: str, data: dict, background_tasks: BackgroundTask
 
 
 @router.post("/{task_id}/status")
-async def update_task_status(task_id: str, data: dict):
+@write_rate_limit
+async def update_task_status(
+    task_id: str,
+    data: dict,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
     """Update task status, current action, and notes."""
     client = qdrant_manager.get_async_client()
     status = data.get("status")
@@ -254,6 +273,7 @@ async def update_task_status(task_id: str, data: dict):
 
 
 @router.get("/{task_id}/context")
-async def get_task_context(task_id: str):
+@read_rate_limit
+async def get_task_context(task_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get the full context package for a task."""
     return {"context": await context_builder.build_task_context(task_id=task_id)}

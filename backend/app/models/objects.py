@@ -72,3 +72,4 @@ class ObjectListResponse(BaseModel):
     """Object list response"""
     objects: List[Dict[str, Any]]
     total: int
+    next_offset: Optional[str] = None

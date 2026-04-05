@@ -2,9 +2,11 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.database.qdrant_client import qdrant_manager
+from app.middleware.auth import get_optional_user
+from app.middleware.rate_limit import read_rate_limit
 from app.services.embedding import embedding_service
 
 router = APIRouter()
@@ -24,11 +26,14 @@ def _match_exact(payload: dict, query: str) -> bool:
 
 
 @router.get("")
+@read_rate_limit
 async def search(
+    request: Request,
     q: str,
     exact: bool = False,
     collection: Optional[str] = None,
     limit: int = Query(10, ge=1, le=100),
+    current_user: dict | None = Depends(get_optional_user),
 ):
     """Search across configured collections."""
     if not q.strip():
@@ -77,10 +82,13 @@ async def search(
 
 
 @router.get("/similar/{object_id}")
+@read_rate_limit
 async def find_similar(
     object_id: str,
+    request: Request,
     collection: Optional[str] = None,
     limit: int = Query(10, ge=1, le=50),
+    current_user: dict | None = Depends(get_optional_user),
 ):
     """Find similar entries for a given object."""
     client = qdrant_manager.get_async_client()

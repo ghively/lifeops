@@ -3,9 +3,11 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.database.qdrant_client import qdrant_manager
+from app.middleware.auth import get_current_user
+from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.database.sqlite import sqlite_manager
 from app.services.embedding import embedding_service
 from app.services.openclaw import openclaw_service
@@ -59,9 +61,7 @@ async def _ensure_agent_objects():
         )
 
 
-@router.get("")
-async def list_agents():
-    """List agents with current status."""
+async def _list_agents() -> list[dict]:
     await _ensure_agent_objects()
     client = qdrant_manager.get_async_client()
     results = await client.scroll(
@@ -87,21 +87,30 @@ async def list_agents():
         }
         agents.append(agent)
     agents.sort(key=lambda item: item["name"])
-    return {"agents": agents}
+    return agents
+
+
+@router.get("")
+@read_rate_limit
+async def list_agents(request: Request, current_user: dict = Depends(get_current_user)):
+    """List agents with current status."""
+    return {"agents": await _list_agents()}
 
 
 @router.get("/{name}")
-async def get_agent(name: str):
+@read_rate_limit
+async def get_agent(name: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get agent details."""
-    agents = await list_agents()
-    agent = next((item for item in agents["agents"] if item["name"] == name), None)
+    agents = await _list_agents()
+    agent = next((item for item in agents if item["name"] == name), None)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
 
 
 @router.post("/{name}/chat")
-async def chat_with_agent(name: str, data: dict):
+@write_rate_limit
+async def chat_with_agent(name: str, request: Request, data: dict, current_user: dict = Depends(get_current_user)):
     """Send a message to an agent and store chat logs."""
     client = qdrant_manager.get_async_client()
     content = data.get("content", "").strip()
@@ -173,7 +182,14 @@ async def chat_with_agent(name: str, data: dict):
 
 
 @router.get("/{name}/chat")
-async def get_chat_history(name: str, session_id: Optional[str] = None, limit: int = Query(50, ge=1, le=200)):
+@read_rate_limit
+async def get_chat_history(
+    name: str,
+    request: Request,
+    session_id: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+):
     """Get chat history with an agent."""
     client = qdrant_manager.get_async_client()
     query_filter = {"must": [{"key": "agent_name", "match": {"value": name}}]}
@@ -198,7 +214,13 @@ async def get_chat_history(name: str, session_id: Optional[str] = None, limit: i
 
 
 @router.get("/{name}/tasks")
-async def get_agent_tasks(name: str, status: Optional[str] = None):
+@read_rate_limit
+async def get_agent_tasks(
+    name: str,
+    request: Request,
+    status: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
     """Get tasks assigned to an agent."""
     client = qdrant_manager.get_async_client()
     query_filter = {

@@ -2,8 +2,10 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 
+from app.middleware.auth import authenticate_websocket, get_current_user
+from app.middleware.rate_limit import read_rate_limit
 from app.services.collaboration import (
     collaboration_manager,
     CROperation,
@@ -48,9 +50,19 @@ async def collaboration_ws(websocket: WebSocket, object_id: str):
         { type: "collab.snapshot", data: { ... } }
         { type: "collab.error", data: { message } }
     """
+    try:
+        authenticated_user = await authenticate_websocket(websocket)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
-
     user_id: str | None = None
+    default_display_name = (
+        authenticated_user.get("display_name")
+        or authenticated_user.get("username")
+        or authenticated_user.get("email")
+        or "Anonymous"
+    )
 
     try:
         while True:
@@ -66,13 +78,9 @@ async def collaboration_ws(websocket: WebSocket, object_id: str):
 
             # --- JOIN ---
             if msg_type == MSG_JOIN:
-                uid = data.get("user_id")
-                display_name = data.get("display_name", "Anonymous")
-                if not uid:
-                    await websocket.send_json({"type": MSG_ERROR, "data": {"message": "user_id required"}})
-                    continue
-                user_id = uid
-                await collaboration_manager.join_room(object_id, uid, display_name, websocket)
+                user_id = authenticated_user["id"]
+                display_name = data.get("display_name") or default_display_name
+                await collaboration_manager.join_room(object_id, user_id, display_name, websocket)
 
             # --- LEAVE ---
             elif msg_type == MSG_LEAVE:
@@ -151,14 +159,16 @@ async def collaboration_ws(websocket: WebSocket, object_id: str):
 # ---------------------------------------------------------------------------
 
 @router.get("/{object_id}/presence")
-async def get_presence(object_id: str):
+@read_rate_limit
+async def get_presence(object_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get current users editing a document."""
     users = collaboration_manager.get_presence(object_id)
     return {"object_id": object_id, "users": users, "count": len(users)}
 
 
 @router.get("/{object_id}/snapshot")
-async def get_snapshot(object_id: str):
+@read_rate_limit
+async def get_snapshot(object_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get collaboration room snapshot."""
     room = collaboration_manager.get_room(object_id)
     if not room:
@@ -167,7 +177,8 @@ async def get_snapshot(object_id: str):
 
 
 @router.get("/stats/rooms")
-async def get_stats():
+@read_rate_limit
+async def get_stats(request: Request, current_user: dict = Depends(get_current_user)):
     """Get collaboration stats across all rooms."""
     rooms = collaboration_manager.rooms
     return {

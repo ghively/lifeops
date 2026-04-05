@@ -3,11 +3,13 @@ import uuid
 import logging
 import hashlib
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from typing import List, Optional
 
 from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
+from app.middleware.auth import get_current_user
+from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.services.websocket_manager import websocket_manager, WebSocketEvents
 from app.services.embedding import embedding_service
 from app.utils.time import utc_now_iso
@@ -30,7 +32,8 @@ def compute_file_hash(file_path: str) -> str:
 
 
 @router.get("")
-async def list_files():
+@read_rate_limit
+async def list_files(request: Request, current_user: dict = Depends(get_current_user)):
     """List all indexed files"""
     client = qdrant_manager.get_async_client()
     
@@ -51,7 +54,8 @@ async def list_files():
 
 
 @router.get("/{file_id}")
-async def get_file(file_id: str):
+@read_rate_limit
+async def get_file(file_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get file details"""
     client = qdrant_manager.get_async_client()
     
@@ -72,7 +76,13 @@ async def get_file(file_id: str):
 
 
 @router.post("/{file_id}/reindex")
-async def reindex_file(file_id: str, background_tasks: BackgroundTasks):
+@write_rate_limit
+async def reindex_file(
+    file_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     """Reindex a file"""
     client = qdrant_manager.get_async_client()
     
@@ -115,7 +125,8 @@ async def _reindex_file_task(file_id: str, file_path: str):
 
 
 @router.post("/notify")
-async def file_notification(data: dict):
+@write_rate_limit
+async def file_notification(data: dict, request: Request, current_user: dict = Depends(get_current_user)):
     """Receive file change notifications from file watcher"""
     event_type = data.get("event_type")
     path = data.get("path")
@@ -196,7 +207,13 @@ async def _update_file_path(old_path: str, new_path: str):
 
 
 @router.post("/{file_id}/content")
-async def index_file_content(file_id: str, data: dict):
+@write_rate_limit
+async def index_file_content(
+    file_id: str,
+    data: dict,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
     """Index file content"""
     client = qdrant_manager.get_async_client()
     

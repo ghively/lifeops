@@ -2,9 +2,11 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.database.qdrant_client import qdrant_manager
+from app.middleware.auth import get_current_user
+from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.models.blocks import BlockCreate, BlockListResponse, BlockUpdate
 from app.services.embedding import embedding_service
 from app.services.relations import relation_service
@@ -15,9 +17,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/object/{object_id}", response_model=BlockListResponse)
-async def get_blocks_for_object(object_id: str, limit: int = Query(1000, ge=1, le=5000)):
-    """Get all blocks for an object."""
+async def _get_blocks_for_object(object_id: str, limit: int) -> list[dict]:
     client = qdrant_manager.get_async_client()
     results = await client.scroll(
         collection_name="blocks",
@@ -34,24 +34,37 @@ async def get_blocks_for_object(object_id: str, limit: int = Query(1000, ge=1, l
         blocks.append(payload)
 
     blocks.sort(key=lambda item: (item.get("order", 0), item.get("created_at", "")))
-    return BlockListResponse(blocks=blocks)
+    return blocks
+
+
+@router.get("/object/{object_id}", response_model=BlockListResponse)
+@read_rate_limit
+async def get_blocks_for_object(
+    object_id: str,
+    request: Request,
+    limit: int = Query(1000, ge=1, le=5000),
+    current_user: dict = Depends(get_current_user),
+):
+    """Get all blocks for an object."""
+    return BlockListResponse(blocks=await _get_blocks_for_object(object_id, limit))
 
 
 @router.post("")
-async def create_block(block: BlockCreate):
+@write_rate_limit
+async def create_block(block: BlockCreate, request: Request, current_user: dict = Depends(get_current_user)):
     """Create a new block."""
     client = qdrant_manager.get_async_client()
     block_id = block.id or str(uuid.uuid4())
     embedding = await embedding_service.embed_text(block.content)
 
-    existing_blocks = await get_blocks_for_object(block.object_id)
+    existing_blocks = await _get_blocks_for_object(block.object_id, 5000)
     payload = {
         "id": block_id,
         "object_id": block.object_id,
         "type": block.type,
         "content": block.content,
         "level": block.level,
-        "order": block.order if block.order is not None else len(existing_blocks.blocks),
+        "order": block.order if block.order is not None else len(existing_blocks),
         "properties": (block.properties.model_dump(exclude_none=True) if block.properties else {}),
         "parent_id": block.parent_id,
         "references": [],
@@ -70,7 +83,13 @@ async def create_block(block: BlockCreate):
 
 
 @router.put("/{block_id}")
-async def update_block(block_id: str, update: BlockUpdate):
+@write_rate_limit
+async def update_block(
+    block_id: str,
+    update: BlockUpdate,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
     """Update a block."""
     client = qdrant_manager.get_async_client()
     existing = await client.retrieve(
@@ -114,7 +133,8 @@ async def update_block(block_id: str, update: BlockUpdate):
 
 
 @router.post("/batch-update")
-async def batch_update_blocks(data: dict):
+@write_rate_limit
+async def batch_update_blocks(data: dict, request: Request, current_user: dict = Depends(get_current_user)):
     """Batch update block order and nesting."""
     client = qdrant_manager.get_async_client()
     updated = 0
@@ -146,7 +166,13 @@ async def batch_update_blocks(data: dict):
 
 
 @router.put("/object/{object_id}/sync")
-async def sync_blocks_for_object(object_id: str, data: dict):
+@write_rate_limit
+async def sync_blocks_for_object(
+    object_id: str,
+    data: dict,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
     """Replace an object's block set in a single request."""
     client = qdrant_manager.get_async_client()
     incoming_blocks = data.get("blocks", [])
@@ -195,7 +221,8 @@ async def sync_blocks_for_object(object_id: str, data: dict):
 
 
 @router.delete("/{block_id}")
-async def delete_block(block_id: str):
+@write_rate_limit
+async def delete_block(block_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Delete a block."""
     client = qdrant_manager.get_async_client()
     existing = await client.retrieve(

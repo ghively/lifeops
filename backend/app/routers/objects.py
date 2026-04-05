@@ -3,9 +3,11 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.database.qdrant_client import qdrant_manager
+from app.middleware.auth import get_current_user
+from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.models.objects import ObjectCreate, ObjectListResponse, ObjectUpdate
 from app.services.embedding import embedding_service
 from app.services.relations import relation_service
@@ -26,35 +28,77 @@ def _merge_properties(existing: dict, incoming: Optional[dict]) -> dict:
     return merged
 
 
+def _normalize_scroll_offset(offset: Optional[str]) -> Optional[str]:
+    if offset in {None, "", "0"}:
+        return None
+    return offset
+
+
+async def _count_collection(client, collection_name: str, scroll_filter: Optional[dict]) -> int:
+    count = await client.count(
+        collection_name=collection_name,
+        count_filter=scroll_filter,
+        exact=True,
+    )
+    return int(count.count)
+
+
+async def _delete_blocks_for_object(client, object_id: str) -> None:
+    next_offset = None
+    while True:
+        blocks, next_offset = await client.scroll(
+            collection_name="blocks",
+            scroll_filter={"must": [{"key": "object_id", "match": {"value": object_id}}]},
+            offset=next_offset,
+            limit=100,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for block in blocks:
+            await relation_service.remove_block_references(str(block.id))
+            await client.delete(collection_name="blocks", points_selector=[str(block.id)])
+        if next_offset is None:
+            break
+
+
 @router.get("", response_model=ObjectListResponse)
+@read_rate_limit
 async def list_objects(
+    request: Request,
     type: Optional[str] = None,
     limit: int = Query(50, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    offset: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
 ):
     """List objects with optional filtering."""
     client = qdrant_manager.get_async_client()
     query_filter = {"must": [{"key": "type", "match": {"value": type}}]} if type else None
 
-    all_results = await client.scroll(
+    points, next_offset = await client.scroll(
         collection_name="objects",
         scroll_filter=query_filter,
-        limit=10000,
+        offset=_normalize_scroll_offset(offset),
+        limit=limit,
         with_payload=True,
         with_vectors=False,
     )
 
     objects = []
-    for point in all_results[0][offset: offset + limit]:
+    for point in points:
         payload = dict(point.payload or {})
         payload["id"] = str(point.id)
         objects.append(payload)
 
-    return ObjectListResponse(objects=objects, total=len(all_results[0]))
+    return ObjectListResponse(
+        objects=objects,
+        total=await _count_collection(client, "objects", query_filter),
+        next_offset=str(next_offset) if next_offset is not None else None,
+    )
 
 
 @router.get("/{object_id}")
-async def get_object(object_id: str):
+@read_rate_limit
+async def get_object(object_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get a single object by ID."""
     client = qdrant_manager.get_async_client()
     results = await client.retrieve(
@@ -72,7 +116,8 @@ async def get_object(object_id: str):
 
 
 @router.post("")
-async def create_object(obj: ObjectCreate):
+@write_rate_limit
+async def create_object(obj: ObjectCreate, request: Request, current_user: dict = Depends(get_current_user)):
     """Create a new object."""
     client = qdrant_manager.get_async_client()
     object_id = str(uuid.uuid4())
@@ -100,7 +145,13 @@ async def create_object(obj: ObjectCreate):
 
 
 @router.put("/{object_id}")
-async def update_object(object_id: str, update: ObjectUpdate):
+@write_rate_limit
+async def update_object(
+    object_id: str,
+    update: ObjectUpdate,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
     """Partial update for an object."""
     client = qdrant_manager.get_async_client()
     existing = await client.retrieve(
@@ -154,7 +205,8 @@ async def update_object(object_id: str, update: ObjectUpdate):
 
 
 @router.delete("/{object_id}")
-async def delete_object(object_id: str):
+@write_rate_limit
+async def delete_object(object_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Delete an object and cleanup related blocks and relations."""
     client = qdrant_manager.get_async_client()
     existing = await client.retrieve(
@@ -166,16 +218,7 @@ async def delete_object(object_id: str):
     if not existing:
         raise HTTPException(status_code=404, detail="Object not found")
 
-    blocks = await client.scroll(
-        collection_name="blocks",
-        scroll_filter={"must": [{"key": "object_id", "match": {"value": object_id}}]},
-        limit=10000,
-        with_payload=True,
-        with_vectors=False,
-    )
-    for block in blocks[0]:
-        await relation_service.remove_block_references(str(block.id))
-        await client.delete(collection_name="blocks", points_selector=[str(block.id)])
+    await _delete_blocks_for_object(client, object_id)
 
     await relation_service.remove_relations_for_entity(object_id)
     await client.delete(collection_name="objects", points_selector=[object_id])
@@ -184,6 +227,7 @@ async def delete_object(object_id: str):
 
 
 @router.get("/{object_id}/relations")
-async def get_object_relations(object_id: str):
+@read_rate_limit
+async def get_object_relations(object_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get relations for an object."""
     return {"relations": await relation_service.list_relations_for_object(object_id)}

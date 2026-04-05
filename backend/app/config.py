@@ -39,6 +39,7 @@ class Settings:
     )
     
     # Backup settings
+    data_dir: str = os.getenv("DATA_DIR", DATA_DIR.as_posix())
     backup_path: str = os.getenv("BACKUP_PATH", BACKUPS_DIR.as_posix())
     heartbeat_path: str = os.getenv("HEARTBEAT_PATH", HEARTBEAT_FILE.as_posix())
     

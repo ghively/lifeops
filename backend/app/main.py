@@ -2,14 +2,27 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+
+try:
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.middleware import SlowAPIMiddleware
+except ImportError:  # pragma: no cover - used in offline CI/dev environments
+    from app.vendor.slowapi_compat import (
+        RateLimitExceeded,
+        SlowAPIMiddleware,
+        _rate_limit_exceeded_handler,
+    )
 
 from app.config import settings
 from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
+from app.middleware.rate_limit import limiter, read_rate_limit
 from app.services.embedding import embedding_service
 from app.services.backup import backup_service
+from app.services.auth import auth_service
 from app.services.file_watcher import file_watcher_service
 from app.services.websocket_manager import websocket_manager
 from app.services.collaboration import collaboration_manager
@@ -30,6 +43,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler"""
     # Startup
     logger.info("🚀 Starting Knowledge OS Backend...")
+    auth_service.log_secret_configuration_warning()
     
     # Initialize databases first
     logger.info("📦 Initializing Qdrant...")
@@ -76,6 +90,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure CORS with configurable origins
 app.add_middleware(
@@ -85,6 +101,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SlowAPIMiddleware)
 
 # Include routers
 app.include_router(auth_router.router, prefix="/api/auth", tags=["Authentication"])
@@ -100,7 +117,8 @@ app.include_router(collaboration.router, prefix="/api/collaboration", tags=["Col
 
 
 @app.get("/health")
-async def health_check():
+@read_rate_limit
+async def health_check(request: Request):
     """Health check endpoint"""
     return {
         "status": "healthy",
@@ -109,7 +127,8 @@ async def health_check():
 
 
 @app.get("/")
-async def root():
+@read_rate_limit
+async def root(request: Request):
     """Root endpoint"""
     return {
         "message": "Knowledge OS API",

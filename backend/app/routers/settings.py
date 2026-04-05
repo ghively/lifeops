@@ -4,10 +4,12 @@ import json
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from app.config import settings as app_settings
 from app.database.sqlite import sqlite_manager
+from app.middleware.auth import get_current_user
+from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -39,13 +41,15 @@ async def _load_settings() -> Dict[str, Any]:
 
 
 @router.get("")
-async def get_settings():
+@read_rate_limit
+async def get_settings(request: Request, current_user: dict = Depends(get_current_user)):
     """Get application settings."""
     return await _load_settings()
 
 
 @router.put("")
-async def update_settings(data: dict):
+@write_rate_limit
+async def update_settings(data: dict, request: Request, current_user: dict = Depends(get_current_user)):
     """Update application settings."""
     current = await _load_settings()
     current.update(data)
@@ -56,7 +60,8 @@ async def update_settings(data: dict):
 
 
 @router.get("/watched-folders")
-async def get_watched_folders():
+@read_rate_limit
+async def get_watched_folders(request: Request, current_user: dict = Depends(get_current_user)):
     """Get list of watched folders."""
     folders = await sqlite_manager.fetchall(
         """
@@ -72,7 +77,8 @@ async def get_watched_folders():
 
 
 @router.post("/watched-folders")
-async def add_watched_folder(data: dict):
+@write_rate_limit
+async def add_watched_folder(data: dict, request: Request, current_user: dict = Depends(get_current_user)):
     """Add a new watched folder."""
     path = data.get("path")
     if not path:
@@ -118,7 +124,12 @@ async def add_watched_folder(data: dict):
 
 
 @router.delete("/watched-folders/{folder_id}")
-async def remove_watched_folder(folder_id: str):
+@write_rate_limit
+async def remove_watched_folder(
+    folder_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
     """Remove a watched folder."""
     folder = await sqlite_manager.fetchone(
         "SELECT id, path FROM watched_folders WHERE id = ?",
@@ -139,7 +150,13 @@ async def remove_watched_folder(folder_id: str):
 
 
 @router.post("/backup")
-async def trigger_backup(data: dict, background_tasks: BackgroundTasks):
+@write_rate_limit
+async def trigger_backup(
+    data: dict,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     """Trigger a backup."""
     backup_type = data.get("type")
     if backup_type not in ["snapshot", "markdown", "git"]:

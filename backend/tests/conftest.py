@@ -434,7 +434,21 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
     from app.main import app
     from app.database.qdrant_client import qdrant_manager
     from app.database.sqlite import sqlite_manager
+    from app.middleware.auth import get_current_user, get_optional_user
+    from app.services.backup import backup_service
     from app.services.embedding import embedding_service as emb_svc
+    from app.services.file_watcher import file_watcher_service
+    from app.services.openclaw import openclaw_service
+    from app.services.context_builder import context_builder
+
+    async def fake_current_user():
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "test-user",
+            "display_name": "Test User",
+            "is_active": True,
+        }
 
     # Patch the singletons' methods
     with patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client), \
@@ -447,11 +461,26 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
          patch.object(sqlite_manager, "upsert_setting", mock_sqlite_manager.upsert_setting), \
          patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone), \
          patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall), \
-         patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute):
+         patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute), \
+         patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})), \
+         patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})), \
+         patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})), \
+         patch.object(context_builder, "build_task_context", AsyncMock(return_value={})), \
+         patch.object(file_watcher_service, "process_file", AsyncMock(return_value=None)), \
+         patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)), \
+         patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)), \
+         patch.object(backup_service, "run_backup", AsyncMock(return_value=None)):
+
+        app.dependency_overrides[get_current_user] = fake_current_user
+        app.dependency_overrides[get_optional_user] = fake_current_user
+        limiter_enabled = getattr(app.state.limiter, "enabled", True)
+        app.state.limiter.enabled = False
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client, mock_async_qdrant_client._storage
+        app.state.limiter.enabled = limiter_enabled
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -460,7 +489,21 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
     from app.main import app
     from app.database.qdrant_client import qdrant_manager
     from app.database.sqlite import sqlite_manager
+    from app.middleware.auth import get_current_user, get_optional_user
+    from app.services.backup import backup_service
     from app.services.embedding import embedding_service as emb_svc
+    from app.services.file_watcher import file_watcher_service
+    from app.services.openclaw import openclaw_service
+    from app.services.context_builder import context_builder
+
+    async def fake_current_user():
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "test-user",
+            "display_name": "Test User",
+            "is_active": True,
+        }
 
     # Patch the singletons' methods
     with patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client), \
@@ -473,11 +516,26 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
          patch.object(sqlite_manager, "upsert_setting", mock_sqlite_manager.upsert_setting), \
          patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone), \
          patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall), \
-         patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute):
+         patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute), \
+         patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})), \
+         patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})), \
+         patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})), \
+         patch.object(context_builder, "build_task_context", AsyncMock(return_value={})), \
+         patch.object(file_watcher_service, "process_file", AsyncMock(return_value=None)), \
+         patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)), \
+         patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)), \
+         patch.object(backup_service, "run_backup", AsyncMock(return_value=None)):
+
+        app.dependency_overrides[get_current_user] = fake_current_user
+        app.dependency_overrides[get_optional_user] = fake_current_user
+        limiter_enabled = getattr(app.state.limiter, "enabled", True)
+        app.state.limiter.enabled = False
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
+        app.state.limiter.enabled = limiter_enabled
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture

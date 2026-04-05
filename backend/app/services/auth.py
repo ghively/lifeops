@@ -1,7 +1,10 @@
 """Authentication Service - JWT tokens and password management"""
 import uuid
 import logging
+import os
+import secrets
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, Dict, Any
 
 import jwt
@@ -21,15 +24,59 @@ class AuthService:
 
     def __init__(self):
         self.secret_key = getattr(settings, 'secret_key', None)
+        self.secret_source = "environment"
+        self.secret_file_path: Path | None = None
+        self._secret_warning_logged = False
         if not self.secret_key:
-            # Generate a random secret key for development
-            import secrets
-            self.secret_key = secrets.token_urlsafe(32)
-            logger.warning("Using auto-generated JWT secret key. Set JWT_SECRET_KEY env var in production!")
+            self.secret_key = self._load_or_create_persisted_secret()
 
         self.access_token_expire_minutes = getattr(settings, 'access_token_expire_minutes', 1440)  # 24h default
         self.refresh_token_expire_days = getattr(settings, 'refresh_token_expire_days', 7)  # 7 days default
         self.reset_token_expire_hours = getattr(settings, 'reset_token_expire_hours', 1)  # 1 hour default
+
+    def _resolve_secret_file_path(self) -> Path:
+        configured_path = os.getenv("JWT_SECRET_FILE")
+        if configured_path:
+            return Path(configured_path)
+
+        database_url = getattr(settings, "database_url", "")
+        if database_url.startswith("sqlite:///"):
+            return Path(database_url.removeprefix("sqlite:///")).resolve().parent / ".jwt_secret"
+
+        return Path(getattr(settings, "data_dir")).resolve() / ".jwt_secret"
+
+    def _load_or_create_persisted_secret(self) -> str:
+        secret_path = self._resolve_secret_file_path()
+        self.secret_file_path = secret_path
+
+        try:
+            if secret_path.exists():
+                persisted_secret = secret_path.read_text(encoding="utf-8").strip()
+                if persisted_secret:
+                    self.secret_source = "persisted-file"
+                    return persisted_secret
+
+            secret_path.parent.mkdir(parents=True, exist_ok=True)
+            persisted_secret = secrets.token_urlsafe(64)
+            secret_path.write_text(f"{persisted_secret}\n", encoding="utf-8")
+            self.secret_source = "persisted-file"
+            logger.warning("Persisted generated JWT secret to %s", secret_path)
+            return persisted_secret
+        except Exception:
+            self.secret_source = "ephemeral-fallback"
+            logger.exception("Failed to persist JWT secret at %s; falling back to an ephemeral secret", secret_path)
+            return secrets.token_urlsafe(64)
+
+    def log_secret_configuration_warning(self) -> None:
+        if self._secret_warning_logged or self.secret_source == "environment":
+            return
+
+        location = str(self.secret_file_path) if self.secret_file_path else "<unavailable>"
+        logger.warning("JWT_SECRET_KEY is not set. Backend is using a persisted fallback secret from %s", location)
+        logger.warning("Production warning: configure JWT_SECRET_KEY from your environment or secret manager before deployment")
+        if self.secret_source == "ephemeral-fallback":
+            logger.error("JWT secret persistence failed. Existing sessions will be invalidated on restart until secret storage works")
+        self._secret_warning_logged = True
 
     def hash_password(self, password: str) -> str:
         """Hash a password using bcrypt"""

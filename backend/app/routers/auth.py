@@ -1,10 +1,10 @@
 """Authentication Router - User registration, login, logout, password reset"""
 import logging
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from app.middleware.auth import get_current_user as require_current_user
+from app.middleware.rate_limit import auth_rate_limit, read_rate_limit
 from app.models.user import (
     UserCreate,
     UserLogin,
@@ -18,11 +18,11 @@ from app.services.auth import auth_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-security = HTTPBearer()
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(data: UserCreate):
+@auth_rate_limit
+async def register(request: Request, data: UserCreate):
     """
     Register a new user account.
 
@@ -63,7 +63,8 @@ async def register(data: UserCreate):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: UserLogin):
+@auth_rate_limit
+async def login(request: Request, data: UserLogin):
     """
     Login with email and password.
 
@@ -97,7 +98,8 @@ async def login(data: UserLogin):
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(data: TokenRefreshRequest):
+@auth_rate_limit
+async def refresh_token(request: Request, data: TokenRefreshRequest):
     """
     Refresh an access token using a refresh token.
 
@@ -143,7 +145,8 @@ async def refresh_token(data: TokenRefreshRequest):
 
 
 @router.post("/logout")
-async def logout(data: TokenRefreshRequest):
+@auth_rate_limit
+async def logout(request: Request, data: TokenRefreshRequest):
     """
     Logout by invalidating the refresh token.
 
@@ -174,35 +177,22 @@ async def logout(data: TokenRefreshRequest):
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+@read_rate_limit
+async def get_current_user_profile(
+    request: Request,
+    current_user: dict = Depends(require_current_user),
+):
     """
     Get the current authenticated user's profile.
 
     Requires a valid access token in the Authorization header.
     """
-    token = credentials.credentials
-    payload = auth_service.decode_token(token)
-
-    if not payload or payload.get("type") != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid access token",
-        )
-
-    user_id = payload.get("sub")
-    user = await auth_service.get_user_by_id(user_id)
-
-    if not user or not user.get("is_active"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-
-    return UserResponse(**user)
+    return UserResponse(**current_user)
 
 
 @router.post("/password-reset")
-async def request_password_reset(data: PasswordResetRequest):
+@auth_rate_limit
+async def request_password_reset(request: Request, data: PasswordResetRequest):
     """
     Request a password reset.
 
@@ -225,7 +215,8 @@ async def request_password_reset(data: PasswordResetRequest):
 
 
 @router.post("/password-reset/confirm")
-async def confirm_password_reset(data: PasswordResetConfirm):
+@auth_rate_limit
+async def confirm_password_reset(request: Request, data: PasswordResetConfirm):
     """
     Confirm a password reset with the token.
 
