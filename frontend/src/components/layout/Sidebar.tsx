@@ -243,8 +243,11 @@ export function Sidebar({ collapsed, isMobile = false, mobileOpen = false, onTog
           </Collapsible>
 
           <div>
-            <div className="px-3 py-2 text-sm font-medium text-muted-foreground">
-              Recent Objects
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-sm font-medium text-muted-foreground">Recent Objects</span>
+              <Link to="/" onClick={onNavigate} className="text-xs text-muted-foreground hover:text-foreground">
+                View all
+              </Link>
             </div>
             <div className="space-y-1">
               {objectsLoading ? (

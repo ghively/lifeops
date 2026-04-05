@@ -228,7 +228,7 @@ const Toolbar = ({ editor }: { editor: Editor }) => {
   }
 
   return (
-    <div className="hidden items-center gap-1 overflow-x-auto border-b bg-muted/50 p-2 sm:flex">
+    <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted/50 p-2">
       <Button aria-label="Type" title="Type" variant="ghost" size="sm" onClick={() => toggleBlock('paragraph')} className={cn(isBlockActive(editor, 'paragraph') && 'bg-muted')}>
         <Type className="h-4 w-4" />
       </Button>
@@ -540,7 +540,7 @@ export function OutlinerEditor({
         </Slate>
 
         {!readOnly && (
-          <Button variant="ghost" className="mt-2 hidden w-full justify-start gap-2 text-muted-foreground sm:flex" onClick={addBlock}>
+          <Button variant="ghost" className="mt-2 w-full justify-start gap-2 text-muted-foreground" onClick={addBlock}>
             <Plus className="h-4 w-4" />
             Add a block
           </Button>

@@ -50,13 +50,25 @@ export function MainLayout({ children }: MainLayoutProps) {
     }
   }
 
+  const [notifStatus, setNotifStatus] = useState<string | null>(null)
+
   const handleNotificationsClick = async () => {
     if (!('Notification' in window)) {
+      setNotifStatus('unsupported')
+      setTimeout(() => setNotifStatus(null), 3000)
       return
     }
 
     if (Notification.permission === 'default') {
-      await Notification.requestPermission()
+      const result = await Notification.requestPermission()
+      setNotifStatus(result === 'granted' ? 'enabled' : 'denied')
+      setTimeout(() => setNotifStatus(null), 3000)
+    } else if (Notification.permission === 'granted') {
+      setNotifStatus('already')
+      setTimeout(() => setNotifStatus(null), 3000)
+    } else {
+      setNotifStatus('blocked')
+      setTimeout(() => setNotifStatus(null), 3000)
     }
   }
 
@@ -127,9 +139,11 @@ export function MainLayout({ children }: MainLayoutProps) {
             )}
             <Button aria-label="Notifications" variant="ghost" size="icon" className="relative" onClick={() => void handleNotificationsClick()}>
               <Bell className="h-5 w-5" />
-              {typeof Notification !== 'undefined' && Notification.permission !== 'granted' && (
+              {notifStatus === 'enabled' || notifStatus === 'already' ? (
+                <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500" />
+              ) : typeof Notification !== 'undefined' && Notification.permission !== 'granted' ? (
                 <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
-              )}
+              ) : null}
             </Button>
             <Button aria-label="Settings" variant="ghost" size="icon" onClick={() => navigate('/settings')}>
               <Settings className="h-5 w-5" />
