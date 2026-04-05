@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.constants import COLLECTION_BLOCKS, COLLECTION_OBJECTS
-from app.database.qdrant_client import qdrant_manager
+from app.database.qdrant_client import qdrant_manager, QdrantManager
 from app.database.sqlite import sqlite_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
@@ -189,7 +189,7 @@ async def list_objects(
 async def get_object(object_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get a single object by ID."""
     client = qdrant_manager.get_async_client()
-    results = await client.retrieve(
+    results = await QdrantManager.safe_retrieve(client, 
         collection_name=COLLECTION_OBJECTS,
         ids=[object_id],
         with_payload=True,
@@ -250,7 +250,7 @@ async def update_object(
 ):
     """Partial update for an object."""
     client = qdrant_manager.get_async_client()
-    existing = await client.retrieve(
+    existing = await QdrantManager.safe_retrieve(client, 
         collection_name=COLLECTION_OBJECTS,
         ids=[object_id],
         with_payload=True,
@@ -319,7 +319,7 @@ async def update_object(
 async def delete_object(object_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Delete an object and cleanup related blocks and relations."""
     client = qdrant_manager.get_async_client()
-    existing = await client.retrieve(
+    existing = await QdrantManager.safe_retrieve(client, 
         collection_name=COLLECTION_OBJECTS,
         ids=[object_id],
         with_payload=True,

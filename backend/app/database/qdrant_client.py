@@ -214,6 +214,27 @@ class QdrantManager:
         """Get async client"""
         return self.async_client
 
+    @staticmethod
+    async def safe_retrieve(client, *, collection_name: str, ids: list, **kwargs):
+        """Retrieve points, returning empty list for invalid IDs instead of raising.
+
+        Qdrant rejects non-UUID/non-integer IDs with a 400 error.
+        This wrapper catches that and returns an empty list, so callers
+        can treat "invalid ID" the same as "not found" (404).
+        """
+        try:
+            return await client.retrieve(
+                collection_name=collection_name,
+                ids=ids,
+                **kwargs,
+            )
+        except Exception as exc:
+            error_str = str(exc).lower()
+            if "not a valid point id" in error_str or "bad request" in error_str:
+                logger.debug("safe_retrieve: invalid ID(s) %s in %s: %s", ids, collection_name, exc)
+                return []
+            raise
+
 
 # Global instance
 qdrant_manager = QdrantManager()

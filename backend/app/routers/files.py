@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from app.utils import compute_file_hash
 
-from app.database.qdrant_client import qdrant_manager
+from app.database.qdrant_client import qdrant_manager, QdrantManager
 from app.database.sqlite import sqlite_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
@@ -47,7 +47,7 @@ async def get_file(file_id: str, request: Request, current_user: dict = Depends(
     """Get file details"""
     client = qdrant_manager.get_async_client()
     
-    results = await client.retrieve(
+    results = await QdrantManager.safe_retrieve(client, 
         collection_name="files",
         ids=[file_id],
         with_payload=True,
@@ -75,7 +75,7 @@ async def reindex_file(
     client = qdrant_manager.get_async_client()
     
     # Get existing file
-    results = await client.retrieve(
+    results = await QdrantManager.safe_retrieve(client, 
         collection_name="files",
         ids=[file_id],
         with_payload=True,

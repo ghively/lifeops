@@ -2,7 +2,7 @@
 import logging
 from typing import Dict, List, Optional
 
-from app.database.qdrant_client import qdrant_manager
+from app.database.qdrant_client import qdrant_manager, QdrantManager
 from app.database.sqlite import sqlite_manager
 from app.services.embedding import embedding_service
 
@@ -90,7 +90,7 @@ class ContextBuilder:
             "max_context_tokens": settings,
         }
 
-        task_result = await client.retrieve(
+        task_result = await QdrantManager.safe_retrieve(client, 
             collection_name="objects",
             ids=[task_id],
             with_payload=True,
@@ -187,7 +187,7 @@ class ContextBuilder:
 
     async def _get_pointer(self, collection: str, object_id: str):
         client = qdrant_manager.get_async_client()
-        result = await client.retrieve(
+        result = await QdrantManager.safe_retrieve(client, 
             collection_name=collection,
             ids=[object_id],
             with_payload=True,

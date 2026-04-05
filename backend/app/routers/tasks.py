@@ -23,7 +23,7 @@ class UpdateTaskStatusRequest(BaseModel):
     current_action: Optional[str] = None
     notes: Optional[str] = None
     agent_name: Optional[str] = None
-from app.database.qdrant_client import qdrant_manager
+from app.database.qdrant_client import qdrant_manager, QdrantManager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.models.tasks import TaskListResponse
@@ -130,7 +130,7 @@ async def list_tasks(
 async def get_task(task_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get a single task."""
     client = qdrant_manager.get_async_client()
-    result = await client.retrieve(
+    result = await QdrantManager.safe_retrieve(client, 
         collection_name="objects",
         ids=[task_id],
         with_payload=True,
@@ -161,7 +161,7 @@ async def assign_task(
     if priority not in VALID_PRIORITIES:
         raise HTTPException(status_code=400, detail=f"Invalid priority: {priority}")
 
-    task_result = await client.retrieve(
+    task_result = await QdrantManager.safe_retrieve(client, 
         collection_name="objects",
         ids=[task_id],
         with_payload=True,
@@ -255,7 +255,7 @@ async def update_task_status(
     if status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}")
 
-    task_result = await client.retrieve(
+    task_result = await QdrantManager.safe_retrieve(client, 
         collection_name="objects",
         ids=[task_id],
         with_payload=True,

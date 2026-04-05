@@ -3,7 +3,7 @@ import re
 import uuid
 from typing import List
 
-from app.database.qdrant_client import qdrant_manager
+from app.database.qdrant_client import qdrant_manager, QdrantManager
 from app.services.embedding import embedding_service
 from app.utils.time import utc_now_iso
 
@@ -106,7 +106,7 @@ class RelationService:
 
     async def sync_block_references(self, block_id: str, object_id: str, content: str):
         client = qdrant_manager.get_async_client()
-        existing = await client.retrieve(
+        existing = await QdrantManager.safe_retrieve(client, 
             collection_name="blocks",
             ids=[block_id],
             with_payload=True,
@@ -155,7 +155,7 @@ class RelationService:
 
     async def remove_block_references(self, block_id: str):
         client = qdrant_manager.get_async_client()
-        existing = await client.retrieve(
+        existing = await QdrantManager.safe_retrieve(client, 
             collection_name="blocks",
             ids=[block_id],
             with_payload=True,
@@ -172,7 +172,7 @@ class RelationService:
 
     async def _add_back_reference(self, referenced_block_id: str, block_id: str):
         client = qdrant_manager.get_async_client()
-        result = await client.retrieve(
+        result = await QdrantManager.safe_retrieve(client, 
             collection_name="blocks",
             ids=[referenced_block_id],
             with_payload=True,
@@ -189,7 +189,7 @@ class RelationService:
 
     async def _remove_back_reference(self, referenced_block_id: str, block_id: str):
         client = qdrant_manager.get_async_client()
-        result = await client.retrieve(
+        result = await QdrantManager.safe_retrieve(client, 
             collection_name="blocks",
             ids=[referenced_block_id],
             with_payload=True,
@@ -216,7 +216,7 @@ class RelationService:
     async def _assert_entity_exists(self, entity_type: str, entity_id: str):
         collection = "objects" if entity_type == "object" else "blocks"
         client = qdrant_manager.get_async_client()
-        result = await client.retrieve(
+        result = await QdrantManager.safe_retrieve(client, 
             collection_name=collection,
             ids=[entity_id],
             with_payload=False,

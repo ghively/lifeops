@@ -6,7 +6,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.constants import COLLECTION_BLOCKS
-from app.database.qdrant_client import qdrant_manager
+from app.database.qdrant_client import qdrant_manager, QdrantManager
 from app.database.sqlite import sqlite_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
@@ -134,7 +134,7 @@ async def update_block(
 ):
     """Update a block."""
     client = qdrant_manager.get_async_client()
-    existing = await client.retrieve(
+    existing = await QdrantManager.safe_retrieve(client, 
         collection_name=COLLECTION_BLOCKS,
         ids=[block_id],
         with_payload=True,
@@ -195,7 +195,7 @@ async def batch_update_blocks(data: dict, request: Request, current_user: dict =
     if not requested_updates:
         return {"message": "Updated 0 blocks", "count": 0}
 
-    existing_points = await client.retrieve(
+    existing_points = await QdrantManager.safe_retrieve(client, 
         collection_name=COLLECTION_BLOCKS,
         ids=[block_data["id"] for block_data in requested_updates],
         with_payload=True,
@@ -315,7 +315,7 @@ async def sync_blocks_for_object(
 async def delete_block(block_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Delete a block."""
     client = qdrant_manager.get_async_client()
-    existing = await client.retrieve(
+    existing = await QdrantManager.safe_retrieve(client, 
         collection_name=COLLECTION_BLOCKS,
         ids=[block_id],
         with_payload=True,
