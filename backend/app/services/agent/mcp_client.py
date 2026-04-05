@@ -228,6 +228,14 @@ class MCPClientManager:
 
     async def execute_tool(self, runtime_name: str, arguments: Dict[str, Any]) -> ToolResult:
         server_name = self._tool_routes.get(runtime_name)
+        if not server_name and runtime_name.startswith("mcp__"):
+            parts = runtime_name.split("__", 2)
+            if len(parts) == 3:
+                server_name = parts[1]
+                if server_name in self._configs and not self.is_connected(server_name):
+                    await self.connect_server(server_name)
+                    await self.refresh_tools(server_name)
+                    server_name = self._tool_routes.get(runtime_name, server_name)
         if not server_name:
             raise KeyError(f"Unknown MCP tool: {runtime_name}")
 

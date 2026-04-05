@@ -32,7 +32,7 @@ class FakeToolRegistry:
     def list_openai_tools(self, *, allowed_tools=None):
         return [{"type": "function", "function": {"name": "search_knowledge", "parameters": {"type": "object"}}}]
 
-    async def execute(self, name, arguments, *, allowed_tools=None):
+    async def execute(self, name, arguments, *, allowed_tools=None, context=None, identity=None):
         return ToolResult(tool_name=name, content="[]", data={"results": []})
 
 

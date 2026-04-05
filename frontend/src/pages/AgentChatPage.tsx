@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bot, Loader2, MessageSquarePlus, Send, Trash2, Wrench } from 'lucide-react'
 
+import { ApprovalDialog } from '@/components/agents/ApprovalDialog'
 import { MarkdownRenderer } from '@/components/agents/MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,8 +11,22 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAgentChat } from '@/hooks/useAgentChat'
-import { agentRuntimeApi, agentsApi } from '@/services/api'
+import { agentRuntimeApi, agentsApi, type AgentApprovalRequest } from '@/services/api'
+import { useWebSocketStore } from '@/stores/websocket'
 import { cn } from '@/lib/utils'
+
+function getCurrentUserId() {
+  const token = localStorage.getItem('access_token')
+  if (!token) {
+    return null
+  }
+  try {
+    const payload = JSON.parse(window.atob(token.split('.')[1] || ''))
+    return typeof payload.sub === 'string' ? payload.sub : null
+  } catch {
+    return null
+  }
+}
 
 export function AgentChatPage() {
   const { id } = useParams<{ id: string }>()
@@ -19,7 +34,13 @@ export function AgentChatPage() {
   const queryClient = useQueryClient()
   const [message, setMessage] = useState('')
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [pendingApproval, setPendingApproval] = useState<AgentApprovalRequest | null>(null)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const connect = useWebSocketStore((state) => state.connect)
+  const sendWebSocket = useWebSocketStore((state) => state.send)
+  const isWebSocketConnected = useWebSocketStore((state) => state.isConnected)
+  const lastWebSocketMessage = useWebSocketStore((state) => state.lastMessage)
+  const currentUserId = getCurrentUserId()
 
   const decodedAgentId = id ? decodeURIComponent(id) : ''
 
@@ -74,6 +95,24 @@ export function AgentChatPage() {
   }, [activeSessionId, decodedAgentId, queryClient, selectedSessionId])
 
   useEffect(() => {
+    connect()
+  }, [connect])
+
+  useEffect(() => {
+    if (!isWebSocketConnected || !currentUserId) {
+      return
+    }
+    sendWebSocket({ type: 'subscribe', data: { channels: [`agent-approval:${currentUserId}`] } })
+  }, [currentUserId, isWebSocketConnected, sendWebSocket])
+
+  useEffect(() => {
+    const message = lastWebSocketMessage as { type?: string; data?: AgentApprovalRequest } | null
+    if (message?.type === 'agent.approval_required' && message.data) {
+      setPendingApproval(message.data)
+    }
+  }, [lastWebSocketMessage])
+
+  useEffect(() => {
     const viewport = scrollerRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null
     if (viewport) {
       viewport.scrollTop = viewport.scrollHeight
@@ -108,6 +147,20 @@ export function AgentChatPage() {
   const startNewSession = () => {
     setSelectedSessionId(null)
     resetMessages([])
+  }
+
+  const handleApprovalDecision = (approved: boolean) => {
+    if (!pendingApproval) {
+      return
+    }
+    sendWebSocket({
+      type: 'agent.approval_response',
+      data: {
+        request_id: pendingApproval.request_id,
+        approved,
+      },
+    })
+    setPendingApproval(null)
   }
 
   return (
@@ -293,6 +346,7 @@ export function AgentChatPage() {
           </CardContent>
         </Card>
       </div>
+      <ApprovalDialog approval={pendingApproval} open={!!pendingApproval} onDecision={handleApprovalDecision} />
     </div>
   )
 }

@@ -16,6 +16,8 @@ StreamingEventType = Literal[
     "thinking",
     "subagent_start",
     "subagent_result",
+    "approval_required",
+    "security_warning",
     "done",
     "error",
 ]
@@ -125,6 +127,7 @@ class AgentIdentity(BaseModel):
     mcp_servers: List[Dict[str, Any]] = Field(default_factory=list)
     llm: Optional[LLMProviderConfig] = None
     tool_preferences: Dict[str, Any] = Field(default_factory=dict)
+    rate_limits: Dict[str, int] = Field(default_factory=dict)
     file_mtimes: Dict[str, float] = Field(default_factory=dict)
 
 
@@ -155,6 +158,28 @@ class AgentSession(BaseModel):
     updated_at: str
     message_count: int = 0
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentUsageSnapshot(BaseModel):
+    agent_id: str
+    user_id: str
+    minute_requests: int = 0
+    minute_limit: int = 0
+    daily_tokens: int = 0
+    daily_token_limit: int = 0
+    daily_requests: int = 0
+    retry_after_seconds: int = 0
+    date: Optional[str] = None
+
+
+class AgentAuditEvent(BaseModel):
+    id: Optional[str] = None
+    agent_id: str
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    event_type: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
 
 
 class StreamingEvent(BaseModel):

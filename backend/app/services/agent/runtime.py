@@ -8,15 +8,19 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.config import BASE_DIR
 from app.services.agent.agent_loop import AgentLoop
+from app.services.agent.audit import AgentAuditLogger
 from app.services.agent.collaboration import AgentCollaborationService
 from app.services.agent.identity import DEFAULT_AGENT_FILES, IdentityLoader
 from app.services.agent.llm_router import LLMRouter
 from app.services.agent.memory import MemoryManager
 from app.services.agent.memory_curation import MemoryCurationService
+from app.services.agent.rate_limiter import agent_rate_limiter
+from app.services.agent.security import AgentSecurityManager
 from app.services.agent.models import AgentMessage, StreamingEvent, SubAgentResult, SubAgentTask, ToolResult
 from app.services.agent.scheduler import AgentScheduler
 from app.services.agent.session import SessionManager
 from app.services.agent.streaming import stream_sse
+from app.services.agent.sandbox import ToolSandbox
 from app.services.agent.templates import AgentTemplateService
 from app.services.agent.tool_registry import ToolRegistry
 from app.services.agent.webhooks import AgentWebhookService
@@ -31,7 +35,10 @@ class AgentRuntime:
         self.llm_router = LLMRouter()
         self.memory_manager = MemoryManager(self.agents_root)
         self.session_manager = SessionManager()
-        self.tool_registry = ToolRegistry()
+        self.audit_logger = AgentAuditLogger()
+        self.security_manager = AgentSecurityManager(audit_logger=self.audit_logger)
+        self.sandbox = ToolSandbox()
+        self.tool_registry = ToolRegistry(sandbox=self.sandbox, security=self.security_manager, audit_logger=self.audit_logger)
         self.collaboration_service = AgentCollaborationService(self.identity_loader)
         self.memory_curation = MemoryCurationService(self.agents_root, self.identity_loader, self.llm_router)
         self.templates = AgentTemplateService()
@@ -42,6 +49,8 @@ class AgentRuntime:
             self.tool_registry,
             collaboration_service=self.collaboration_service,
             sub_agent_runner=self.run_sub_agent_task,
+            security_manager=self.security_manager,
+            audit_logger=self.audit_logger,
         )
         self.collaboration_service.bind_runtime(self)
         self.scheduler.bind_runtime(self, self.memory_curation)
@@ -62,24 +71,39 @@ class AgentRuntime:
         message: str,
         session_id: Optional[str] = None,
         shared_context: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> AsyncGenerator[StreamingEvent, None]:
+        identity = self.identity_loader.load(agent_id)
+        if user_id:
+            await agent_rate_limiter.check_request_limit(agent_id=agent_id, user_id=user_id, identity=identity)
         session = await self._get_or_create_session(agent_id, session_id)
         await self.session_manager.add_message(session.id, AgentMessage(role="user", content=message))
+        await self.audit_logger.log_event(
+            agent_id=agent_id,
+            session_id=session.id,
+            user_id=user_id,
+            event_type="user.message",
+            details={"message": message},
+        )
 
         assistant_chunks: List[str] = []
         tool_results: List[ToolResult] = []
+        final_usage: Dict[str, Any] = {}
         try:
             async for event in self._run_agent_events(
                 agent_id=agent_id,
                 message=message,
                 session_id=session.id,
                 shared_context=shared_context,
+                user_id=user_id,
+                identity=identity,
             ):
                 if event.type == "text_delta" and event.delta:
                     assistant_chunks.append(event.delta)
                 elif event.type == "tool_result":
                     tool_results.append(ToolResult(**event.data))
                 elif event.type == "done" and event.message:
+                    final_usage = dict(event.data or {}).get("token_usage") or {}
                     if not assistant_chunks:
                         assistant_chunks.append(event.message)
                 yield event
@@ -93,16 +117,32 @@ class AgentRuntime:
         if assistant_text or tool_results:
             await self.session_manager.add_message(
                 session.id,
-                AgentMessage(role="assistant", content=assistant_text, tool_results=tool_results),
+                AgentMessage(
+                    role="assistant",
+                    content=assistant_text,
+                    tool_results=tool_results,
+                    tokens_in=int(final_usage.get("prompt_tokens") or 0),
+                    tokens_out=int(final_usage.get("completion_tokens") or 0),
+                ),
             )
             self.memory_manager.add_working_memory(agent_id, f"User: {message}\nAssistant: {assistant_text}")
             await self.session_manager.maybe_generate_title(session.id, llm_router=self.llm_router)
+            await self.audit_logger.log_event(
+                agent_id=agent_id,
+                session_id=session.id,
+                user_id=user_id,
+                event_type="assistant.response",
+                details={"content": assistant_text[:500], "tool_count": len(tool_results), "token_usage": final_usage},
+            )
+        if user_id:
+            total_tokens = int(final_usage.get("total_tokens") or 0)
+            await agent_rate_limiter.record_usage(agent_id=agent_id, user_id=user_id, tokens=total_tokens, request_increment=1)
 
     async def flush_session_memory(self, agent_id: str) -> None:
         await self.memory_manager.flush_working_memory(agent_id)
 
-    def chat_sse(self, *, agent_id: str, message: str, session_id: Optional[str] = None, shared_context: Optional[Dict[str, Any]] = None):
-        return stream_sse(self.chat(agent_id=agent_id, message=message, session_id=session_id, shared_context=shared_context))
+    def chat_sse(self, *, agent_id: str, message: str, session_id: Optional[str] = None, shared_context: Optional[Dict[str, Any]] = None, user_id: Optional[str] = None):
+        return stream_sse(self.chat(agent_id=agent_id, message=message, session_id=session_id, shared_context=shared_context, user_id=user_id))
 
     def list_agents(self) -> List[Dict[str, str]]:
         return self.identity_loader.list_agents()
@@ -174,6 +214,13 @@ class AgentRuntime:
     async def handle_incoming_webhook(self, *, hook_id: str, body: bytes, signature: str, event_type: Optional[str] = None) -> Dict[str, Any]:
         return await self.webhooks.verify_and_handle(hook_id=hook_id, body=body, signature=signature, event_type=event_type)
 
+    async def get_usage(self, agent_id: str, user_id: str) -> Dict[str, Any]:
+        identity = self.identity_loader.load(agent_id)
+        return await agent_rate_limiter.get_usage(agent_id=agent_id, user_id=user_id, identity=identity)
+
+    async def get_audit_log(self, agent_id: str, *, page: int = 1, page_size: int = 50) -> Dict[str, Any]:
+        return await self.audit_logger.list_events(agent_id, page=page, page_size=page_size)
+
     async def route_agent_message(self, **payload) -> Dict[str, Any]:
         return await self.collaboration_service.route_message(**payload)
 
@@ -214,11 +261,13 @@ class AgentRuntime:
         execution_depth: int = 0,
         timeout_seconds: int = 120,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         session = await self._get_or_create_session(agent_id, session_id, metadata=metadata)
         await self.session_manager.add_message(session.id, AgentMessage(role="user", content=message, metadata=metadata or {}))
         assistant_chunks: List[str] = []
         tool_results: List[ToolResult] = []
+        final_usage: Dict[str, Any] = {}
 
         async def consume():
             async for event in self._run_agent_events(
@@ -228,6 +277,7 @@ class AgentRuntime:
                 shared_context=shared_context,
                 allowed_tools=allowed_tools,
                 execution_depth=execution_depth,
+                user_id=user_id,
             ):
                 if event.type == "text_delta" and event.delta:
                     assistant_chunks.append(event.delta)
@@ -235,13 +285,21 @@ class AgentRuntime:
                     tool_results.append(ToolResult(**event.data))
                 elif event.type == "done" and event.message and not assistant_chunks:
                     assistant_chunks.append(event.message)
+                    final_usage.update(dict(event.data or {}).get("token_usage") or {})
 
         await asyncio.wait_for(consume(), timeout=timeout_seconds)
 
         assistant_text = "".join(assistant_chunks).strip()
         await self.session_manager.add_message(
             session.id,
-            AgentMessage(role="assistant", content=assistant_text, tool_results=tool_results, metadata=metadata or {}),
+            AgentMessage(
+                role="assistant",
+                content=assistant_text,
+                tool_results=tool_results,
+                metadata=metadata or {},
+                tokens_in=int(final_usage.get("prompt_tokens") or 0),
+                tokens_out=int(final_usage.get("completion_tokens") or 0),
+            ),
         )
         return {
             "agent_id": agent_id,
@@ -265,12 +323,23 @@ class AgentRuntime:
         shared_context: Optional[Dict[str, Any]] = None,
         allowed_tools: Optional[List[str]] = None,
         execution_depth: int = 0,
+        user_id: Optional[str] = None,
+        identity=None,
     ) -> AsyncGenerator[StreamingEvent, None]:
-        identity = self.identity_loader.load(agent_id)
+        identity = identity or self.identity_loader.load(agent_id)
         if identity.mcp_servers:
-            await self.tool_registry.mcp_manager.ensure_servers(identity.mcp_servers, persist=False)
+            for server_config in identity.mcp_servers:
+                await self.tool_registry.mcp_manager.configure_server(server_config, persist=False)
         history = await self.session_manager.load_history(session_id)
         memories = await self.memory_manager.retrieve_relevant(agent_id, message)
+        projected_tokens = self.llm_router.count_tokens(message, identity.model)
+        if user_id:
+            await agent_rate_limiter.enforce_daily_token_limit(
+                agent_id=agent_id,
+                user_id=user_id,
+                identity=identity,
+                projected_tokens=projected_tokens + (identity.llm.max_tokens if identity.llm else 2048),
+            )
         async for event in self.agent_loop.run(
             agent_id=agent_id,
             session_id=session_id,
@@ -281,6 +350,7 @@ class AgentRuntime:
             execution_depth=execution_depth,
             shared_context=shared_context,
             allowed_tools=allowed_tools,
+            user_id=user_id,
         ):
             yield event
 

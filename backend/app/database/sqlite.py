@@ -120,6 +120,31 @@ class SQLiteManager:
         """)
 
         await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS agent_audit_log (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                session_id TEXT,
+                user_id TEXT,
+                event_type TEXT NOT NULL,
+                details_json TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS agent_token_usage (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                total_tokens INTEGER DEFAULT 0,
+                total_requests INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(agent_id, user_id, date)
+            )
+        """)
+
+        await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS mcp_server_configs (
                 name TEXT PRIMARY KEY,
                 transport TEXT NOT NULL,
@@ -447,6 +472,98 @@ class SQLiteManager:
 
     async def delete_agent_webhook(self, webhook_id: str):
         await self.execute("DELETE FROM agent_webhooks WHERE id = ?", (webhook_id,))
+
+    async def upsert_agent_token_usage(self, payload: dict[str, Any]):
+        await self.execute(
+            """
+            INSERT INTO agent_token_usage (
+                id, agent_id, user_id, date, total_tokens, total_requests, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+            ON CONFLICT(agent_id, user_id, date) DO UPDATE SET
+                total_tokens = excluded.total_tokens,
+                total_requests = excluded.total_requests
+            """,
+            (
+                payload["id"],
+                payload["agent_id"],
+                payload["user_id"],
+                payload["date"],
+                int(payload.get("total_tokens", 0)),
+                int(payload.get("total_requests", 0)),
+                payload.get("created_at"),
+            ),
+        )
+
+    async def get_agent_token_usage(self, agent_id: str, user_id: str, date: str):
+        return await self.fetchone(
+            "SELECT * FROM agent_token_usage WHERE agent_id = ? AND user_id = ? AND date = ?",
+            (agent_id, user_id, date),
+        )
+
+    async def list_agent_token_usage(self, agent_id: str, user_id: Optional[str] = None, limit: int = 30):
+        query = "SELECT * FROM agent_token_usage WHERE agent_id = ?"
+        parameters: list[Any] = [agent_id]
+        if user_id:
+            query += " AND user_id = ?"
+            parameters.append(user_id)
+        query += " ORDER BY date DESC LIMIT ?"
+        parameters.append(limit)
+        return await self.fetchall(query, tuple(parameters))
+
+    async def create_agent_audit_event(self, payload: dict[str, Any]):
+        await self.execute(
+            """
+            INSERT INTO agent_audit_log (
+                id, agent_id, session_id, user_id, event_type, details_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+            """,
+            (
+                payload["id"],
+                payload["agent_id"],
+                payload.get("session_id"),
+                payload.get("user_id"),
+                payload["event_type"],
+                json.dumps(payload.get("details", {})),
+                payload.get("created_at"),
+            ),
+        )
+
+    async def list_agent_audit_events(self, agent_id: str, page: int = 1, page_size: int = 50):
+        offset = max(page - 1, 0) * page_size
+        rows = await self.fetchall(
+            """
+            SELECT * FROM agent_audit_log
+            WHERE agent_id = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (agent_id, page_size, offset),
+        )
+        total = await self.fetchone(
+            "SELECT COUNT(*) AS count FROM agent_audit_log WHERE agent_id = ?",
+            (agent_id,),
+        )
+        return {
+            "items": [
+                {
+                    "id": row["id"],
+                    "agent_id": row["agent_id"],
+                    "session_id": row.get("session_id"),
+                    "user_id": row.get("user_id"),
+                    "event_type": row["event_type"],
+                    "details": json.loads(row.get("details_json") or "{}"),
+                    "created_at": row.get("created_at"),
+                }
+                for row in rows
+            ],
+            "total": int((total or {}).get("count") or 0),
+        }
+
+    async def purge_agent_audit_events(self, cutoff_timestamp: str):
+        await self.execute(
+            "DELETE FROM agent_audit_log WHERE created_at < ?",
+            (cutoff_timestamp,),
+        )
 
     def _decode_agent_scheduled_task(self, row: dict[str, Any]) -> dict[str, Any]:
         return {

@@ -8,6 +8,8 @@ from typing import DefaultDict, List, Set
 from fastapi import WebSocket
 from pydantic import BaseModel, ValidationError
 
+from app.services.agent.sandbox import tool_approval_manager
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +106,10 @@ class WebSocketEvents:
     def presence_update(object_id: str, users: list):
         return {"type": "presence.update", "channel": f"object:{object_id}", "data": {"object_id": object_id, "users": users}}
 
+    @staticmethod
+    def agent_approval_required(user_id: str, payload: dict):
+        return {"type": "agent.approval_required", "channel": f"agent-approval:{user_id}", "data": payload}
+
 
 class WebSocketManager:
     """Manages WebSocket connections and channel subscriptions."""
@@ -166,6 +172,16 @@ class WebSocketManager:
             for channel in channels:
                 self.subscriptions[websocket].discard(channel)
             await websocket.send_json({"type": "unsubscribed", "data": {"channels": channels}})
+            return
+
+        if message.type == "agent.approval_response":
+            request_id = str(message.data.get("request_id") or "")
+            approved = bool(message.data.get("approved"))
+            if not request_id or tool_approval_manager.get_payload(request_id) is None:
+                await websocket.send_json({"type": "error", "data": {"message": "Unknown approval request"}})
+                return
+            tool_approval_manager.resolve(request_id, approved=approved)
+            await websocket.send_json({"type": "agent.approval_ack", "data": {"request_id": request_id, "approved": approved}})
 
 
 websocket_manager = WebSocketManager()

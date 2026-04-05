@@ -14,6 +14,15 @@ const DEFAULT_WS_URL = (() => {
   return '/ws/system'
 })()
 
+function getAuthenticatedWsUrl() {
+  const token = localStorage.getItem('access_token')
+  if (!token) {
+    return DEFAULT_WS_URL
+  }
+  const separator = DEFAULT_WS_URL.includes('?') ? '&' : '?'
+  return `${DEFAULT_WS_URL}${separator}access_token=${encodeURIComponent(token)}`
+}
+
 interface WebSocketState {
   socket: WebSocket | null
   isConnected: boolean
@@ -42,7 +51,7 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
       return
     }
 
-    const ws = new WebSocket(DEFAULT_WS_URL)
+    const ws = new WebSocket(getAuthenticatedWsUrl())
 
     ws.onopen = () => {
       console.log('WebSocket connected')

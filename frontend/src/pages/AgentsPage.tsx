@@ -88,6 +88,18 @@ export function AgentsPage() {
     enabled: !!selectedAgentId,
   })
 
+  const usageQuery = useQuery({
+    queryKey: ['runtime-agent-usage', selectedAgentId],
+    queryFn: () => agentRuntimeApi.getUsage(selectedAgentId!),
+    enabled: !!selectedAgentId,
+  })
+
+  const auditQuery = useQuery({
+    queryKey: ['runtime-agent-audit', selectedAgentId],
+    queryFn: () => agentRuntimeApi.getAuditLog(selectedAgentId!, { page: 1, page_size: 25 }),
+    enabled: !!selectedAgentId,
+  })
+
   useEffect(() => {
     const nextContent = fileQuery.data?.content || ''
     setDraftContent(nextContent)
@@ -309,10 +321,67 @@ export function AgentsPage() {
               )}
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Usage</CardTitle>
+              <CardDescription>Current rate-limit status and recent token consumption.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!selectedAgentId ? (
+                <div className="text-sm text-muted-foreground">Select an agent to inspect usage.</div>
+              ) : usageQuery.isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading usage...
+                </div>
+              ) : usageQuery.data ? (
+                <>
+                  <div className="grid gap-3">
+                    <div className="rounded-lg border p-3 text-sm">
+                      <div className="font-medium">Requests / minute</div>
+                      <div className="mt-1 text-muted-foreground">
+                        {usageQuery.data.current.minute_requests} / {usageQuery.data.current.minute_limit}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border p-3 text-sm">
+                      <div className="font-medium">Tokens / day</div>
+                      <div className="mt-1 text-muted-foreground">
+                        {usageQuery.data.current.daily_tokens.toLocaleString()} / {usageQuery.data.current.daily_token_limit.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">Recent usage</div>
+                    {(usageQuery.data.history || []).map((entry) => {
+                      const width = usageQuery.data.current.daily_token_limit
+                        ? Math.min(100, Math.round((entry.total_tokens / usageQuery.data.current.daily_token_limit) * 100))
+                        : 0
+                      return (
+                        <div key={entry.id} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>{entry.date}</span>
+                            <span>{entry.total_requests} req</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-muted">
+                            <div className="h-2 rounded-full bg-primary" style={{ width: `${width}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-muted-foreground">No usage has been recorded yet.</div>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
-        <Card className="min-h-[42rem]">
-          <CardHeader>
+        <div className="space-y-6">
+          <Card className="min-h-[42rem]">
+            <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               <PencilLine className="h-5 w-5" />
               {selectedAgent ? `${selectedAgent.id} identity files` : 'Agent editor'}
@@ -342,8 +411,8 @@ export function AgentsPage() {
                 </Button>
               </div>
             ) : null}
-          </CardHeader>
-          <CardContent className="h-[calc(100%-5rem)]">
+            </CardHeader>
+            <CardContent className="h-[calc(100%-5rem)]">
             {!selectedAgentId ? (
               <div className="flex h-full items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
                 Select or create an agent to start editing.
@@ -424,8 +493,53 @@ export function AgentsPage() {
                 onDiscard={handleDiscard}
               />
             )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Audit Log</CardTitle>
+              <CardDescription>Recent tool calls, model invocations, and user decisions.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!selectedAgentId ? (
+                <div className="text-sm text-muted-foreground">Select an agent to inspect the audit log.</div>
+              ) : auditQuery.isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading audit log...
+                </div>
+              ) : auditQuery.data?.items.length ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-muted-foreground">
+                        <th className="py-2 pr-4 font-medium">Time</th>
+                        <th className="py-2 pr-4 font-medium">Event</th>
+                        <th className="py-2 pr-4 font-medium">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditQuery.data.items.map((entry) => (
+                        <tr key={entry.id} className="border-b align-top">
+                          <td className="py-2 pr-4 whitespace-nowrap">{entry.created_at ? new Date(entry.created_at).toLocaleString() : 'Unknown'}</td>
+                          <td className="py-2 pr-4">{entry.event_type}</td>
+                          <td className="py-2 pr-4">
+                            <pre className="max-w-xl overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">
+                              {JSON.stringify(entry.details, null, 2)}
+                            </pre>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">No audit events yet.</div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       <Dialog open={!!agentPendingDelete} onOpenChange={(open) => !open && setAgentPendingDelete(null)}>

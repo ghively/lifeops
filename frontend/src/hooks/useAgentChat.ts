@@ -213,6 +213,35 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
             ])
           }
 
+          if (event.type === 'approval_required') {
+            setMessages((current) => [
+              ...current.filter((item) => item.id !== 'thinking-indicator'),
+              {
+                id: createMessageId('tool'),
+                role: 'tool',
+                content: `Approval required for ${event.tool_name || 'tool'} before execution can continue.`,
+                createdAt: new Date().toISOString(),
+                toolName: event.tool_name,
+                status: 'streaming',
+                metadata: event.data,
+              },
+            ])
+          }
+
+          if (event.type === 'security_warning') {
+            setMessages((current) => [
+              ...current,
+              {
+                id: createMessageId('error'),
+                role: 'error',
+                content: 'Potential prompt injection pattern detected and sanitized.',
+                createdAt: new Date().toISOString(),
+                status: 'complete',
+                metadata: event.data,
+              },
+            ])
+          }
+
           if (event.type === 'subagent_start') {
             setMessages((current) => [
               ...current.filter((item) => item.id !== 'thinking-indicator'),

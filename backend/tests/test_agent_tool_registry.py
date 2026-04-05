@@ -3,19 +3,24 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.agent.sandbox import ToolSandbox
 from app.services.agent.tool_registry import ToolRegistry
 from app.services.agent.models import ToolDefinition, ToolResult
 
 
 @pytest.mark.asyncio
 async def test_tool_registry_lists_native_and_cli_tools(tmp_path):
-    registry = ToolRegistry()
+    registry = ToolRegistry(sandbox=ToolSandbox([str(tmp_path)]))
     names = {tool.name for tool in registry.list_tools()}
     assert "create_object" in names
     assert "search_knowledge" in names
     assert "codex" in names
 
-    result = await registry.execute("write_file", {"path": str(tmp_path / "note.txt"), "content": "hello"})
+    result = await registry.execute(
+        "write_file",
+        {"path": str(tmp_path / "note.txt"), "content": "hello"},
+        context={"approval_granted": True},
+    )
     assert result.success is True
     read_result = await registry.execute("read_file", {"path": str(tmp_path / "note.txt")})
     assert read_result.content == "hello"

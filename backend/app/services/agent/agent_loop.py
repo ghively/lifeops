@@ -4,20 +4,33 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+from math import floor
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+from app.services.agent.audit import AgentAuditLogger
+from app.services.agent.sandbox import ToolApprovalRequired, tool_approval_manager
+from app.services.agent.security import AgentSecurityManager
+from app.services.websocket_manager import WebSocketEvents, websocket_manager
 from app.services.agent.models import AgentIdentity, AgentMessage, StreamingEvent, SubAgentTask, ToolResult
 
 logger = logging.getLogger(__name__)
 
 
 class AgentLoop:
+    MODEL_CONTEXT_WINDOWS = {
+        "gpt-4o-mini": 128000,
+        "gpt-4o": 128000,
+        "gpt-5": 200000,
+    }
+
     def __init__(
         self,
         llm_router,
         tool_registry,
         collaboration_service=None,
         sub_agent_runner=None,
+        security_manager: Optional[AgentSecurityManager] = None,
+        audit_logger: Optional[AgentAuditLogger] = None,
         max_iterations: int = 10,
         max_tokens: int = 12000,
     ):
@@ -25,6 +38,8 @@ class AgentLoop:
         self.tool_registry = tool_registry
         self.collaboration_service = collaboration_service
         self.sub_agent_runner = sub_agent_runner
+        self.security_manager = security_manager or AgentSecurityManager()
+        self.audit_logger = audit_logger
         self.max_iterations = max_iterations
         self.max_tokens = max_tokens
 
@@ -40,21 +55,49 @@ class AgentLoop:
         execution_depth: int = 0,
         shared_context: Optional[Dict[str, Any]] = None,
         allowed_tools: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> AsyncGenerator[StreamingEvent, None]:
-        messages = self._build_messages(identity, memory_entries, history, user_message, shared_context=shared_context)
+        sanitized_user_message = self.security_manager.sanitize_user_input(user_message)
+        findings = await self.security_manager.maybe_log_injection_attempt(
+            agent_id=agent_id,
+            session_id=session_id,
+            user_id=user_id,
+            source="user_input",
+            text=user_message,
+        )
+        if findings:
+            yield StreamingEvent(type="security_warning", session_id=session_id, agent_id=agent_id, data={"patterns": findings})
+
+        hardened_identity = identity.model_copy(deep=True)
+        hardened_identity.system_prompt = self.security_manager.harden_system_prompt(identity.system_prompt)
+        messages = self._build_messages(hardened_identity, memory_entries, history, sanitized_user_message, shared_context=shared_context)
         token_budget = self._estimate_messages_tokens(messages)
+        token_usage = {"prompt_tokens": token_budget, "completion_tokens": 0, "total_tokens": token_budget}
+        model_context_window = self._context_window_for_model(identity.model)
+        allocation = self._budget_allocation(model_context_window)
 
         for iteration in range(self.max_iterations):
-            yield StreamingEvent(type="thinking", session_id=session_id, agent_id=agent_id, data={"iteration": iteration + 1, "tokens": token_budget})
+            warning = token_budget >= floor(model_context_window * 0.9)
+            yield StreamingEvent(
+                type="thinking",
+                session_id=session_id,
+                agent_id=agent_id,
+                data={"iteration": iteration + 1, "tokens": token_budget, "budget": allocation, "warning": warning},
+            )
             response = await self.llm_router.complete(
                 messages,
-                tools=self._list_tools(identity, execution_depth=execution_depth, allowed_tools=allowed_tools),
+                tools=self._list_tools(hardened_identity, execution_depth=execution_depth, allowed_tools=allowed_tools),
                 config=identity.llm,
             )
+            usage = response.get("usage") or {}
+            token_usage["prompt_tokens"] = max(token_usage["prompt_tokens"], int(usage.get("prompt_tokens") or token_budget))
+            token_usage["completion_tokens"] += int(usage.get("completion_tokens") or 0)
+            token_usage["total_tokens"] = token_usage["prompt_tokens"] + token_usage["completion_tokens"]
             tool_calls = response.get("tool_calls") or []
             if tool_calls:
                 assistant_message = {"role": "assistant", "content": response.get("content", ""), "tool_calls": tool_calls}
                 messages.append(assistant_message)
+                parsed_calls = []
                 for tool_call in tool_calls:
                     function = tool_call.get("function", {})
                     tool_name = function.get("name")
@@ -62,49 +105,44 @@ class AgentLoop:
                         arguments = json.loads(function.get("arguments") or "{}")
                     except json.JSONDecodeError:
                         arguments = {}
+                    parsed_calls.append((tool_call, tool_name, arguments))
                     yield StreamingEvent(type="tool_start", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data={"arguments": arguments})
-                    if tool_name == "message_agent":
-                        result = await self._execute_agent_message(
-                            agent_id=agent_id,
-                            arguments=arguments,
-                            execution_depth=execution_depth,
-                        )
-                    elif tool_name == "spawn_subagents":
-                        result = await self._execute_sub_agents(
+
+                results = await asyncio.gather(
+                    *[
+                        self._execute_tool_call(
                             agent_id=agent_id,
                             session_id=session_id,
-                            arguments=arguments,
+                            identity=hardened_identity,
                             execution_depth=execution_depth,
-                            emit_event=lambda event: event,
+                            allowed_tools=allowed_tools,
+                            tool_call=tool_call,
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            user_id=user_id,
                         )
-                        if isinstance(result, tuple):
-                            result, subagent_events = result
-                            for event in subagent_events:
-                                yield event
-                    else:
-                        result = await self.tool_registry.execute(tool_name, arguments, allowed_tools=allowed_tools)
+                        for tool_call, tool_name, arguments in parsed_calls
+                    ]
+                )
+                for tool_call, tool_name, _arguments, result, emitted_events in results:
+                    for event in emitted_events:
+                        yield event
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.get("id"),
                         "name": tool_name,
                         "content": result.content or result.error or "",
                     })
-                    yield StreamingEvent(
-                        type="tool_result",
-                        session_id=session_id,
-                        agent_id=agent_id,
-                        tool_name=tool_name,
-                        data=result.model_dump(),
-                    )
+                    yield StreamingEvent(type="tool_result", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data=result.model_dump())
                 token_budget = self._estimate_messages_tokens(messages)
-                if token_budget > self.max_tokens:
+                if token_budget > min(self.max_tokens, model_context_window):
                     raise RuntimeError("Token budget exceeded during tool loop")
                 continue
 
             content = response.get("content", "")
             for chunk in self._collect_stream(content):
                 yield StreamingEvent(type="text_delta", session_id=session_id, agent_id=agent_id, delta=chunk)
-            yield StreamingEvent(type="done", session_id=session_id, agent_id=agent_id, message=content)
+            yield StreamingEvent(type="done", session_id=session_id, agent_id=agent_id, message=content, data={"token_usage": token_usage, "budget": allocation})
             return
 
         raise RuntimeError("Max agent iterations exceeded")
@@ -142,6 +180,18 @@ class AgentLoop:
 
     def _estimate_messages_tokens(self, messages: List[Dict[str, Any]]) -> int:
         return sum(self.llm_router.count_tokens(message.get("content", "")) for message in messages)
+
+    def _context_window_for_model(self, model: str) -> int:
+        return self.MODEL_CONTEXT_WINDOWS.get(model, self.max_tokens)
+
+    def _budget_allocation(self, context_window: int) -> Dict[str, int]:
+        return {
+            "system_prompt": floor(context_window * 0.25),
+            "memory": floor(context_window * 0.25),
+            "history": floor(context_window * 0.40),
+            "response": floor(context_window * 0.10),
+            "context_window": context_window,
+        }
 
     def _list_tools(self, identity: AgentIdentity, *, execution_depth: int, allowed_tools: Optional[List[str]]) -> List[Dict[str, Any]]:
         tools = self.tool_registry.list_openai_tools(allowed_tools=allowed_tools)
@@ -196,6 +246,68 @@ class AgentLoop:
                 }
             )
         return tools
+
+    async def _execute_tool_call(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        identity: AgentIdentity,
+        execution_depth: int,
+        allowed_tools: Optional[List[str]],
+        tool_call: Dict[str, Any],
+        tool_name: str,
+        arguments: Dict[str, Any],
+        user_id: Optional[str],
+    ):
+        emitted_events: List[StreamingEvent] = []
+        try:
+            if tool_name == "message_agent":
+                result = await self._execute_agent_message(agent_id=agent_id, arguments=arguments, execution_depth=execution_depth)
+            elif tool_name == "spawn_subagents":
+                result = await self._execute_sub_agents(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    arguments=arguments,
+                    execution_depth=execution_depth,
+                    emit_event=lambda event: event,
+                )
+                if isinstance(result, tuple):
+                    result, subagent_events = result
+                    emitted_events.extend(subagent_events)
+            else:
+                result = await self.tool_registry.execute(
+                    tool_name,
+                    arguments,
+                    allowed_tools=allowed_tools,
+                    context={"agent_id": agent_id, "session_id": session_id, "user_id": user_id},
+                    identity=identity,
+                )
+        except ToolApprovalRequired as approval:
+            emitted_events.append(StreamingEvent(type="approval_required", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data=approval.request))
+            if user_id:
+                await websocket_manager.broadcast(WebSocketEvents.agent_approval_required(user_id, approval.request))
+            approved = await tool_approval_manager.wait_for_decision(approval.request["request_id"], timeout_seconds=approval.request.get("timeout_seconds", 60))
+            if not approved:
+                result = ToolResult(tool_name=tool_name, success=False, error="Tool execution rejected by user", content="")
+            else:
+                result = await self.tool_registry.execute(
+                    tool_name,
+                    arguments,
+                    allowed_tools=allowed_tools,
+                    context={"agent_id": agent_id, "session_id": session_id, "user_id": user_id, "approval_granted": True},
+                    identity=identity,
+                )
+        findings = await self.security_manager.maybe_log_injection_attempt(
+            agent_id=agent_id,
+            session_id=session_id,
+            user_id=user_id,
+            source=f"tool:{tool_name}",
+            text=result.content or result.error or "",
+        )
+        if findings:
+            emitted_events.append(StreamingEvent(type="security_warning", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data={"patterns": findings}))
+        return tool_call, tool_name, arguments, result, emitted_events
 
     async def _execute_agent_message(self, *, agent_id: str, arguments: Dict[str, Any], execution_depth: int) -> ToolResult:
         if self.collaboration_service is None:

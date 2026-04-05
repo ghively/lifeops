@@ -8,8 +8,11 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.database.qdrant_client import qdrant_manager
+from app.services.agent.audit import AgentAuditLogger
 from app.services.agent.cli_agent import CLIAgentTool
 from app.services.agent.mcp_client import MCPClientManager
+from app.services.agent.sandbox import ToolApprovalRequired, ToolSandbox, tool_approval_manager
+from app.services.agent.security import AgentSecurityManager
 from app.services.agent.models import ToolDefinition, ToolResult
 from app.services.embedding import embedding_service
 from app.utils.time import utc_now_iso
@@ -21,7 +24,7 @@ class RuntimeTool:
     def __init__(
         self,
         definition: ToolDefinition,
-        executor: Callable[[Dict[str, Any]], Awaitable[ToolResult]],
+        executor: Callable[..., Awaitable[ToolResult]],
     ):
         self.definition = definition
         self._executor = executor
@@ -30,8 +33,8 @@ class RuntimeTool:
     def name(self) -> str:
         return self.definition.name
 
-    async def execute(self, arguments: Dict[str, Any]) -> ToolResult:
-        return await self._executor(arguments)
+    async def execute(self, arguments: Dict[str, Any], **kwargs) -> ToolResult:
+        return await self._executor(arguments, **kwargs)
 
     def openai_schema(self) -> Dict[str, Any]:
         return {
@@ -47,9 +50,19 @@ class RuntimeTool:
 class ToolRegistry:
     """Registers native, CLI, and MCP tools."""
 
-    def __init__(self, cli_tool: Optional[CLIAgentTool] = None, mcp_manager: Optional[MCPClientManager] = None):
+    def __init__(
+        self,
+        cli_tool: Optional[CLIAgentTool] = None,
+        mcp_manager: Optional[MCPClientManager] = None,
+        sandbox: Optional[ToolSandbox] = None,
+        security: Optional[AgentSecurityManager] = None,
+        audit_logger: Optional[AgentAuditLogger] = None,
+    ):
         self.cli_tool = cli_tool or CLIAgentTool()
         self.mcp_manager = mcp_manager or MCPClientManager()
+        self.sandbox = sandbox or ToolSandbox()
+        self.security = security or AgentSecurityManager()
+        self.audit_logger = audit_logger
         self._tools: Dict[str, RuntimeTool] = {}
         self._register_native_tools()
         self._register_cli_tools()
@@ -88,15 +101,70 @@ class ToolRegistry:
             raise KeyError(f"Unknown tool: {name}")
         return self._tools[name]
 
-    async def execute(self, name: str, arguments: Dict[str, Any], allowed_tools: Optional[List[str]] = None) -> ToolResult:
+    async def execute(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        allowed_tools: Optional[List[str]] = None,
+        *,
+        context: Optional[Dict[str, Any]] = None,
+        identity=None,
+    ) -> ToolResult:
         if allowed_tools and name not in set(allowed_tools):
             return ToolResult(tool_name=name, success=False, error=f"Tool {name} is not available in this scope", content="")
-        if name in self._tools:
-            return await self.get(name).execute(arguments)
-        return await self.mcp_manager.execute_tool(name, arguments)
+        runtime_tool = self._tools.get(name)
+        definition = runtime_tool.definition if runtime_tool else self._lookup_mcp_definition(name)
+        execution_context = context or {}
 
-    def _register(self, definition: ToolDefinition, executor: Callable[[Dict[str, Any]], Awaitable[ToolResult]]) -> None:
+        if self.audit_logger and execution_context.get("agent_id"):
+            await self.audit_logger.log_event(
+                agent_id=execution_context["agent_id"],
+                session_id=execution_context.get("session_id"),
+                user_id=execution_context.get("user_id"),
+                event_type="tool.call",
+                details={"tool_name": name, "arguments": arguments},
+            )
+
+        if definition and definition.safety_level == "destructive" and not execution_context.get("approval_granted"):
+            approval_request = await tool_approval_manager.create_request(
+                {
+                    "agent_id": execution_context.get("agent_id"),
+                    "session_id": execution_context.get("session_id"),
+                    "user_id": execution_context.get("user_id"),
+                    "tool_name": name,
+                    "description": definition.description,
+                    "arguments": arguments,
+                }
+            )
+            raise ToolApprovalRequired(approval_request)
+
+        if runtime_tool:
+            result = await runtime_tool.execute(arguments, context=execution_context, identity=identity, definition=definition)
+        else:
+            result = await self.mcp_manager.execute_tool(name, arguments)
+        result.content = self.security.sanitize_tool_output(result.content)
+        if result.error:
+            result.error = self.security.sanitize_tool_output(result.error)
+        result.content, truncated = self.sandbox.truncate_output(result.content)
+        result.truncated = result.truncated or truncated
+        if self.audit_logger and execution_context.get("agent_id"):
+            await self.audit_logger.log_event(
+                agent_id=execution_context["agent_id"],
+                session_id=execution_context.get("session_id"),
+                user_id=execution_context.get("user_id"),
+                event_type="tool.result",
+                details={"tool_name": name, "success": result.success, "error": result.error, "truncated": result.truncated},
+            )
+        return result
+
+    def _register(self, definition: ToolDefinition, executor: Callable[..., Awaitable[ToolResult]]) -> None:
         self._tools[definition.name] = RuntimeTool(definition, executor)
+
+    def _lookup_mcp_definition(self, name: str) -> Optional[ToolDefinition]:
+        for definition in self.mcp_manager.list_tool_definitions():
+            if definition.name == name:
+                return definition
+        return None
 
     def _register_native_tools(self) -> None:
         self._register(
@@ -208,7 +276,7 @@ class ToolRegistry:
                 ),
             )
 
-    async def _create_object(self, arguments: Dict[str, Any]) -> ToolResult:
+    async def _create_object(self, arguments: Dict[str, Any], **_) -> ToolResult:
         client = qdrant_manager.get_async_client()
         object_id = str(uuid.uuid4())
         title = arguments.get("title", "").strip()
@@ -230,7 +298,7 @@ class ToolRegistry:
         )
         return ToolResult(tool_name="create_object", content=json.dumps({"id": object_id, "title": title}), data=payload)
 
-    async def _search_knowledge(self, arguments: Dict[str, Any]) -> ToolResult:
+    async def _search_knowledge(self, arguments: Dict[str, Any], **_) -> ToolResult:
         client = qdrant_manager.get_async_client()
         query = arguments.get("query", "").strip()
         collection = arguments.get("collection") or "objects"
@@ -251,7 +319,7 @@ class ToolRegistry:
             payloads.append(payload)
         return ToolResult(tool_name="search_knowledge", content=json.dumps(payloads), data={"results": payloads})
 
-    async def _manage_tasks(self, arguments: Dict[str, Any]) -> ToolResult:
+    async def _manage_tasks(self, arguments: Dict[str, Any], **_) -> ToolResult:
         client = qdrant_manager.get_async_client()
         action = arguments.get("action", "list")
         if action == "list":
@@ -284,13 +352,15 @@ class ToolRegistry:
 
         return ToolResult(tool_name="manage_tasks", success=False, error=f"Unsupported action: {action}", content="")
 
-    async def _read_file(self, arguments: Dict[str, Any]) -> ToolResult:
-        path = Path(arguments["path"]).expanduser().resolve()
+    async def _read_file(self, arguments: Dict[str, Any], *, identity=None, **_) -> ToolResult:
+        sandbox = self.sandbox.allowed_for_identity(getattr(identity, "tool_preferences", {}))
+        path = sandbox.validate_path(arguments["path"])
         content = path.read_text(encoding="utf-8")
         return ToolResult(tool_name="read_file", content=content, data={"path": str(path)})
 
-    async def _write_file(self, arguments: Dict[str, Any]) -> ToolResult:
-        path = Path(arguments["path"]).expanduser().resolve()
+    async def _write_file(self, arguments: Dict[str, Any], *, identity=None, **_) -> ToolResult:
+        sandbox = self.sandbox.allowed_for_identity(getattr(identity, "tool_preferences", {}))
+        path = sandbox.validate_path(arguments["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(arguments["content"], encoding="utf-8")
         return ToolResult(tool_name="write_file", content=f"Wrote {path}", data={"path": str(path), "bytes": len(arguments['content'])})

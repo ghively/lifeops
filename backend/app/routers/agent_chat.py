@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -83,7 +83,13 @@ async def runtime_chat(
     current_user: dict = Depends(get_current_user),
 ):
     return StreamingResponse(
-        agent_runtime.chat_sse(agent_id=data.agent_id, message=data.message, session_id=data.session_id, shared_context=data.shared_context),
+        agent_runtime.chat_sse(
+            agent_id=data.agent_id,
+            message=data.message,
+            session_id=data.session_id,
+            shared_context=data.shared_context,
+            user_id=current_user["id"],
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -316,6 +322,24 @@ async def create_runtime_agent(
 @read_rate_limit
 async def get_runtime_agent(agent_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     return agent_runtime.get_agent(agent_id)
+
+
+@router.get("/{agent_id}/usage")
+@read_rate_limit
+async def get_runtime_agent_usage(agent_id: str, request: Request, current_user: dict = Depends(get_current_user)):
+    return await agent_runtime.get_usage(agent_id, current_user["id"])
+
+
+@router.get("/{agent_id}/audit")
+@read_rate_limit
+async def get_runtime_agent_audit(
+    agent_id: str,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+):
+    return await agent_runtime.get_audit_log(agent_id, page=page, page_size=page_size)
 
 
 @router.delete("/{agent_id}")

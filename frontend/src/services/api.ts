@@ -55,13 +55,65 @@ export interface ChatMessage {
 }
 
 export interface RuntimeChatEvent {
-  type: 'text_delta' | 'tool_start' | 'tool_result' | 'thinking' | 'subagent_start' | 'subagent_result' | 'done' | 'error'
+  type: 'text_delta' | 'tool_start' | 'tool_result' | 'thinking' | 'subagent_start' | 'subagent_result' | 'approval_required' | 'security_warning' | 'done' | 'error'
   session_id?: string
   agent_id?: string
   message?: string
   delta?: string
   tool_name?: string
   data?: Record<string, unknown>
+}
+
+export interface AgentApprovalRequest {
+  request_id: string
+  agent_id?: string
+  session_id?: string
+  tool_name: string
+  description?: string
+  arguments?: Record<string, unknown>
+  timeout_seconds?: number
+}
+
+export interface AgentUsageCurrent {
+  agent_id: string
+  user_id: string
+  minute_requests: number
+  minute_limit: number
+  daily_tokens: number
+  daily_token_limit: number
+  daily_requests: number
+  retry_after_seconds: number
+  date?: string | null
+}
+
+export interface AgentUsageHistoryItem {
+  id: string
+  agent_id: string
+  user_id: string
+  date: string
+  total_tokens: number
+  total_requests: number
+  created_at?: string | null
+}
+
+export interface AgentUsageResponse {
+  current: AgentUsageCurrent
+  history: AgentUsageHistoryItem[]
+}
+
+export interface AgentAuditItem {
+  id: string
+  agent_id: string
+  session_id?: string | null
+  user_id?: string | null
+  event_type: string
+  details: Record<string, unknown>
+  created_at?: string | null
+}
+
+export interface AgentAuditResponse {
+  items: AgentAuditItem[]
+  total: number
 }
 
 export interface AgentChatRequest {
@@ -651,6 +703,12 @@ export const agentRuntimeApi = {
 
   getCLIAgentStatus: () =>
     api.get<CLIAgentStatus>('/agents/runtime/cli-status').then((r) => r.data),
+
+  getUsage: (agentId: string) =>
+    api.get<AgentUsageResponse>(`/agents/runtime/${agentId}/usage`).then((r) => r.data),
+
+  getAuditLog: (agentId: string, params?: { page?: number; page_size?: number }) =>
+    api.get<AgentAuditResponse>(`/agents/runtime/${agentId}/audit`, { params }).then((r) => r.data),
 
   listMCPServers: () =>
     api.get<{ servers: MCPServerItem[] }>('/agents/runtime/mcp/servers').then((r) => r.data),

@@ -133,7 +133,8 @@ class IdentityLoader:
             llm=self._build_llm_config(tools_meta, tool_sections, agent_meta),
             cli_agents=self._build_cli_agents(tool_sections),
             mcp_servers=self._build_mcp_servers(tool_sections),
-            tool_preferences={"tools_md": tools_body.strip()},
+            tool_preferences={"tools_md": tools_body.strip(), **self._build_tool_preferences(tool_sections, tools_meta)},
+            rate_limits=self._build_rate_limits(agent_meta, tools_meta, tool_sections),
             file_mtimes=file_mtimes,
         )
         identity.system_prompt = self._build_system_prompt(identity)
@@ -157,6 +158,13 @@ class IdentityLoader:
         return self._parse_frontmatter(parts[0][4:]), parts[1]
 
     def _parse_frontmatter(self, text: str) -> Dict[str, Any]:
+        if yaml is not None:
+            try:
+                parsed = yaml.safe_load(text) or {}
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                logger.debug("YAML frontmatter parse failed, falling back to line parser", exc_info=True)
         data: Dict[str, Any] = {}
         current_key: str | None = None
         for raw_line in text.splitlines():
@@ -287,6 +295,48 @@ class IdentityLoader:
                 | {"description": description.strip()}
             )
         return servers
+
+    def _build_tool_preferences(self, tool_sections: Dict[str, str], tools_meta: Dict[str, Any]) -> Dict[str, Any]:
+        preferences: Dict[str, Any] = {}
+        sandbox_blob = tool_sections.get("sandbox", "")
+        if sandbox_blob and yaml is not None:
+            try:
+                parsed = yaml.safe_load(sandbox_blob) or {}
+                if isinstance(parsed, dict):
+                    preferences.update(parsed)
+            except Exception:
+                logger.warning("Failed to parse sandbox config from TOOLS.md", exc_info=True)
+        if isinstance(tools_meta.get("allowed_paths"), list):
+            preferences["allowed_paths"] = tools_meta["allowed_paths"]
+        if isinstance(tools_meta.get("require_tool_approval"), bool):
+            preferences["require_tool_approval"] = tools_meta["require_tool_approval"]
+        return preferences
+
+    def _build_rate_limits(
+        self,
+        agent_meta: Dict[str, Any],
+        tools_meta: Dict[str, Any],
+        tool_sections: Dict[str, str],
+    ) -> Dict[str, int]:
+        limits: Dict[str, Any] = {}
+        for source in (agent_meta.get("rate_limits"), tools_meta.get("rate_limits")):
+            if isinstance(source, dict):
+                limits.update(source)
+        rate_blob = tool_sections.get("rate limits", "")
+        if rate_blob and yaml is not None:
+            try:
+                parsed = yaml.safe_load(rate_blob) or {}
+                if isinstance(parsed, dict):
+                    limits.update(parsed)
+            except Exception:
+                logger.warning("Failed to parse rate limit config from TOOLS.md", exc_info=True)
+        normalized: Dict[str, int] = {}
+        for key, value in limits.items():
+            try:
+                normalized[str(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+        return normalized
 
     def _build_system_prompt(self, identity: AgentIdentity) -> str:
         parts = [
