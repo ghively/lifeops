@@ -127,15 +127,22 @@ class RelationService:
             await self._remove_back_reference(removed_id, block_id)
 
         for reference_id in new_references - old_references:
-            await self._add_back_reference(reference_id, block_id)
-            await self.create_relation(
-                source_id=block_id,
-                source_type="block",
-                target_id=reference_id,
-                target_type="block",
-                relation_type="references",
-                context=content[:500],
-            )
+            # Only attempt back-reference for valid UUIDs — raw names like
+            # ((target-block)) are stored as references but can't be looked up
+            # in Qdrant until the referenced block actually exists.
+            try:
+                uuid.UUID(reference_id)
+                await self._add_back_reference(reference_id, block_id)
+                await self.create_relation(
+                    source_id=block_id,
+                    source_type="block",
+                    target_id=reference_id,
+                    target_type="block",
+                    relation_type="references",
+                    context=content[:500],
+                )
+            except (ValueError, AttributeError):
+                pass
 
         relations = await self.list_relations_for_object(block_id)
         for relation in relations:
@@ -156,7 +163,11 @@ class RelationService:
         )
         if existing:
             for reference_id in existing[0].payload.get("references", []):
-                await self._remove_back_reference(reference_id, block_id)
+                try:
+                    uuid.UUID(reference_id)
+                    await self._remove_back_reference(reference_id, block_id)
+                except (ValueError, AttributeError):
+                    pass
         await self.remove_relations_for_entity(block_id)
 
     async def _add_back_reference(self, referenced_block_id: str, block_id: str):
