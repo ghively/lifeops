@@ -253,7 +253,7 @@ class MCPClientManager:
                 connection.session.call_tool(tool["name"], arguments=arguments or {}),
                 timeout=connection.config.timeout_seconds or self.default_timeout_seconds,
             )
-            duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            duration_ms = int(round((time.perf_counter() - started_at) * 1000))
             payload = self._tool_result_payload(response)
             return ToolResult(
                 tool_name=runtime_name,
@@ -273,7 +273,7 @@ class MCPClientManager:
                 tool_name=runtime_name,
                 success=False,
                 error=f"MCP tool call timed out after {connection.config.timeout_seconds} seconds",
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+                duration_ms=int(round((time.perf_counter() - started_at) * 1000)),
             )
         except Exception as exc:
             connection.state = "error"
@@ -284,7 +284,7 @@ class MCPClientManager:
                 tool_name=runtime_name,
                 success=False,
                 error=str(exc),
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+                duration_ms=int(round((time.perf_counter() - started_at) * 1000)),
             )
 
     async def test_connection(self, config: MCPServerConfig) -> Dict[str, Any]:
