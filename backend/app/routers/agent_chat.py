@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -22,10 +22,40 @@ class RuntimeChatRequest(BaseModel):
     agent_id: str
     message: str
     session_id: Optional[str] = None
+    shared_context: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RuntimeFileUpdateRequest(BaseModel):
     content: str
+
+
+class RuntimeAgentCreateRequest(BaseModel):
+    template_id: Optional[str] = None
+
+
+class ScheduleTaskRequest(BaseModel):
+    agent_id: str
+    name: str
+    cron_expression: str
+    task_type: str
+    config: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class MemoryCurationRequest(BaseModel):
+    frequency: str = "daily"
+
+
+class WebhookCreateRequest(BaseModel):
+    agent_id: str
+    name: str
+    event_type: str
+    enabled: bool = True
+
+
+class CreateFromTemplateRequest(BaseModel):
+    agent_id: str
+    template_id: str
 
 
 class MCPServerCreateRequest(BaseModel):
@@ -53,7 +83,7 @@ async def runtime_chat(
     current_user: dict = Depends(get_current_user),
 ):
     return StreamingResponse(
-        agent_runtime.chat_sse(agent_id=data.agent_id, message=data.message, session_id=data.session_id),
+        agent_runtime.chat_sse(agent_id=data.agent_id, message=data.message, session_id=data.session_id, shared_context=data.shared_context),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -181,10 +211,105 @@ async def delete_runtime_session(
     return {"deleted": True, "session_id": session_id}
 
 
+@router.get("/templates")
+@read_rate_limit
+async def list_runtime_templates(request: Request, current_user: dict = Depends(get_current_user)):
+    return {"templates": agent_runtime.list_templates()}
+
+
+@router.post("/create-from-template")
+@write_rate_limit
+async def create_runtime_agent_from_template(
+    request: Request,
+    data: CreateFromTemplateRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    return agent_runtime.create_agent(data.agent_id, template_id=data.template_id)
+
+
+@router.post("/schedule")
+@write_rate_limit
+async def create_runtime_schedule(
+    request: Request,
+    data: ScheduleTaskRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    return await agent_runtime.create_scheduled_task(**data.model_dump())
+
+
+@router.get("/schedule")
+@read_rate_limit
+async def list_runtime_schedule(
+    request: Request,
+    agent_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    return {"tasks": await agent_runtime.list_scheduled_tasks(agent_id)}
+
+
+@router.delete("/schedule/{task_id}")
+@write_rate_limit
+async def delete_runtime_schedule(task_id: str, request: Request, current_user: dict = Depends(get_current_user)):
+    await agent_runtime.delete_scheduled_task(task_id)
+    return {"deleted": True, "id": task_id}
+
+
+@router.post("/schedule/{task_id}/run")
+@write_rate_limit
+async def run_runtime_schedule(task_id: str, request: Request, current_user: dict = Depends(get_current_user)):
+    try:
+        return await agent_runtime.run_scheduled_task(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{agent_id}/curate-memory")
+@write_rate_limit
+async def trigger_memory_curation(
+    agent_id: str,
+    request: Request,
+    data: MemoryCurationRequest = Body(default=MemoryCurationRequest()),
+    current_user: dict = Depends(get_current_user),
+):
+    return await agent_runtime.curate_memory(agent_id, frequency=data.frequency)
+
+
+@router.post("/webhooks")
+@write_rate_limit
+async def create_runtime_webhook(
+    request: Request,
+    data: WebhookCreateRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    return await agent_runtime.create_webhook(**data.model_dump())
+
+
+@router.get("/webhooks")
+@read_rate_limit
+async def list_runtime_webhooks(
+    request: Request,
+    agent_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    return {"webhooks": await agent_runtime.list_webhooks(agent_id)}
+
+
+@router.delete("/webhooks/{webhook_id}")
+@write_rate_limit
+async def delete_runtime_webhook(webhook_id: str, request: Request, current_user: dict = Depends(get_current_user)):
+    await agent_runtime.delete_webhook(webhook_id)
+    return {"deleted": True, "id": webhook_id}
+
+
 @router.post("/{agent_id}")
 @write_rate_limit
-async def create_runtime_agent(agent_id: str, request: Request, current_user: dict = Depends(get_current_user)):
-    return agent_runtime.create_agent(agent_id)
+async def create_runtime_agent(
+    agent_id: str,
+    request: Request,
+    data: RuntimeAgentCreateRequest = Body(default=RuntimeAgentCreateRequest()),
+    current_user: dict = Depends(get_current_user),
+):
+    return agent_runtime.create_agent(agent_id, template_id=data.template_id)
 
 
 @router.get("/{agent_id}")

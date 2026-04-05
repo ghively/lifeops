@@ -54,11 +54,21 @@ class ToolRegistry:
         self._register_native_tools()
         self._register_cli_tools()
 
-    def list_tools(self) -> List[ToolDefinition]:
-        return [tool.definition for tool in self._tools.values()] + self.mcp_manager.list_tool_definitions()
+    def list_tools(self, allowed_tools: Optional[List[str]] = None) -> List[ToolDefinition]:
+        allowed = set(allowed_tools or [])
+        definitions = [tool.definition for tool in self._tools.values()]
+        definitions.extend(self.mcp_manager.list_tool_definitions())
+        if not allowed:
+            return definitions
+        return [definition for definition in definitions if definition.name in allowed]
 
-    def list_openai_tools(self) -> List[Dict[str, Any]]:
-        schemas = [tool.openai_schema() for tool in self._tools.values() if tool.definition.enabled]
+    def list_openai_tools(self, allowed_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        allowed = set(allowed_tools or [])
+        schemas = [
+            tool.openai_schema()
+            for tool in self._tools.values()
+            if tool.definition.enabled and (not allowed or tool.definition.name in allowed)
+        ]
         schemas.extend(
             {
                 "type": "function",
@@ -69,7 +79,7 @@ class ToolRegistry:
                 },
             }
             for definition in self.mcp_manager.list_tool_definitions()
-            if definition.enabled
+            if definition.enabled and (not allowed or definition.name in allowed)
         )
         return schemas
 
@@ -78,7 +88,9 @@ class ToolRegistry:
             raise KeyError(f"Unknown tool: {name}")
         return self._tools[name]
 
-    async def execute(self, name: str, arguments: Dict[str, Any]) -> ToolResult:
+    async def execute(self, name: str, arguments: Dict[str, Any], allowed_tools: Optional[List[str]] = None) -> ToolResult:
+        if allowed_tools and name not in set(allowed_tools):
+            return ToolResult(tool_name=name, success=False, error=f"Tool {name} is not available in this scope", content="")
         if name in self._tools:
             return await self.get(name).execute(arguments)
         return await self.mcp_manager.execute_tool(name, arguments)

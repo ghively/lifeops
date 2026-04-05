@@ -136,6 +136,34 @@ class SQLiteManager:
             )
         """)
 
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS agent_scheduled_tasks (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                cron_expression TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                config TEXT DEFAULT '{}',
+                enabled INTEGER DEFAULT 1,
+                last_run TIMESTAMP,
+                next_run TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS agent_webhooks (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                url_path TEXT UNIQUE NOT NULL,
+                secret TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         await self._ensure_columns(
             "agent_sessions",
             {
@@ -335,6 +363,116 @@ class SQLiteManager:
     async def delete_mcp_server_config(self, name: str):
         """Delete an MCP server config by name."""
         await self.execute("DELETE FROM mcp_server_configs WHERE name = ?", (name,))
+
+    async def create_agent_scheduled_task(self, payload: dict[str, Any]):
+        await self.execute(
+            """
+            INSERT INTO agent_scheduled_tasks (
+                id, agent_id, name, cron_expression, task_type, config, enabled, last_run, next_run, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+            """,
+            (
+                payload["id"],
+                payload["agent_id"],
+                payload["name"],
+                payload["cron_expression"],
+                payload["task_type"],
+                json.dumps(payload.get("config", {})),
+                1 if payload.get("enabled", True) else 0,
+                payload.get("last_run"),
+                payload.get("next_run"),
+                payload.get("created_at"),
+            ),
+        )
+
+    async def list_agent_scheduled_tasks(self, agent_id: Optional[str] = None):
+        query = "SELECT * FROM agent_scheduled_tasks"
+        parameters: tuple[Any, ...] = ()
+        if agent_id:
+            query += " WHERE agent_id = ?"
+            parameters = (agent_id,)
+        query += " ORDER BY created_at DESC, name ASC"
+        rows = await self.fetchall(query, parameters)
+        return [self._decode_agent_scheduled_task(row) for row in rows]
+
+    async def get_agent_scheduled_task(self, task_id: str):
+        row = await self.fetchone("SELECT * FROM agent_scheduled_tasks WHERE id = ?", (task_id,))
+        return self._decode_agent_scheduled_task(row) if row else None
+
+    async def update_agent_scheduled_task_run(self, task_id: str, *, last_run: Optional[str], next_run: Optional[str]):
+        await self.execute(
+            "UPDATE agent_scheduled_tasks SET last_run = ?, next_run = ? WHERE id = ?",
+            (last_run, next_run, task_id),
+        )
+
+    async def delete_agent_scheduled_task(self, task_id: str):
+        await self.execute("DELETE FROM agent_scheduled_tasks WHERE id = ?", (task_id,))
+
+    async def create_agent_webhook(self, payload: dict[str, Any]):
+        await self.execute(
+            """
+            INSERT INTO agent_webhooks (
+                id, agent_id, name, url_path, secret, event_type, enabled, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+            """,
+            (
+                payload["id"],
+                payload["agent_id"],
+                payload["name"],
+                payload["url_path"],
+                payload["secret"],
+                payload["event_type"],
+                1 if payload.get("enabled", True) else 0,
+                payload.get("created_at"),
+            ),
+        )
+
+    async def list_agent_webhooks(self, agent_id: Optional[str] = None):
+        query = "SELECT * FROM agent_webhooks"
+        parameters: tuple[Any, ...] = ()
+        if agent_id:
+            query += " WHERE agent_id = ?"
+            parameters = (agent_id,)
+        query += " ORDER BY created_at DESC, name ASC"
+        rows = await self.fetchall(query, parameters)
+        return [self._decode_agent_webhook(row) for row in rows]
+
+    async def get_agent_webhook(self, webhook_id: str):
+        row = await self.fetchone("SELECT * FROM agent_webhooks WHERE id = ?", (webhook_id,))
+        return self._decode_agent_webhook(row) if row else None
+
+    async def get_agent_webhook_by_path(self, url_path: str):
+        row = await self.fetchone("SELECT * FROM agent_webhooks WHERE url_path = ?", (url_path,))
+        return self._decode_agent_webhook(row) if row else None
+
+    async def delete_agent_webhook(self, webhook_id: str):
+        await self.execute("DELETE FROM agent_webhooks WHERE id = ?", (webhook_id,))
+
+    def _decode_agent_scheduled_task(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "agent_id": row["agent_id"],
+            "name": row["name"],
+            "cron_expression": row["cron_expression"],
+            "task_type": row["task_type"],
+            "config": json.loads(row.get("config") or "{}"),
+            "enabled": bool(row.get("enabled", 1)),
+            "last_run": row.get("last_run"),
+            "next_run": row.get("next_run"),
+            "created_at": row.get("created_at"),
+        }
+
+    def _decode_agent_webhook(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "agent_id": row["agent_id"],
+            "name": row["name"],
+            "url_path": row["url_path"],
+            "secret": row["secret"],
+            "event_type": row["event_type"],
+            "enabled": bool(row.get("enabled", 1)),
+            "created_at": row.get("created_at"),
+        }
     
     async def close(self):
         """Close database connection"""

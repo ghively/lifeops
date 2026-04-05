@@ -9,9 +9,19 @@ from pydantic import BaseModel, Field, model_validator
 SafetyLevel = Literal["safe", "internal", "external", "destructive"]
 ProviderName = Literal["openai", "anthropic", "ollama", "google"]
 MessageRole = Literal["system", "user", "assistant", "tool"]
-StreamingEventType = Literal["text_delta", "tool_start", "tool_result", "thinking", "done", "error"]
+StreamingEventType = Literal[
+    "text_delta",
+    "tool_start",
+    "tool_result",
+    "thinking",
+    "subagent_start",
+    "subagent_result",
+    "done",
+    "error",
+]
 MCPTransport = Literal["stdio", "http"]
 MCPServerState = Literal["connected", "disconnected", "error"]
+ScheduledTaskType = Literal["periodic_research", "memory_curation", "data_cleanup", "webhook_triggered"]
 
 
 class LLMProviderConfig(BaseModel):
@@ -155,3 +165,67 @@ class StreamingEvent(BaseModel):
     delta: Optional[str] = None
     tool_name: Optional[str] = None
     data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentMention(BaseModel):
+    agent_id: str
+    name: str
+    summary: str
+    system_prompt: str = ""
+
+
+class AgentRouteMessageRequest(BaseModel):
+    from_agent_id: str
+    to_agent_id: str
+    message: str
+    shared_context: Dict[str, Any] = Field(default_factory=dict)
+    session_id: Optional[str] = None
+    timeout_seconds: int = 90
+
+
+class AgentScheduledTask(BaseModel):
+    id: str
+    agent_id: str
+    name: str
+    cron_expression: str
+    task_type: ScheduledTaskType
+    config: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    last_run: Optional[str] = None
+    next_run: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class AgentWebhook(BaseModel):
+    id: str
+    agent_id: str
+    name: str
+    url_path: str
+    secret: str
+    event_type: str
+    enabled: bool = True
+    created_at: Optional[str] = None
+
+
+class AgentTemplate(BaseModel):
+    id: str
+    name: str
+    description: str
+    files: Dict[str, str] = Field(default_factory=dict)
+
+
+class SubAgentTask(BaseModel):
+    agent_id: str
+    prompt: str
+    allowed_tools: List[str] = Field(default_factory=list)
+    shared_context: Dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: int = 90
+
+
+class SubAgentResult(BaseModel):
+    agent_id: str
+    success: bool = True
+    content: str = ""
+    session_id: Optional[str] = None
+    error: Optional[str] = None
+    tool_results: List[ToolResult] = Field(default_factory=list)

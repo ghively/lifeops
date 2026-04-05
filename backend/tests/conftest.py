@@ -302,6 +302,8 @@ def mock_sqlite_manager():
         "backup_log": [],
         "agent_sessions": {},
         "mcp_server_configs": {},
+        "agent_scheduled_tasks": {},
+        "agent_webhooks": {},
     }
 
     async def mock_execute(query, params=None):
@@ -331,6 +333,47 @@ def mock_sqlite_manager():
     async def mock_delete_mcp_server_config(name):
         storage["mcp_server_configs"].pop(name, None)
 
+    async def mock_create_agent_scheduled_task(payload):
+        storage["agent_scheduled_tasks"][payload["id"]] = dict(payload)
+
+    async def mock_list_agent_scheduled_tasks(agent_id=None):
+        rows = list(storage["agent_scheduled_tasks"].values())
+        if agent_id:
+          rows = [row for row in rows if row["agent_id"] == agent_id]
+        return rows
+
+    async def mock_get_agent_scheduled_task(task_id):
+        return storage["agent_scheduled_tasks"].get(task_id)
+
+    async def mock_update_agent_scheduled_task_run(task_id, *, last_run=None, next_run=None):
+        if task_id in storage["agent_scheduled_tasks"]:
+            storage["agent_scheduled_tasks"][task_id]["last_run"] = last_run
+            storage["agent_scheduled_tasks"][task_id]["next_run"] = next_run
+
+    async def mock_delete_agent_scheduled_task(task_id):
+        storage["agent_scheduled_tasks"].pop(task_id, None)
+
+    async def mock_create_agent_webhook(payload):
+        storage["agent_webhooks"][payload["id"]] = dict(payload)
+
+    async def mock_list_agent_webhooks(agent_id=None):
+        rows = list(storage["agent_webhooks"].values())
+        if agent_id:
+            rows = [row for row in rows if row["agent_id"] == agent_id]
+        return rows
+
+    async def mock_get_agent_webhook(webhook_id):
+        return storage["agent_webhooks"].get(webhook_id)
+
+    async def mock_get_agent_webhook_by_path(url_path):
+        for webhook in storage["agent_webhooks"].values():
+            if webhook["url_path"] == url_path:
+                return webhook
+        return None
+
+    async def mock_delete_agent_webhook(webhook_id):
+        storage["agent_webhooks"].pop(webhook_id, None)
+
     mock_manager.execute = mock_execute
     mock_manager.executemany = mock_executemany
     mock_manager.fetchone = mock_fetchone
@@ -340,6 +383,16 @@ def mock_sqlite_manager():
     mock_manager.list_mcp_server_configs = mock_list_mcp_server_configs
     mock_manager.upsert_mcp_server_config = mock_upsert_mcp_server_config
     mock_manager.delete_mcp_server_config = mock_delete_mcp_server_config
+    mock_manager.create_agent_scheduled_task = mock_create_agent_scheduled_task
+    mock_manager.list_agent_scheduled_tasks = mock_list_agent_scheduled_tasks
+    mock_manager.get_agent_scheduled_task = mock_get_agent_scheduled_task
+    mock_manager.update_agent_scheduled_task_run = mock_update_agent_scheduled_task_run
+    mock_manager.delete_agent_scheduled_task = mock_delete_agent_scheduled_task
+    mock_manager.create_agent_webhook = mock_create_agent_webhook
+    mock_manager.list_agent_webhooks = mock_list_agent_webhooks
+    mock_manager.get_agent_webhook = mock_get_agent_webhook
+    mock_manager.get_agent_webhook_by_path = mock_get_agent_webhook_by_path
+    mock_manager.delete_agent_webhook = mock_delete_agent_webhook
     mock_manager._storage = storage
 
     return mock_manager
@@ -482,6 +535,16 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
         stack.enter_context(patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone))
         stack.enter_context(patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall))
         stack.enter_context(patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute))
+        stack.enter_context(patch.object(sqlite_manager, "create_agent_scheduled_task", mock_sqlite_manager.create_agent_scheduled_task))
+        stack.enter_context(patch.object(sqlite_manager, "list_agent_scheduled_tasks", mock_sqlite_manager.list_agent_scheduled_tasks))
+        stack.enter_context(patch.object(sqlite_manager, "get_agent_scheduled_task", mock_sqlite_manager.get_agent_scheduled_task))
+        stack.enter_context(patch.object(sqlite_manager, "update_agent_scheduled_task_run", mock_sqlite_manager.update_agent_scheduled_task_run))
+        stack.enter_context(patch.object(sqlite_manager, "delete_agent_scheduled_task", mock_sqlite_manager.delete_agent_scheduled_task))
+        stack.enter_context(patch.object(sqlite_manager, "create_agent_webhook", mock_sqlite_manager.create_agent_webhook))
+        stack.enter_context(patch.object(sqlite_manager, "list_agent_webhooks", mock_sqlite_manager.list_agent_webhooks))
+        stack.enter_context(patch.object(sqlite_manager, "get_agent_webhook", mock_sqlite_manager.get_agent_webhook))
+        stack.enter_context(patch.object(sqlite_manager, "get_agent_webhook_by_path", mock_sqlite_manager.get_agent_webhook_by_path))
+        stack.enter_context(patch.object(sqlite_manager, "delete_agent_webhook", mock_sqlite_manager.delete_agent_webhook))
         stack.enter_context(patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})))
         stack.enter_context(patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})))
         stack.enter_context(patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})))
@@ -539,6 +602,16 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
         stack.enter_context(patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone))
         stack.enter_context(patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall))
         stack.enter_context(patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute))
+        stack.enter_context(patch.object(sqlite_manager, "create_agent_scheduled_task", mock_sqlite_manager.create_agent_scheduled_task))
+        stack.enter_context(patch.object(sqlite_manager, "list_agent_scheduled_tasks", mock_sqlite_manager.list_agent_scheduled_tasks))
+        stack.enter_context(patch.object(sqlite_manager, "get_agent_scheduled_task", mock_sqlite_manager.get_agent_scheduled_task))
+        stack.enter_context(patch.object(sqlite_manager, "update_agent_scheduled_task_run", mock_sqlite_manager.update_agent_scheduled_task_run))
+        stack.enter_context(patch.object(sqlite_manager, "delete_agent_scheduled_task", mock_sqlite_manager.delete_agent_scheduled_task))
+        stack.enter_context(patch.object(sqlite_manager, "create_agent_webhook", mock_sqlite_manager.create_agent_webhook))
+        stack.enter_context(patch.object(sqlite_manager, "list_agent_webhooks", mock_sqlite_manager.list_agent_webhooks))
+        stack.enter_context(patch.object(sqlite_manager, "get_agent_webhook", mock_sqlite_manager.get_agent_webhook))
+        stack.enter_context(patch.object(sqlite_manager, "get_agent_webhook_by_path", mock_sqlite_manager.get_agent_webhook_by_path))
+        stack.enter_context(patch.object(sqlite_manager, "delete_agent_webhook", mock_sqlite_manager.delete_agent_webhook))
         stack.enter_context(patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})))
         stack.enter_context(patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})))
         stack.enter_context(patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})))

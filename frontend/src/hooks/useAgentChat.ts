@@ -4,7 +4,7 @@ import { agentRuntimeApi, APIError, type AgentChatRequest, type RuntimeChatEvent
 
 export interface AgentChatUIMessage {
   id: string
-  role: 'user' | 'assistant' | 'tool' | 'thinking' | 'error'
+  role: 'user' | 'assistant' | 'tool' | 'thinking' | 'error' | 'subagent'
   content: string
   createdAt: string
   toolName?: string
@@ -209,6 +209,38 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
                 content: messageText,
                 createdAt: new Date().toISOString(),
                 status: 'complete',
+              },
+            ])
+          }
+
+          if (event.type === 'subagent_start') {
+            setMessages((current) => [
+              ...current.filter((item) => item.id !== 'thinking-indicator'),
+              {
+                id: createMessageId('subagent'),
+                role: 'subagent',
+                content: `Delegating to ${(event.data?.agent_id as string) || 'sub-agent'}`,
+                createdAt: new Date().toISOString(),
+                status: 'streaming',
+                metadata: event.data,
+              },
+            ])
+          }
+
+          if (event.type === 'subagent_result') {
+            setMessages((current) => [
+              ...current,
+              {
+                id: createMessageId('subagent'),
+                role: 'subagent',
+                content: typeof event.data?.content === 'string'
+                  ? event.data.content
+                  : typeof event.data?.error === 'string'
+                    ? event.data.error
+                    : `Sub-agent ${(event.data?.agent_id as string) || ''} finished`,
+                createdAt: new Date().toISOString(),
+                status: 'complete',
+                metadata: event.data,
               },
             ])
           }

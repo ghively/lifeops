@@ -225,6 +225,7 @@ export function AgentChatPage() {
                           item.role === 'user' && 'bg-primary text-primary-foreground',
                           item.role === 'assistant' && 'bg-muted',
                           item.role === 'tool' && 'border border-sky-200 bg-sky-50 text-sky-950',
+                          item.role === 'subagent' && 'border border-emerald-200 bg-emerald-50 text-emerald-950',
                           item.role === 'thinking' && 'border border-amber-200 bg-amber-50 text-amber-950',
                           item.role === 'error' && 'border border-red-200 bg-red-50 text-red-900'
                         )}
@@ -238,6 +239,11 @@ export function AgentChatPage() {
                               {item.toolName || 'Tool'}
                               {item.status === 'streaming' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                             </div>
+                            <MarkdownRenderer content={item.content} />
+                          </div>
+                        ) : item.role === 'subagent' ? (
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em]">Sub-Agent</div>
                             <MarkdownRenderer content={item.content} />
                           </div>
                         ) : (

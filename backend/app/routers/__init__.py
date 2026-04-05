@@ -9,6 +9,7 @@ from .settings import router as settings_router
 from .relations import router as relations_router
 from .system import router as system_router
 from .agent_chat import router as agent_chat_router
+from .agent_webhooks import router as agent_webhooks_router
 from . import auth as auth_router
 
 __all__ = [
@@ -22,5 +23,6 @@ __all__ = [
     'relations_router',
     'system_router',
     'agent_chat_router',
+    'agent_webhooks_router',
     'auth_router',
 ]

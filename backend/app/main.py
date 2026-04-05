@@ -27,7 +27,7 @@ from app.services.collaboration import collaboration_manager
 from app.services.agent.runtime import agent_runtime
 
 # Import routers
-from app.routers import objects, blocks, tasks, search, agents, files, relations, settings as settings_router, auth as auth_router, collaboration, system, agent_chat
+from app.routers import objects, blocks, tasks, search, agents, files, relations, settings as settings_router, auth as auth_router, collaboration, system, agent_chat, agent_webhooks
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -165,6 +165,7 @@ app.include_router(blocks.router, prefix="/api/v1/blocks", tags=["Blocks"])
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["Tasks"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 app.include_router(agent_chat.router, prefix="/api/v1/agents/runtime", tags=["Agent Runtime"])
+app.include_router(agent_webhooks.router, prefix="/api/v1/webhooks", tags=["Agent Webhooks"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
 app.include_router(files.router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(relations.router, prefix="/api/v1/relations", tags=["Relations"])

@@ -55,7 +55,7 @@ export interface ChatMessage {
 }
 
 export interface RuntimeChatEvent {
-  type: 'text_delta' | 'tool_start' | 'tool_result' | 'thinking' | 'done' | 'error'
+  type: 'text_delta' | 'tool_start' | 'tool_result' | 'thinking' | 'subagent_start' | 'subagent_result' | 'done' | 'error'
   session_id?: string
   agent_id?: string
   message?: string
@@ -68,6 +68,7 @@ export interface AgentChatRequest {
   agent_id: string
   message: string
   session_id?: string | null
+  shared_context?: Record<string, unknown>
 }
 
 export interface AgentChatResponse {
@@ -98,6 +99,46 @@ export interface AgentSession {
   updated_at: string
   message_count: number
   metadata?: Record<string, unknown>
+}
+
+export interface AgentTemplate {
+  id: string
+  name: string
+  description: string
+  files: Record<string, string>
+}
+
+export interface ScheduledTask {
+  id: string
+  agent_id: string
+  name: string
+  cron_expression: string
+  task_type: 'periodic_research' | 'memory_curation' | 'data_cleanup' | 'webhook_triggered'
+  config: Record<string, unknown>
+  enabled: boolean
+  last_run?: string | null
+  next_run?: string | null
+  created_at?: string | null
+}
+
+export interface ScheduledTaskInput {
+  agent_id: string
+  name: string
+  cron_expression: string
+  task_type: ScheduledTask['task_type']
+  config?: Record<string, unknown>
+  enabled?: boolean
+}
+
+export interface AgentWebhook {
+  id: string
+  agent_id: string
+  name: string
+  url_path: string
+  secret: string
+  event_type: string
+  enabled: boolean
+  created_at?: string | null
 }
 
 export interface RuntimeAgentMessage {
@@ -549,8 +590,14 @@ export const agentRuntimeApi = {
   list: () =>
     api.get<{ agents: Array<{ id: string; path: string }> }>('/agents/runtime').then((r) => r.data),
 
-  createAgent: (agentId: string) =>
-    api.post<{ id: string; path: string }>(`/agents/runtime/${agentId}`).then((r) => r.data),
+  listTemplates: () =>
+    api.get<{ templates: AgentTemplate[] }>('/agents/runtime/templates').then((r) => r.data),
+
+  createAgent: (agentId: string, templateId?: string | null) =>
+    api.post<{ id: string; path: string }>(`/agents/runtime/${agentId}`, { template_id: templateId || undefined }).then((r) => r.data),
+
+  createFromTemplate: (agentId: string, templateId: string) =>
+    api.post<{ id: string; path: string }>('/agents/runtime/create-from-template', { agent_id: agentId, template_id: templateId }).then((r) => r.data),
 
   deleteAgent: (agentId: string) =>
     api.delete<{ deleted: boolean; agent_id: string }>(`/agents/runtime/${agentId}`).then((r) => r.data),
@@ -577,6 +624,30 @@ export const agentRuntimeApi = {
 
   deleteSession: (sessionId: string) =>
     api.delete<{ deleted: boolean; session_id: string }>(`/agents/runtime/sessions/${sessionId}`).then((r) => r.data),
+
+  createScheduledTask: (data: ScheduledTaskInput) =>
+    api.post<ScheduledTask>('/agents/runtime/schedule', data).then((r) => r.data),
+
+  listScheduledTasks: (agentId?: string) =>
+    api.get<{ tasks: ScheduledTask[] }>('/agents/runtime/schedule', { params: { agent_id: agentId } }).then((r) => r.data),
+
+  deleteScheduledTask: (taskId: string) =>
+    api.delete<{ deleted: boolean; id: string }>(`/agents/runtime/schedule/${taskId}`).then((r) => r.data),
+
+  runScheduledTaskNow: (taskId: string) =>
+    api.post<{ task: ScheduledTask; result: Record<string, unknown> }>(`/agents/runtime/schedule/${taskId}/run`).then((r) => r.data),
+
+  curateMemory: (agentId: string, frequency: string = 'daily') =>
+    api.post(`/agents/runtime/${agentId}/curate-memory`, { frequency }).then((r) => r.data),
+
+  createWebhook: (data: { agent_id: string; name: string; event_type: string; enabled?: boolean }) =>
+    api.post<AgentWebhook>('/agents/runtime/webhooks', data).then((r) => r.data),
+
+  listWebhooks: (agentId?: string) =>
+    api.get<{ webhooks: AgentWebhook[] }>('/agents/runtime/webhooks', { params: { agent_id: agentId } }).then((r) => r.data),
+
+  deleteWebhook: (webhookId: string) =>
+    api.delete<{ deleted: boolean; id: string }>(`/agents/runtime/webhooks/${webhookId}`).then((r) => r.data),
 
   getCLIAgentStatus: () =>
     api.get<CLIAgentStatus>('/agents/runtime/cli-status').then((r) => r.data),
