@@ -1,5 +1,7 @@
 """Knowledge OS Backend - FastAPI Application"""
 import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -14,6 +16,7 @@ from app.vendor.slowapi_compat import (
 from app.config import settings
 from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
+from app.logging_config import AppMetrics, bind_request_context, clear_request_context, configure_logging
 from app.middleware.rate_limit import limiter, read_rate_limit
 from app.services.embedding import embedding_service
 from app.services.backup import backup_service
@@ -23,13 +26,9 @@ from app.services.websocket_manager import websocket_manager
 from app.services.collaboration import collaboration_manager
 
 # Import routers
-from app.routers import objects, blocks, tasks, search, agents, files, relations, settings as settings_router, auth as auth_router, collaboration
+from app.routers import objects, blocks, tasks, search, agents, files, relations, settings as settings_router, auth as auth_router, collaboration, system
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -86,6 +85,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 app.state.limiter = limiter
+app.state.metrics = AppMetrics.create()
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure CORS with configurable origins
@@ -98,6 +98,61 @@ app.add_middleware(
 )
 app.add_middleware(SlowAPIMiddleware)
 
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    """Attach request id, timing, and error metrics to every HTTP request."""
+    request_id = str(uuid.uuid4())
+    bind_request_context(request_id)
+    request.state.request_id = request_id
+
+    start = time.perf_counter()
+    response = None
+    app.state.metrics.request_count += 1
+
+    try:
+        response = await call_next(request)
+        if response.status_code >= 500:
+            app.state.metrics.error_count += 1
+        return response
+    except Exception:
+        app.state.metrics.error_count += 1
+        logger.error(
+            "Unhandled request error",
+            exc_info=True,
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "query": str(request.url.query),
+            },
+        )
+        raise
+    finally:
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        if response is not None:
+            response.headers["X-Request-ID"] = request_id
+
+        logger.info(
+            "Request completed",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": getattr(response, "status_code", 500),
+                "duration_ms": duration_ms,
+            },
+        )
+        if duration_ms > 5000:
+            logger.warning(
+                "Slow request detected",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": getattr(response, "status_code", 500),
+                    "duration_ms": duration_ms,
+                },
+            )
+        clear_request_context()
+
 # Include routers
 app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(objects.router, prefix="/api/v1/objects", tags=["Objects"])
@@ -109,6 +164,7 @@ app.include_router(files.router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(relations.router, prefix="/api/v1/relations", tags=["Relations"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["Settings"])
 app.include_router(collaboration.router, prefix="/api/v1/collaboration", tags=["Collaboration"])
+app.include_router(system.router, prefix="/api/v1/system", tags=["System"])
 
 
 @app.get("/health")

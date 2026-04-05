@@ -7,6 +7,7 @@ from .agents import router as agents_router
 from .files import router as files_router
 from .settings import router as settings_router
 from .relations import router as relations_router
+from .system import router as system_router
 from . import auth as auth_router
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     'files_router',
     'settings_router',
     'relations_router',
+    'system_router',
     'auth_router',
 ]

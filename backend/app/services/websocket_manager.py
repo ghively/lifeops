@@ -21,6 +21,10 @@ class WebSocketEvents:
     """WebSocket event factory."""
 
     @staticmethod
+    def log_entry(entry: dict):
+        return {"type": "log.entry", "channel": "logs", "data": entry}
+
+    @staticmethod
     def object_created(object_id: str, object_type: str, title: str):
         return {"type": "object.created", "channel": "objects", "data": {"id": object_id, "type": object_type, "title": title}}
 
@@ -107,6 +111,10 @@ class WebSocketManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
         self.subscriptions: DefaultDict[WebSocket, Set[str]] = defaultdict(set)
+
+    @property
+    def active_connection_count(self) -> int:
+        return len(self.active_connections)
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()

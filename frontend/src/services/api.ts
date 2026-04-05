@@ -120,6 +120,32 @@ export interface AppSettings {
   auto_index: boolean
 }
 
+export interface SystemLogEntry {
+  timestamp?: string
+  level: string
+  source: string
+  logger?: string
+  message: string
+  request_id?: string
+  data?: Record<string, unknown>
+}
+
+export interface SystemStatus {
+  version: string
+  uptime_seconds: number
+  request_counts: {
+    total: number
+  }
+  error_counts: {
+    total: number
+  }
+  active_websocket_connections: {
+    system: number
+    collaboration: number
+    total: number
+  }
+}
+
 // Auth types
 export interface User {
   id: string
@@ -406,6 +432,14 @@ export const settingsApi = {
 
   triggerBackup: (type: 'snapshot' | 'markdown' | 'git') =>
     api.post('/settings/backup', { type }).then((r) => r.data),
+}
+
+export const systemApi = {
+  getLogs: (params?: { level?: string; limit?: number; source?: string; search?: string }) =>
+    api.get<{ logs: SystemLogEntry[]; count: number }>('/system/logs', { params }).then((r) => r.data),
+
+  getStatus: () =>
+    api.get<SystemStatus>('/system/status').then((r) => r.data),
 }
 
 // Relations API

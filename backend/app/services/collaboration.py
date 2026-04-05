@@ -281,6 +281,10 @@ class CollaborationManager:
         self._cleanup_task: Optional[asyncio.Task] = None
         self._idle_timeout: int = 3600  # 1 hour idle room cleanup
 
+    @property
+    def active_connection_count(self) -> int:
+        return sum(room.user_count for room in self.rooms.values())
+
     async def start(self):
         """Start background cleanup task."""
         self._cleanup_task = asyncio.create_task(self._idle_cleanup_loop())

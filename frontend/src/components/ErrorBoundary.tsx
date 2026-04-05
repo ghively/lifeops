@@ -1,4 +1,5 @@
 import React from 'react'
+import { logger } from '@/lib/logger'
 
 interface Props {
   children: React.ReactNode
@@ -21,6 +22,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    logger.error('ErrorBoundary', error.message, {
+      component_stack: info.componentStack,
+      stack: error.stack,
+    })
     console.error('[ErrorBoundary]', error, info.componentStack)
   }
 
@@ -38,6 +43,12 @@ export class ErrorBoundary extends React.Component<Props, State> {
             onClick={() => this.setState({ hasError: false, error: null })}
           >
             Try Again
+          </button>
+          <button
+            className="px-4 py-2 rounded-md border text-sm"
+            onClick={() => window.location.reload()}
+          >
+            Reload Page
           </button>
         </div>
       )

@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ChevronDown,
   Settings,
+  ScrollText,
   Calendar,
   Inbox,
   Loader2,
@@ -324,6 +325,16 @@ export function Sidebar({ collapsed, isMobile = false, mobileOpen = false, onTog
           >
             <Settings className="h-4 w-4" />
             Settings
+          </Button>
+        </Link>
+
+        <Link to="/logs" onClick={onNavigate}>
+          <Button
+            variant={location.pathname === '/logs' ? 'secondary' : 'ghost'}
+            className="w-full justify-start gap-2"
+          >
+            <ScrollText className="h-4 w-4" />
+            Logs
           </Button>
         </Link>
 

@@ -16,16 +16,13 @@ from pathlib import Path
 from typing import Set, Dict, List
 from dataclasses import dataclass, asdict
 from app.utils.time import utc_now_iso
+from app.logging_config import configure_logging
 
 import aiohttp
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifiedEvent, FileDeletedEvent, FileMovedEvent
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+configure_logging()
 logger = logging.getLogger('file_watcher')
 
 

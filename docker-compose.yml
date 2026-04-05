@@ -26,13 +26,16 @@ services:
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
+      - DATA_DIR=/app/data
       - DATABASE_URL=sqlite:///app/data/knowledge_os.db
       - OPENCLAW_URL=${OPENCLAW_URL:-http://host.docker.internal:18789}
       - OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
       - BACKUP_PATH=/app/backups
       - WATCHED_FOLDERS_PATH=/app/data/watched_folders.json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - backend-data:/app/data
+      - backend-logs:/app/data/logs
       - ./backups:/app/backups
       # Mount host directories for file watching (configure as needed)
       - ${HOME}/Documents:/host/documents:ro
@@ -88,6 +91,8 @@ volumes:
   qdrant-storage:
     driver: local
   backend-data:
+    driver: local
+  backend-logs:
     driver: local
   file-watcher-data:
     driver: local

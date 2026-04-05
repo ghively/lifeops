@@ -52,6 +52,10 @@ class Settings:
     
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    log_file_path: str = os.getenv(
+        "LOG_FILE_PATH",
+        str(Path(os.getenv("DATA_DIR", DATA_DIR.as_posix())) / "logs" / "app.log"),
+    )
     
     # File watching
     watched_folders_path: str = os.getenv(

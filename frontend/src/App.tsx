@@ -13,6 +13,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { SearchPage } from './pages/SearchPage'
 import { LoginPage } from './pages/LoginPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
+import { LogsPage } from './pages/LogsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -56,6 +57,7 @@ function App() {
                     <Route path="/files" element={<FilesPage />} />
                     <Route path="/agents" element={<AgentsPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
+                    <Route path="/logs" element={<LogsPage />} />
                     <Route path="/search" element={<SearchPage />} />
                   </Routes>
                 </MainLayout>

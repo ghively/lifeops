@@ -1,5 +1,6 @@
 # Knowledge OS Backend Requirements
 fastapi==0.109.0
+structlog==24.4.0
 uvicorn[standard]==0.27.0
 websockets==12.0
 python-multipart==0.0.6
