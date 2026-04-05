@@ -12,6 +12,11 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    // Disable minification when VITE_DEV_BUILD is set
+    minify: process.env.VITE_DEV_BUILD ? false : 'esbuild',
+    sourcemap: process.env.VITE_DEV_BUILD ? true : false,
+  },
   server: {
     port: 5173,
     proxy: {

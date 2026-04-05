@@ -1,101 +1,49 @@
-import { Component, ErrorInfo, ReactNode } from 'react'
-import { AlertTriangle, RefreshCw } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import React from 'react'
 
 interface Props {
-  children: ReactNode
-  fallback?: ReactNode
+  children: React.ReactNode
+  fallback?: React.ReactNode
 }
 
 interface State {
   hasError: boolean
   error: Error | null
-  errorInfo: ErrorInfo | null
 }
 
-export class ErrorBoundary extends Component<Props, State> {
-  public state: State = {
-    hasError: false,
-    error: null,
-    errorInfo: null,
+export class ErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props)
+    this.state = { hasError: false, error: null }
   }
 
-  public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error, errorInfo: null }
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error }
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Uncaught error:', error, errorInfo)
-    this.setState({ error, errorInfo })
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[ErrorBoundary]', error, info.componentStack)
   }
 
-  private handleReload = () => {
-    window.location.reload()
-  }
-
-  private handleReset = () => {
-    this.setState({ hasError: false, error: null, errorInfo: null })
-  }
-
-  public render() {
+  render() {
     if (this.state.hasError) {
-      if (this.props.fallback) {
-        return this.props.fallback
-      }
-
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-background p-4">
-          <div className="max-w-md w-full text-center space-y-6">
-            <div className="flex justify-center">
-              <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
-                <AlertTriangle className="w-8 h-8 text-red-600" />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <h1 className="text-2xl font-bold text-foreground">
-                Something went wrong
-              </h1>
-              <p className="text-muted-foreground">
-                An unexpected error occurred. Please try again or contact support if the problem persists.
-              </p>
-            </div>
-
-            {this.state.error && (
-              <div className="bg-muted rounded-lg p-4 text-left overflow-auto max-h-48">
-                <p className="text-sm font-mono text-red-600">
-                  {this.state.error.toString()}
-                </p>
-                {this.state.errorInfo && (
-                  <pre className="text-xs text-muted-foreground mt-2 overflow-auto">
-                    {this.state.errorInfo.componentStack}
-                  </pre>
-                )}
-              </div>
-            )}
-
-            <div className="flex gap-3 justify-center">
-              <Button onClick={this.handleReset} variant="outline">
-                Try Again
-              </Button>
-              <Button onClick={this.handleReload}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Reload Page
-              </Button>
-            </div>
-          </div>
+      return this.props.fallback || (
+        <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 p-8">
+          <div className="text-4xl">⚠️</div>
+          <h2 className="text-lg font-semibold">Something went wrong</h2>
+          <p className="text-sm text-muted-foreground max-w-md text-center">
+            {this.state.error?.message || 'An unexpected error occurred'}
+          </p>
+          <button
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm"
+            onClick={() => this.setState({ hasError: false, error: null })}
+          >
+            Try Again
+          </button>
         </div>
       )
     }
-
     return this.props.children
   }
 }
 
-// Hook for functional components to catch errors
-export function useErrorHandler() {
-  return (error: Error) => {
-    console.error('Error caught by handler:', error)
-    // Could send to error tracking service here
-  }
-}
+export default ErrorBoundary

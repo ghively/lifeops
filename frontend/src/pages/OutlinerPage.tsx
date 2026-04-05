@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import ErrorBoundary from '@/components/ErrorBoundary'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -218,6 +219,7 @@ export function OutlinerPage() {
   ), [blocks])
 
   return (
+    <ErrorBoundary>
     <div className="max-w-4xl mx-auto py-8 px-6">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4">
@@ -349,5 +351,6 @@ export function OutlinerPage() {
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   )
 }
