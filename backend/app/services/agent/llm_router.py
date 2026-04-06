@@ -5,6 +5,8 @@ import asyncio
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+import httpx
+
 from app.services.agent.models import LLMProviderConfig
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,7 @@ class LLMRouter:
         client = AsyncOpenAI(
             api_key=config.api_key or "ollama",
             base_url=base_url,
+            timeout=httpx.Timeout(60.0, connect=10.0),
         )
         payload: Dict[str, Any] = {
             "model": config.model,

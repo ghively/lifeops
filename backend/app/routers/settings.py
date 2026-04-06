@@ -14,6 +14,8 @@ from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+SENSITIVE_SETTINGS = {"openclaw_token", "jwt_secret_key", "llm_api_key"}
+
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "openclaw_url": app_settings.openclaw_url,
     "openclaw_token": app_settings.openclaw_token,
@@ -44,7 +46,8 @@ async def _load_settings() -> Dict[str, Any]:
 @read_rate_limit
 async def get_settings(request: Request, current_user: dict = Depends(get_current_user)):
     """Get application settings."""
-    return await _load_settings()
+    all_settings = await _load_settings()
+    return {k: v for k, v in all_settings.items() if k not in SENSITIVE_SETTINGS}
 
 
 @router.put("")
