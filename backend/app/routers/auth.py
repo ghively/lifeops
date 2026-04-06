@@ -130,6 +130,11 @@ async def refresh_token(request: Request, data: TokenRefreshRequest):
             detail="User not found or inactive",
         )
 
+    # Rotate refresh token: invalidate old, issue new (H45)
+    await auth_service.revoke_refresh_token(user_id, data.refresh_token)
+    new_refresh_token = auth_service.create_refresh_token(user["id"])
+    await auth_service.store_refresh_token(user["id"], new_refresh_token)
+
     # Create new access token
     access_token = auth_service.create_access_token(user["id"])
 
@@ -137,7 +142,7 @@ async def refresh_token(request: Request, data: TokenRefreshRequest):
 
     return TokenResponse(
         access_token=access_token,
-        refresh_token=data.refresh_token,  # Return same refresh token
+        refresh_token=new_refresh_token,
         token_type="bearer",
         expires_in=auth_service.access_token_expire_minutes * 60,
         user=UserResponse(**user),

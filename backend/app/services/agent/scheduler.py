@@ -154,12 +154,16 @@ class AgentScheduler:
         if self.runtime is None or self.memory_curation is None:
             raise RuntimeError("Scheduler is not bound to the runtime")
 
+        timeout_seconds = int(task.config.get("timeout_seconds") or 120)
         try:
             result: Dict[str, Any]
             if task.task_type == "memory_curation":
-                result = await self.memory_curation.curate_agent_memory(
-                    task.agent_id,
-                    frequency=str(task.config.get("frequency") or "daily"),
+                result = await asyncio.wait_for(
+                    self.memory_curation.curate_agent_memory(
+                        task.agent_id,
+                        frequency=str(task.config.get("frequency") or "daily"),
+                    ),
+                    timeout=timeout_seconds,
                 )
             elif task.task_type == "data_cleanup":
                 result = await self.runtime.run_background_task(

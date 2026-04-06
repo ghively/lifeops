@@ -17,6 +17,7 @@ from app.models.blocks import (
 from app.services.embedding import embedding_service
 from app.services.relations import relation_service
 from app.services.websocket_manager import WebSocketEvents, websocket_manager
+from app.utils.sanitize import sanitize_content
 from app.utils.time import utc_now_iso
 
 router = APIRouter()
@@ -93,6 +94,7 @@ async def create_block(block: BlockCreate, request: Request, current_user: dict 
     client = qdrant_manager.get_async_client()
     block_id = block.id or str(uuid.uuid4())
     embedding = await embedding_service.embed_text(block.content)
+    sanitized_content = sanitize_content(block.content)
 
     existing_blocks = await _get_blocks_for_object(block.object_id, 500)
     now = utc_now_iso()
@@ -100,7 +102,7 @@ async def create_block(block: BlockCreate, request: Request, current_user: dict 
         "id": block_id,
         "object_id": block.object_id,
         "type": block.type,
-        "content": block.content,
+        "content": sanitized_content,
         "level": block.level,
         "order": block.order if block.order is not None else len(existing_blocks),
         "properties": (block.properties.model_dump(exclude_none=True) if block.properties else {}),
@@ -149,7 +151,7 @@ async def update_block(
     payload = dict(existing[0].payload or {})
     content_changed = False
     if update.content is not None:
-        payload["content"] = update.content
+        payload["content"] = sanitize_content(update.content)
         content_changed = True
     if update.type is not None:
         payload["type"] = update.type
@@ -271,9 +273,7 @@ async def sync_blocks_for_object(
                 "id": block_id,
                 "object_id": object_id,
                 "type": block.type,
-                "content": block.content,
-                "level": block.level,
-                "order": order,
+                "content": sanitize_content(block.content),
                 "properties": block.properties if block.properties is not None else {},
                 "parent_id": block.parent_id,
                 "references": existing_payload.get("references", []),

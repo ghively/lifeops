@@ -21,11 +21,23 @@ class RateLimitExceeded(Exception):
 
 
 def get_remote_address(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
-
+    # H50: Only trust X-Forwarded-For from configured trusted proxies.
+    # Set TRUSTED_PROXIES env var (comma-separated IPs/CIDRs) to enable.
+    # Falls back to direct client IP if the request doesn't come from a trusted proxy.
+    trusted_proxies_str = getattr(request.app.state, "_trusted_proxies", "")
     client = request.client
+    if not trusted_proxies_str or not client:
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            return forwarded_for.split(",", 1)[0].strip()
+        return client.host if client else "unknown"
+
+    # Check if direct client is a trusted proxy
+    trusted_proxies = [p.strip() for p in trusted_proxies_str.split(",") if p.strip()]
+    if client.host in trusted_proxies:
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            return forwarded_for.split(",", 1)[0].strip()
     return client.host if client else "unknown"
 
 

@@ -10,10 +10,11 @@ import asyncio
 import hashlib
 import json
 import logging
+import random
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Deque, Dict, List, Optional, Set
 from uuid import uuid4
 
 from fastapi import WebSocket
@@ -60,6 +61,75 @@ MSG_CURSOR_BROADCAST = "collab.cursor_broadcast"
 MSG_AWARENESS_BROADCAST = "collab.awareness_broadcast"
 MSG_SNAPSHOT = "collab.snapshot"
 MSG_ERROR = "collab.error"
+
+
+# --- H59: Exponential backoff with jitter for reconnect ---
+async def ws_reconnect_with_backoff(
+    coro_factory,
+    max_retries: int = 10,
+    base_delay: float = 0.5,
+    max_delay: float = 30.0,
+):
+    """Attempt *coro_factory* with exponential backoff + jitter.
+
+    *coro_factory* is an async callable returning a coroutine that raises
+    on failure.  Returns the result on success, raises on exhaustion.
+    """
+    for attempt in range(max_retries):
+        try:
+            return await coro_factory()
+        except Exception:
+            if attempt == max_retries - 1:
+                raise
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            jitter = random.uniform(0, delay * 0.25)
+            logger.warning(
+                "WS reconnect attempt %d/%d, retrying in %.2fs",
+                attempt + 1, max_retries, delay + jitter,
+            )
+            await asyncio.sleep(delay + jitter)
+
+
+# --- H60: Missed-message recovery queue (30 s TTL per user) ---
+class MissedMessageQueue:
+    """Short-lived server-side event queue keyed by user_id.
+
+    Events are kept for at most *ttl* seconds.  On reconnect the
+    caller can flush the queue for a given user.
+    """
+
+    def __init__(self, ttl: float = 30.0, max_per_user: int = 200):
+        self._queues: Dict[str, Deque[dict]] = defaultdict(deque)
+        self._timestamps: Dict[str, float] = {}
+        self._ttl = ttl
+        self._max_per_user = max_per_user
+
+    def enqueue(self, user_id: str, message: dict) -> None:
+        self._purge_expired(user_id)
+        q = self._queues[user_id]
+        q.append({"message": message, "ts": time.time()})
+        while len(q) > self._max_per_user:
+            q.popleft()
+
+    def flush(self, user_id: str) -> List[dict]:
+        """Return and remove all queued messages for *user_id*."""
+        q = self._queues.pop(user_id, deque())
+        self._timestamps.pop(user_id, None)
+        return [item["message"] for item in q]
+
+    def _purge_expired(self, user_id: str) -> None:
+        cutoff = time.time() - self._ttl
+        q = self._queues.get(user_id)
+        if q is None:
+            return
+        while q and q[0]["ts"] < cutoff:
+            q.popleft()
+        if not q:
+            self._queues.pop(user_id, None)
+            self._timestamps.pop(user_id, None)
+
+
+missed_message_queue = MissedMessageQueue()
 
 
 @dataclass
@@ -123,7 +193,8 @@ class CollaborationRoom:
 
     def __init__(self, object_id: str):
         self.object_id = object_id
-        self.connections: Dict[str, WebSocket] = {}  # user_id -> ws
+        # H61: Track multiple connections per user (list of ws)
+        self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
         self.presence: Dict[str, PresenceUser] = {}
         self.lamport_clock: int = 0
         self.operation_log: List[CROperation] = []  # recent ops for late joiners

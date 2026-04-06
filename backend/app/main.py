@@ -4,7 +4,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("🚀 Starting Knowledge OS Backend...")
     auth_service.log_secret_configuration_warning()
+    app.state._trusted_proxies = getattr(settings, "trusted_proxies", "")
     
     # Initialize databases first
     logger.info("📦 Initializing Qdrant...")
@@ -182,6 +183,32 @@ async def request_context_middleware(request: Request, call_next):
                 },
             )
         clear_request_context()
+
+# H46: Global auth enforcement for /api/v1/* routes
+AUTH_WHITELIST = {
+    "/api/v1/auth/login",
+    "/api/v1/auth/register",
+    "/api/v1/auth/forgot-password",
+    "/api/v1/auth/reset-password",
+    "/api/v1/system/health",
+}
+
+
+@app.middleware("http")
+async def auth_enforcement_middleware(request: Request, call_next):
+    """Require authentication on all /api/v1/* routes except whitelisted paths."""
+    path = request.url.path
+    if path.startswith("/api/v1/") and path not in AUTH_WHITELIST:
+        # Check if already has valid auth header
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.lower().startswith("bearer "):
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Authentication required"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return await call_next(request)
+
 
 # Include routers
 app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["Authentication"])

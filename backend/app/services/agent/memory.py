@@ -12,7 +12,16 @@ from app.services.agent.models import MemoryEntry
 from app.services.embedding import embedding_service
 from app.utils.time import utc_now_iso
 
-logger = logging.getLogger(__name__)
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """Rough token estimation using len//4. Consider using tiktoken for accuracy."""
+        if not text:
+            return 0
+        count = len(text) // 4
+        if count > 500:
+            logger.debug("Token estimation using len//4 heuristic (%d tokens for %d chars); consider tiktoken for accuracy", count, len(text))
+        return max(1, count)
+
 
 
 class MemoryManager:
@@ -39,7 +48,7 @@ class MemoryManager:
                     id=f"{agent_id}:memory-md",
                     content=long_term,
                     source="memory_md",
-                    tokens=max(1, len(long_term) // 4),
+                    tokens=MemoryManager._estimate_tokens(long_term),
                 )
             )
 
@@ -66,7 +75,7 @@ class MemoryManager:
                         timestamp=payload.get("timestamp"),
                         score=point.score,
                         metadata=payload,
-                        tokens=max(1, len(content) // 4),
+                        tokens=MemoryManager._estimate_tokens(content),
                     )
                 )
         except Exception as exc:
@@ -87,7 +96,7 @@ class MemoryManager:
             content=content,
             source=source,  # type: ignore[arg-type]
             timestamp=utc_now_iso(),
-            tokens=max(1, len(content) // 4),
+            tokens=MemoryManager._estimate_tokens(content),
         )
         self._working_memory.setdefault(agent_id, []).append(entry)
 

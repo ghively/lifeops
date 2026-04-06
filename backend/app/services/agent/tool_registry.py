@@ -287,11 +287,13 @@ class ToolRegistry:
             )
 
     async def _create_object(self, arguments: Dict[str, Any], **_) -> ToolResult:
-        client = qdrant_manager.get_async_client()
-        object_id = str(uuid.uuid4())
         title = arguments.get("title", "").strip()
         content = arguments.get("content", "").strip()
         object_type = arguments.get("object_type", "note")
+        if not title and not content and not object_type:
+            return ToolResult(tool_name="create_object", success=False, error="At least one of title, content, or object_type must be non-empty", content="")
+        client = qdrant_manager.get_async_client()
+        object_id = str(uuid.uuid4())
         payload = {
             "id": object_id,
             "type": object_type,
@@ -350,6 +352,8 @@ class ToolRegistry:
         if action == "update_status":
             task_id = arguments.get("task_id")
             status = arguments.get("status")
+            if not task_id:
+                return ToolResult(tool_name="manage_tasks", success=False, error="task_id is required for update_status action", content="")
             record = await client.retrieve(collection_name="objects", ids=[task_id], with_payload=True, with_vectors=False)
             if not record:
                 return ToolResult(tool_name="manage_tasks", success=False, error="Task not found", content="")
@@ -372,5 +376,6 @@ class ToolRegistry:
         sandbox = self.sandbox.allowed_for_identity(getattr(identity, "tool_preferences", {}))
         path = sandbox.validate_path(arguments["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(arguments["content"], encoding="utf-8")
-        return ToolResult(tool_name="write_file", content=f"Wrote {path}", data={"path": str(path), "bytes": len(arguments['content'])})
+        content = arguments.get("content", "")
+        path.write_text(content, encoding="utf-8")
+        return ToolResult(tool_name="write_file", content=f"Wrote {path}", data={"path": str(path), "bytes": len(content)})

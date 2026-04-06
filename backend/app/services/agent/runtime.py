@@ -44,6 +44,7 @@ class AgentRuntime:
         self.templates = AgentTemplateService()
         self.scheduler = AgentScheduler()
         self.webhooks = AgentWebhookService()
+        self._last_mcp_configs_hash: Optional[str] = None
         self.agent_loop = AgentLoop(
             self.llm_router,
             self.tool_registry,
@@ -63,6 +64,11 @@ class AgentRuntime:
     async def stop(self) -> None:
         await self.scheduler.stop()
         await self.tool_registry.mcp_manager.shutdown()
+        if hasattr(self, '_active_tasks'):
+            for task in list(self._active_tasks.values()):
+                if not task.done():
+                    task.cancel()
+            self._active_tasks.clear()
 
     async def chat(
         self,
@@ -361,8 +367,12 @@ class AgentRuntime:
     ) -> AsyncGenerator[StreamingEvent, None]:
         identity = identity or self.identity_loader.load(agent_id)
         if identity.mcp_servers:
-            for server_config in identity.mcp_servers:
-                await self.tool_registry.mcp_manager.configure_server(server_config, persist=False)
+            import hashlib, json
+            config_hash = hashlib.md5(json.dumps(identity.mcp_servers, sort_keys=True, default=str).encode()).hexdigest()
+            if config_hash != self._last_mcp_configs_hash:
+                for server_config in identity.mcp_servers:
+                    await self.tool_registry.mcp_manager.configure_server(server_config, persist=False)
+                self._last_mcp_configs_hash = config_hash
         history = await self.session_manager.load_history(session_id)
         memories = await self.memory_manager.retrieve_relevant(agent_id, message)
         projected_tokens = self.llm_router.count_tokens(message, identity.model)

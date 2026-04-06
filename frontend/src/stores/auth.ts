@@ -34,7 +34,10 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null })
         try {
           const response = await authApi.login(email, password)
-          localStorage.setItem('access_token', response.access_token)
+          // SECURITY (H51): Access token kept in memory only (not localStorage) to mitigate XSS token theft.
+          // Refresh token is persisted in localStorage as a stopgap; the recommended migration path
+          // is to move refresh tokens to httpOnly cookies set by the backend, eliminating client-side
+          // access entirely. See: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
           localStorage.setItem('refresh_token', response.refresh_token)
           set({
             user: response.user,
@@ -54,7 +57,7 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null })
         try {
           const response = await authApi.register(data)
-          localStorage.setItem('access_token', response.access_token)
+          // SECURITY (H51): See login handler comment re: localStorage token storage.
           localStorage.setItem('refresh_token', response.refresh_token)
           set({
             user: response.user,
@@ -79,7 +82,6 @@ export const useAuthStore = create<AuthState>()(
         } catch (error) {
           console.error('Logout error:', error)
         } finally {
-          localStorage.removeItem('access_token')
           localStorage.removeItem('refresh_token')
           set({
             user: null,
@@ -130,9 +132,8 @@ export const useAuthStore = create<AuthState>()(
 
         try {
           const response = await authApi.refreshToken(refreshToken)
-          localStorage.setItem('access_token', response.access_token)
+          // SECURITY (H51): Access token kept in memory only.
           if (response.refresh_token) {
-            localStorage.setItem('refresh_token', response.refresh_token)
           }
           set({
             user: response.user,
@@ -141,7 +142,6 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: true,
           })
         } catch (error) {
-          localStorage.removeItem('access_token')
           localStorage.removeItem('refresh_token')
           set({
             user: null,
@@ -156,11 +156,9 @@ export const useAuthStore = create<AuthState>()(
       clearError: () => set({ error: null }),
 
       initialize: () => {
-        const accessToken = localStorage.getItem('access_token')
         const refreshToken = localStorage.getItem('refresh_token')
-        if (accessToken && refreshToken) {
+        if (refreshToken) {
           set({
-            accessToken,
             refreshToken,
             isAuthenticated: true,
           })

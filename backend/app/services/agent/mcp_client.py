@@ -44,6 +44,8 @@ class MCPClientManager:
         self._connections: Dict[str, MCPConnectionHandle] = {}
         self._tool_routes: Dict[str, str] = {}
         self._lock = asyncio.Lock()
+        self._reconnect_cooldowns: Dict[str, float] = {}  # server_name -> earliest reconnect time
+        self._reconnect_backoff: Dict[str, float] = {}  # server_name -> current backoff seconds
 
     async def initialize(self) -> None:
         persisted = await sqlite_manager.list_mcp_server_configs()
@@ -130,6 +132,14 @@ class MCPClientManager:
         if not config:
             raise KeyError(f"Unknown MCP server: {name}")
 
+        # Reconnect cooldown/backoff to prevent storms
+        now = time.monotonic()
+        cooldown_until = self._reconnect_cooldowns.get(name, 0)
+        if now < cooldown_until:
+            wait = cooldown_until - now
+            logger.warning("MCP server %s reconnect cooldown active, %.1fs remaining", name, wait)
+            raise RuntimeError(f"Reconnect cooldown active for '{name}', retry in {wait:.0f}s")
+
         await self.disconnect_server(name)
         exit_stack = AsyncExitStack()
         started_at = time.perf_counter()
@@ -144,11 +154,16 @@ class MCPClientManager:
                 last_checked_at=utc_now_iso(),
             )
             self._connections[name] = connection
+            self._reconnect_backoff.pop(name, None)
+            self._reconnect_cooldowns.pop(name, None)
             await self.refresh_tools(name)
             logger.info("Connected MCP server %s", name, extra={"duration_ms": round((time.perf_counter() - started_at) * 1000, 2)})
             return self._status_for(name)
         except Exception as exc:
             await exit_stack.aclose()
+            backoff = min(self._reconnect_backoff.get(name, 1.0) * 2, 60.0)
+            self._reconnect_backoff[name] = backoff
+            self._reconnect_cooldowns[name] = time.monotonic() + backoff
             self._connections[name] = MCPConnectionHandle(
                 config=config,
                 session=None,
@@ -204,8 +219,21 @@ class MCPClientManager:
     async def health_check(self, name: Optional[str] = None) -> List[MCPServerStatus]:
         names = [name] if name else sorted(self._configs.keys())
         statuses = []
+        now = time.time()
         for server_name in names:
             connection = self._connections.get(server_name)
+            # Clean up stale error handles (TTL: 300 seconds)
+            if connection and connection.state == "error":
+                last = connection.last_checked_at
+                if last:
+                    try:
+                        from datetime import datetime, timezone
+                        elapsed = now - datetime.fromisoformat(last.replace("Z", "+00:00")).timestamp()
+                        if elapsed > 300:
+                            await self.disconnect_server(server_name)
+                            connection = None
+                    except (ValueError, OSError):
+                        pass
             if connection and connection.state == "connected":
                 try:
                     if hasattr(connection.session, "send_ping"):
