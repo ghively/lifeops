@@ -153,6 +153,8 @@ async def file_notification(data: dict, request: Request, current_user: dict = D
     if not event_type or not path:
         raise HTTPException(status_code=400, detail="event_type and path are required")
     
+    path = validate_file_path(path)
+    
     logger.info(f"File notification: {event_type} - {path}")
     
     # Process based on event type
@@ -241,6 +243,8 @@ async def index_file_content(
     
     if not file_path:
         raise HTTPException(status_code=400, detail="path is required")
+    
+    file_path = validate_file_path(file_path)
     
     # Compute SHA-256 hash
     file_hash = compute_file_hash(file_path) if file_path else ""
