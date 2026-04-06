@@ -114,6 +114,10 @@ class ToolRegistry:
             return ToolResult(tool_name=name, success=False, error=f"Tool {name} is not available in this scope", content="")
         runtime_tool = self._tools.get(name)
         definition = runtime_tool.definition if runtime_tool else self._lookup_mcp_definition(name)
+
+        if not definition:
+            return ToolResult(tool_name=name, success=False, error=f"Unknown tool: {name}", content="")
+
         execution_context = context or {}
 
         if self.audit_logger and execution_context.get("agent_id"):
