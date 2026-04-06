@@ -1,119 +1,96 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to Knowledge OS will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.3.0] - 2026-04-05
 
-## [Unreleased]
+### Added
+
+#### Agent Runtime System
+- **Agent identity system** — Markdown-first agent definitions (AGENT.md, SOUL.md, MEMORY.md, TOOLS.md)
+- **LLM router** — Multi-provider support (Ollama, OpenAI, Anthropic, Google) with streaming and fallback
+- **CLI agent delegation** — Delegate to Codex, Claude Code, Kimi CLI, Gemini CLI, OpenCode as tools
+- **ReAct agent loop** — Think → tool → observe → loop with parallel tool execution
+- **MCP client** — Connect to external tool servers via stdio and HTTP transports
+- **Memory manager** — Daily logs, Qdrant semantic retrieval, MEMORY.md auto-curation
+- **Session manager** — SQLite-backed conversation persistence with title generation
+- **SSE streaming** — Real-time streaming with tool call indicators
+- **Sub-agent spawning** — Parallel sub-agent execution with depth limits
+- **Agent templates** — Pre-built configs: Researcher, Coder, Analyst, Writer, Personal Assistant
+- **Scheduled tasks** — Autonomous background execution with cron scheduling
+- **Webhook triggers** — External events trigger agent actions with HMAC verification
+- **Tool approval flow** — Destructive operations require human confirmation via WebSocket
+- **Rate limiting** — Per-agent token budgets and request limits with 429 responses
+- **Tool sandboxing** — Filesystem restrictions, timeouts, output truncation
+- **Prompt injection defense** — Input/output sanitization
+- **Audit logging** — Comprehensive decision logging with 90-day retention
+
+#### Frontend
+- **Agent chat page** — Full chat interface with SSE streaming and tool indicators
+- **Agent management page** — 7-tab management (agents, files, MCP, schedule, webhooks, templates, audit)
+- **Markdown file editor** — Tabbed editor with preview for agent identity files
+- **CLI agent status** — Availability indicators for installed CLI tools
+- **Approval dialog** — Tool approval flow with countdown timer
+- **Usage dashboard** — Token usage stats and audit log viewer
+
+#### Other
+- **PWA support** — Installable, push notifications, responsive mobile UI
+- **Slash command autocomplete** — Floating menu with filtering and keyboard navigation
+- **Structured logging system** — structlog JSON, request tracing, rotating files
+- **Log viewer UI** — Filters, auto-refresh, WebSocket streaming, JSON export
+- **System status endpoint** — Version, uptime, request/error counts
+
+### Changed
+- **Default LLM provider** — Changed from OpenAI to Ollama (qwen2.5-coder:7b)
+- **Dependency versions** — Unpinned pydantic, numpy, httpx, qdrant-client for compatibility
+- **Frontend auth** — Added mutex lock on token refresh to prevent redirect storms
+
+### Fixed
+- **Circular import** — Lazy import of sandbox module in websocket_manager
+- **SSE parsing** — Multiline JSON payloads no longer break stream parsing
+- **Parallel tool execution** — return_exceptions=True prevents loop crashes
+- **Parallel tool UI state** — Track tool calls by ID instead of single string
+- **Database migration** — Added missing columns (name, metadata, messages_count)
+- **Tool registry** — Generic exception trap prevents unhandled errors
+- **Approval dialog** — Interval cleanup before unmount prevents race condition
+- **Rate limit response** — 429 returns retry_after_seconds in JSON body
+- **New Session button** — No longer auto-selects first session
+- **Webhook receiver** — Catches JSONDecodeError for invalid payloads
+
+### Infrastructure
+- 22 new backend modules in `backend/app/services/agent/`
+- 6 new API routers
+- 14 new test files
+- 289 tests passing (up from 256)
+- 6,111 lines added across 46 files
+- 3-round Gemini audit — all issues resolved
 
 ## [0.2.0] - 2026-04-04
 
-### Security
-- **Auth enforcement** — All CRUD routes now require JWT authentication (C1 fix)
-- **Rate limiting** — In-memory rate limiter: auth 5/min, write 30/min, read 60/min (C2 fix)
-- **Pagination** — Fixed list_objects to use proper Qdrant scroll API instead of fetching 10K records (C3 fix)
-- **JWT persistence** — JWT secret persisted to disk, survives container restarts (C4 fix)
-- **WebSocket auth** — WebSocket connections require JWT via query param or header
-- **Password reset token leak** — Reset tokens no longer returned in API response body (CRITICAL)
-- **JWT secret warning** — Logs SECURITY warning when JWT_SECRET_KEY not set in production
+### Added
+- **Full spec compliance** — 70/70 requirements verified
+- **Auth system** — JWT authentication with registration, login, refresh, password reset
+- **Rate limiting** — Per-endpoint limits (5/30/60 per minute)
+- **Pagination** — All list endpoints support limit/offset
+- **API versioning** — /api/v1/ prefix on all endpoints
+- **Structured request IDs** — X-Request-ID header on all responses
+- **Security hardening** — Auth middleware, input validation, error sanitization
 
 ### Fixed
-- Build: Excluded test files from TypeScript compilation
-- Build: Resolved duplicate `refreshToken` identifier in auth store
-- Build: Fixed Axios interceptor type narrowing
-- Build: Removed phantom `ypy`/`ypy-websocket` dependencies (never imported)
-- Build: Regenerated `package-lock.json` for CRDT dependencies
-- Fixed slowapi/Starlette compatibility by using vendor in-memory rate limiter
-- Resolved `utils.py` vs `utils/` package import conflict (S3 follow-up)
-- Updated all test URLs to `/api/v1/` prefix; accept 422 for validation errors
-
-### Changed
-- **API versioning** — All routes now under `/api/v1/` prefix; frontend baseURL updated (S5)
-- **Typed request bodies** — Pydantic models for tasks assign/status and agents chat endpoints (S1)
-- **Async I/O** — Heartbeat file writes and backup subprocess wrapped with `asyncio.to_thread()` (S2)
-- **Deduplicated `compute_file_hash`** — Consolidated to `app/utils.py` (S3)
-- **`.env.example` completed** — 32 env vars documented with types and descriptions (was 6) (S4)
-- **Block pagination** — Limit param default 100, max 500 (was 5000)
-- **Batch Qdrant operations** — Single upsert/delete calls instead of N+1 loops in block sync
-- **Data integrity** — try/except rollback around multi-store Qdrant+SQLite operations
-- **Concurrent embeddings** — `asyncio.gather` for parallel embedding generation in block sync
-- **Centralized constants** — New `app/constants.py` with collection name constants
-- **WebSocket error handling** — Separate WebSocketDisconnect (debug) from app exceptions (traceback)
-
-### Tests
-- Added password reset token leak regression test
-- Fixed test mock to handle `vector=None` in batch block upserts
-- All 255 tests passing
-
-### Infrastructure
-- Added `backend/app/vendor/slowapi_compat.py` — zero-dependency in-memory rate limiter
-- Added `backend/app/data/` to `.gitignore` for runtime data
-- Added JWT secret file persistence at `data/.jwt_secret`
-- Added `backend/app/constants.py` — centralized collection name constants
-
-### Removed
-- `slowapi` external dependency (replaced by vendor fallback)
+- **C1:** Auth middleware applied to all endpoints
+- **C2:** Rate limiting on auth endpoints (429 on 5th request)
+- **C3:** Pagination working with limit parameter
+- **C4:** JWT secret persisted to disk across restarts
 
 ## [0.1.0] - 2026-04-04
 
 ### Added
-- Initial MVP release with full-stack implementation
-- Object-based note system with block-level editing
-- Qdrant vector database integration (8 collections)
-- OpenClaw agent integration with two-path task routing
-- Real-time WebSocket updates
-- File watching and semantic indexing
-- Docker Compose setup for easy deployment
-- Semantic search across all content
-- Agent chat panel with persistent history
-- Task assignment with intelligent context gathering
-- Three backup strategies (snapshots, markdown, git)
-
-## [0.1.0] - 2026-04-04
-
-### Added
-- **Frontend**
-  - React + TypeScript + Vite application
-  - Slate.js-based outliner editor
-  - Block types: paragraph, heading, todo, bullet, numbered, quote, code
-  - Agent chat panel with WebSocket
-  - Task assignment dialog
-  - Search interface (semantic and exact)
-  - Settings management
-  - Responsive sidebar navigation
-  - shadcn/ui component library
-
-- **Backend**
-  - FastAPI application with async support
-  - Qdrant service for vector operations
-  - Context builder for agent tasks
-  - File processor for PDF, code, images
-  - OpenClaw gateway integration
-  - WebSocket manager for real-time updates
-  - Complete REST API for all operations
-
-- **Infrastructure**
-  - Docker Compose configuration
-  - Multi-stage Dockerfiles for frontend and backend
-  - Nginx reverse proxy configuration
-  - File watcher service
-  - GitHub Actions CI/CD pipelines
-  - Dependabot configuration
-  - Issue and PR templates
-
-- **Documentation**
-  - Comprehensive README
-  - MVP summary document
-  - Specification document
-  - Contributing guidelines
-  - This changelog
-
-### Security
-- Added security headers in nginx configuration
-- Configured CORS for API endpoints
-- Added input validation on all endpoints
-
-[Unreleased]: https://github.com/ghively/knowledge-os/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/ghively/knowledge-os/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/ghively/knowledge-os/releases/tag/v0.1.0
+- Initial release
+- Object-based knowledge management
+- Block-based outliner editor
+- Semantic search via Qdrant
+- File watching and indexing
+- WebSocket real-time updates
+- Agent definitions and chat panel
+- OpenClaw integration
+- Backup strategies (snapshots, markdown, git)

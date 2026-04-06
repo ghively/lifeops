@@ -1,238 +1,271 @@
 # Knowledge OS
 
-[![Tests](https://img.shields.io/badge/tests-256%20passing-brightgreen)](https://github.com/ghively/knowledge-os)
-[![Version](https://img.shields.io/badge/version-v0.2.0-blue)](https://github.com/ghively/knowledge-os)
+[![Tests](https://img.shields.io/badge/tests-289%20passing-brightgreen)](https://github.com/ghively/knowledge-os)
+[![Version](https://img.shields.io/badge/version-v0.3.0-blue)](https://github.com/ghively/knowledge-os/releases)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A **Capacities/Anytype-inspired knowledge management system** with **OpenClaw agent integration**. Built on **Qdrant** for semantic search and vector storage.
+A **knowledge management system** with a built-in AI agent runtime. Create objects, take notes, manage tasks, and chat with AI agents — all powered by local LLMs via Ollama.
 
 ## Features
 
-### Core Knowledge Management
-- **Object-based notes** - Everything is an object (page, task, person, book, meeting, agent, file, folder, image, code)
-- **Block-based outliner editor** - Logseq/Roam-style with unlimited nesting depth
-- **Block references & backlinks** - Link between any blocks, not just pages
-- **Semantic search** - Find content by meaning, not just keywords
-- **Real-time updates** - WebSocket-powered live collaboration
+### Knowledge Management
+- **Object-based notes** — Everything is an object (page, task, person, book, meeting, agent, file, folder, image, code)
+- **Block-based outliner editor** — Logseq/Roam-style with unlimited nesting depth, slash commands, and block references
+- **Semantic search** — Find content by meaning, not just keywords (Qdrant vector DB)
+- **Real-time updates** — WebSocket-powered live collaboration
+- **#tags and @mentions** — Auto-parsed from content, stored as structured properties
+- **File management** — Auto-index from watched folders, PDF/markdown/code/image support
 
-### Smart Content
-- **#tag parsing** - Tags are extracted from content and stored in `properties.tags`
-- **@mention parsing** - `@agent` mentions are validated against the agents collection, case-insensitive, and stored in `properties.mentions`
-- **Context token enforcement** - Agent task context is truncated to `MAX_CONTEXT_TOKENS` (default `4000`)
+### AI Agent System (v0.3.0)
+- **Markdown-first agent identity** — Define agents with AGENT.md, SOUL.md, MEMORY.md, TOOLS.md (like OpenClaw)
+- **Multi-provider LLM routing** — Ollama (default), OpenAI, Anthropic, Google — swap without changing agent code
+- **ReAct agent loop** — Agents think, use tools, observe, and loop until done
+- **CLI agent delegation** — Agents delegate to Codex, Claude Code, Kimi CLI, or Gemini CLI as tools
+- **MCP server support** — Connect external tool servers (Brave Search, filesystem, etc.)
+- **Auto-memory** — Daily logs, Qdrant semantic retrieval, periodic MEMORY.md curation
+- **Sub-agent spawning** — Parallel sub-agent execution with depth limits
+- **Streaming responses** — Real-time SSE streaming with tool call indicators
+- **Scheduled tasks** — Autonomous background execution (cron-like scheduling)
+- **Webhook triggers** — External events can trigger agent actions
+- **Agent templates** — Pre-built configs: Researcher, Coder, Analyst, Writer, Personal Assistant
+- **Tool approval flow** — Destructive operations require human confirmation
+- **Rate limiting & budgets** — Per-agent token limits and usage tracking
+- **Comprehensive audit logging** — Every agent decision logged and queryable
 
-### AI Agent Integration
-- **OpenClaw integration** - Direct API connection to your agent system
-- **Task assignment** - Assign tasks to agents with intelligent context gathering
-- **Two-path routing**:
-  - **Direct API**: urgent/high/medium priority tasks
-  - **HEARTBEAT.md**: low priority tasks for batch processing
-- **Agent chat panel** - Real-time conversation with agents
-- **Agent memory** - Persistent context across sessions
+### PWA Support
+- **Installable** — Add to home screen on mobile/desktop
+- **Push notifications** — Browser notification support
+- **Responsive design** — Mobile-friendly UI with touch controls
 
-### File Management
-- **File watching** - Auto-index files from watched folders
-- **Multi-format support** - PDF, markdown, code, images
-- **Semantic file search** - Find files by content meaning
-- **Metadata extraction** - Automatic content type detection
-
-### Backup & Export
-- **Qdrant snapshots** - Daily automatic vector database backups
-- **Markdown export** - Weekly export to markdown files
-- **Git sync** - Version control integration
+### Logging & Monitoring
+- **Structured JSON logging** — structlog with request tracing (X-Request-ID)
+- **Log viewer UI** — Filter, search, auto-refresh, WebSocket streaming, JSON export
+- **System status endpoint** — Version, uptime, request counts, WebSocket connections
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │   Frontend      │────▶│    Backend      │────▶│     Qdrant      │
-│  (React/Vite)   │     │   (FastAPI)     │     │  (Vector DB)    │
+│  React/Vite     │     │   FastAPI       │     │  Vector DB      │
 │   Port: 3010    │◄────│   Port: 8010    │◄────│   Port: 6335    │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-                               │
-                               ▼
-                        ┌─────────────────┐
-                        │  File Watcher   │
-                        │  (Optional)     │
-                        └─────────────────┘
+└─────────────────┘     └────────┬────────┘     └─────────────────┘
+                                │
+                    ┌───────────┼───────────┐
+                    ▼           ▼           ▼
+               ┌─────────┐ ┌────────┐ ┌──────────┐
+               │ Ollama  │ │ SQLite │ │  CLI     │
+               │ (LLM)   │ │ (DB)   │ │  Agents  │
+               │ :11434  │ │         │ │ Codex,   │
+               └─────────┘ └────────┘ │ Claude,  │
+                                     │ Kimi,    │
+                                     │ Gemini   │
+                                     └──────────┘
+```
+
+### Agent Runtime Components
+
+```
+Agent Orchestrator
+├── IdentityLoader — parse AGENT.md, SOUL.md, MEMORY.md, TOOLS.md
+├── LLMRouter — Ollama/OpenAI/Anthropic/Google with streaming
+├── ToolRegistry
+│   ├── Native tools (create_object, search, manage_tasks, etc.)
+│   ├── CLI Agent tools (codex, claude_code, kimi, gemini, opencode)
+│   └── MCP Client (external tool servers via stdio/HTTP)
+├── AgentLoop — ReAct pattern with sub-agent support
+├── MemoryManager — daily logs, Qdrant retrieval, MEMORY.md curation
+├── SessionManager — SQLite conversation persistence
+├── Scheduler — autonomous background task execution
+├── Webhooks — external event triggers
+└── AuditLogger — comprehensive decision logging
 ```
 
 ### Qdrant Collections
-1. `objects` - Main objects (pages, tasks, people, etc.)
-2. `blocks` - Block-level content for outliner
-3. `relations` - Object relationships and backlinks
-4. `files` - File metadata and content
-5. `images` - Image embeddings (CLIP)
-6. `code` - Code file embeddings
-7. `agent_memories` - Agent conversation history
-8. `chat_logs` - User-agent chat sessions
+1. `objects` — Main objects (pages, tasks, people, etc.)
+2. `blocks` — Block-level content for outliner
+3. `relations` — Object relationships and backlinks
+4. `files` — File metadata and content
+5. `images` — Image embeddings (CLIP)
+6. `code` — Code file embeddings
+7. `agent_memories` — Agent conversation history
+8. `chat_logs` — User-agent chat sessions
+9. `tags` — Tag index
+10. `sessions` — Session metadata
 
 ## Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
-- (Optional) OpenClaw gateway running
+- **Docker & Docker Compose**
+- **Ollama** (recommended) — [Install](https://ollama.ai)
 
-### 1. Clone and Configure
+### 1. Install Ollama and Pull a Model
+
+```bash
+# Install Ollama (macOS)
+brew install ollama
+
+# Pull the recommended model (7B parameter, great for tool calling)
+ollama pull qwen2.5-coder:7b
+
+# Verify it's running
+ollama list
+```
+
+**Recommended models for 8B budget:**
+| Model | Size | Best For |
+|-------|------|----------|
+| `qwen2.5-coder:7b` | 4.7GB | Primary agent (tool calling, code, reasoning) |
+| `deepseek-r1:8b` | 5.2GB | Deep reasoning tasks |
+| `llama3.1:8b` | 4.9GB | General-purpose backup |
+
+### 2. Clone and Start
 
 ```bash
 git clone https://github.com/ghively/knowledge-os.git
 cd knowledge-os
 
-# Copy environment template
-cp .env.example .env
-
-# Edit .env with your settings
-vim .env
-```
-
-### 2. Start Services
-
-```bash
 # Start all services
-cp .env.example .env
-docker-compose up --build -d
-
-# Or with file watcher
-docker-compose --profile with-watcher up --build -d
+docker compose up -d --build
 ```
 
 ### 3. Access the Application
 
-- **Frontend**: http://localhost:3010
+- **App**: http://localhost:3010
 - **Backend API**: http://localhost:8010
 - **Qdrant Dashboard**: http://localhost:6335/dashboard
+
+### 4. Register and Create an Agent
+
+1. Go to http://localhost:3010/register and create an account
+2. Navigate to **Agents** → **Create Agent** → pick a template
+3. Edit the agent's TOOLS.md to customize model, tools, and MCP servers
+4. Start chatting!
 
 ## Configuration
 
 ### Environment Variables
 
-Create a `.env` file:
-
 ```env
+# Ports
 FRONTEND_PORT=3010
 BACKEND_PORT=8010
 QDRANT_HTTP_PORT=6335
 QDRANT_GRPC_PORT=6336
+
+# LLM Provider (auto-configured for Ollama by default)
+# Override per-agent in TOOLS.md
+
+# OpenClaw Integration (optional)
 OPENCLAW_URL=http://host.docker.internal:18789
 OPENCLAW_TOKEN=
+
+# Embeddings
+EMBEDDING_MODEL=all-MiniLM-L6-v2
 ```
 
-### Watched Folders
+### Agent Configuration (TOOLS.md)
 
-Add folders to watch via Settings → Watched Folders:
-- `~/Documents` - Your documents
-- `~/Projects` - Code projects
-- Any other path accessible to Docker
+Each agent's LLM provider is configured in its TOOLS.md:
+
+```markdown
+## LLM Provider
+provider: ollama
+model: qwen2.5-coder:7b
+temperature: 0.2
+max_tokens: 2048
+
+## CLI Agents Available
+- codex: coding, git, file operations
+- gemini: analysis, research, documentation
+- kimi: research, web search, coding
+
+## MCP Servers
+- name: brave-search
+  transport: stdio
+  command: npx
+  args: ["-y", "@anthropic/mcp-server-brave-search"]
+  env:
+    BRAVE_API_KEY: sk-xxx
+```
 
 ## Security
 
-- **JWT authentication** - Required on all CRUD endpoints; search endpoints can be accessed without JWT when configured to allow optional auth
-- **Rate limiting** - Auth endpoints: `5/min`, write endpoints: `30/min`, read endpoints: `60/min`
-- **Password reset safety** - Password reset tokens are never returned in API responses
-- **Persistent JWT secret** - The JWT signing secret persists across container restarts
-- **Rate limit headers** - Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`
+- **JWT authentication** — Required on all CRUD endpoints
+- **Rate limiting** — Auth: 5/min, Write: 30/min, Read: 60/min, Per-agent limits
+- **Persistent JWT secret** — Survives container restarts
+- **Tool sandboxing** — Filesystem restrictions, timeouts, output truncation
+- **Prompt injection defense** — Input/output sanitization
+- **Tool approval flow** — Destructive operations require human confirmation
+- **HMAC webhooks** — Signature verification on incoming webhooks
+- **Audit logging** — Every agent decision logged
 
-## Usage
+## API Endpoints
 
-### Creating Notes
-1. Click "New Page" or use `/` command
-2. Use the outliner editor with `/` for block types
-3. Reference blocks with `((block-id))`
-4. Link objects with `[[object-title]]`
+### Authentication
+- `POST /api/v1/auth/register` — Create account
+- `POST /api/v1/auth/login` — Login → access_token + refresh_token
+- `POST /api/v1/auth/refresh` — Refresh token
+- `POST /api/v1/auth/logout` — Logout
 
-### Assigning Tasks to Agents
-1. Create a task object
-2. Click "Assign to Agent"
-3. Select agent and priority
-4. Add context objects if needed
-5. Submit
-
-### Chatting with Agents
-1. Click an agent in the sidebar
-2. Or go to Agents page and click chat
-3. Type messages and get real-time responses
-
-### Searching
-1. Use the search bar (Ctrl+K)
-2. Choose semantic or exact search
-3. Results ranked by relevance
-
-### API Endpoints
-
-> **JWT authentication is required on all CRUD endpoints.** Register/login to obtain a token, then include it as `Authorization: Bearer <token>`. Search endpoints support optional authentication.
-
-#### Authentication
-- `POST /api/v1/auth/register` - Create account (username, email, password, display_name)
-- `POST /api/v1/auth/login` - Login (email, password) → returns access_token + refresh_token
-- `POST /api/v1/auth/refresh` - Refresh access token
-- `POST /api/v1/auth/logout` - Logout (invalidate refresh token)
-- `POST /api/v1/auth/forgot-password` - Request password reset
-- `POST /api/v1/auth/reset-password` - Reset password with token
-
-#### Objects (requires auth)
-- `GET /api/v1/objects?limit=10&offset=0` - List objects (paginated)
-- `POST /api/v1/objects` - Create object
-- `GET /api/v1/objects/{id}` - Get object
-- `PUT /api/v1/objects/{id}` - Update object
-- `DELETE /api/v1/objects/{id}` - Delete object
+### Objects
+- `GET/POST /api/v1/objects` — List/Create
+- `GET/PUT/DELETE /api/v1/objects/{id}` — CRUD
 
 ### Blocks
-- `GET /api/v1/blocks/object/{object_id}` - Get blocks for object
-- `POST /api/v1/blocks` - Create block
-- `PUT /api/v1/blocks/{id}` - Update block
-- `POST /api/v1/blocks/batch-update` - Batch update blocks
+- `GET /api/v1/blocks/object/{object_id}` — Get blocks
+- `POST /api/v1/blocks` — Create block
+- `PUT /api/v1/blocks/{id}` — Update block
+- `POST /api/v1/blocks/batch-update` — Batch update
 
-### Tasks (requires auth)
-- `GET /api/v1/tasks` - List tasks
-- `POST /api/v1/tasks/{id}/assign` - Assign to agent
-- `POST /api/v1/tasks/{id}/status` - Update status
+### Tasks
+- `GET /api/v1/tasks` — List tasks
+- `POST /api/v1/tasks/{id}/assign` — Assign to agent
+- `POST /api/v1/tasks/{id}/status` — Update status
 
-### Agents (requires auth)
-- `GET /api/v1/agents` - List agents
-- `POST /api/v1/agents/{name}/chat` - Send message
-- `GET /api/v1/agents/{name}/chat` - Get chat history
+### Agent Runtime
+- `POST /api/v1/agents/runtime/chat` — Chat with agent (SSE stream)
+- `GET /api/v1/agents/runtime/cli-status` — CLI agent availability
+- `GET/POST/DELETE /api/v1/agents/runtime/sessions` — Session management
+- `GET/PUT /api/v1/agents/runtime/{id}/files/{name}` — Edit agent markdown files
+- `POST /api/v1/agents/runtime/{id}/curate-memory` — Trigger memory curation
+- `GET /api/v1/agents/runtime/templates` — List agent templates
+- `POST /api/v1/agents/runtime/create-from-template` — Create from template
+- `GET/POST/DELETE /api/v1/agents/runtime/schedule` — Scheduled tasks
+- `GET/POST/DELETE /api/v1/agents/runtime/webhooks` — Webhook management
+- `GET /api/v1/agents/runtime/{id}/audit` — Audit log
+- `GET /api/v1/agents/runtime/{id}/usage` — Token usage stats
+
+### MCP Server Management
+- `GET /api/v1/agents/runtime/mcp/servers` — List MCP servers
+- `POST /api/v1/agents/runtime/mcp/servers` — Add server
+- `DELETE /api/v1/agents/runtime/mcp/servers/{name}` — Remove server
+- `POST /api/v1/agents/runtime/mcp/servers/{name}/connect` — Connect
+- `POST /api/v1/agents/runtime/mcp/test` — Test connection
 
 ### Search (optional auth)
-- `GET /api/v1/search?q={query}` - Semantic search
-- `GET /api/v1/search/similar/{id}` - Find similar
+- `GET /api/v1/search?q={query}` — Semantic search
+- `GET /api/v1/search/similar/{id}` — Find similar
 
-### Files (requires auth)
-- `GET /api/v1/files` - List files
-- `POST /api/v1/files/{id}/reindex` - Reindex file
-
-### Settings (requires auth)
-- `GET /api/v1/settings` - Get settings
-- `PUT /api/v1/settings` - Update settings
-- `GET /api/v1/settings/watched-folders` - List watched folders
-- `POST /api/v1/settings/watched-folders` - Add folder
-- `DELETE /api/v1/settings/watched-folders/{id}` - Remove folder
-- `POST /api/v1/settings/backup` - Trigger backup/export
+### System
+- `GET /api/v1/system/status` — System health
+- `GET /api/v1/system/logs` — Structured logs
+- `GET /api/v1/settings` — Settings
+- `PUT /api/v1/settings` — Update settings
 
 ### WebSockets
-- `ws://localhost:8010/ws/system` - System updates
-- `ws://localhost:8010/ws/agents/{name}` - Agent-specific updates
+- `ws://localhost:8010/ws/system` — System updates
+- `ws://localhost:8010/ws/agents/{name}` — Agent-specific updates
 
 ## Development
 
-### Docker Compose Workflow
+### Docker Compose
 
 ```bash
-cp .env.example .env
-docker-compose up --build
-```
-
-### Common Commands
-
-```bash
-docker-compose up --build -d
-docker-compose down
-docker-compose logs -f backend
-docker-compose logs -f frontend
-```
-
-### With File Watcher
-
-```bash
-docker-compose --profile with-watcher up --build
+docker compose up -d --build      # Start all services
+docker compose down -v             # Stop and remove volumes (fresh start)
+docker compose logs -f backend     # Backend logs
+docker compose exec backend python -m pytest --tb=short  # Run tests
 ```
 
 ### Frontend Development
@@ -243,49 +276,24 @@ npm install
 VITE_API_URL=http://127.0.0.1:8010 npm run dev
 ```
 
-## Backup & Recovery
+## Tech Stack
 
-### Create Snapshot
-```bash
-curl -X POST http://localhost:6335/snapshots
-```
-
-### Restore from Snapshot
-```bash
-curl -X POST http://localhost:6335/snapshots/recover \
-  -H "Content-Type: application/json" \
-  -d '{"location": "/qdrant/snapshots/snapshot-file"}'
-```
-
-### Export to Markdown
-```bash
-curl -X POST http://localhost:8010/api/v1/settings/backup \
-  -H "Content-Type: application/json" \
-  -d '{"type": "markdown"}'
-```
-
-## Troubleshooting
-
-### Qdrant won't start
-- Check port 6335 is available or override it in `.env`
-- Verify Docker has sufficient memory (4GB+)
-
-### Files not indexing
-- Check folder paths in Settings
-- Verify Docker has access to host paths
-- Check file watcher logs: `docker-compose logs file-watcher`
-
-### Agent chat not working
-- Verify OpenClaw URL in Settings
-- Check backend logs: `docker-compose logs backend`
-
-### Search not finding results
-- Wait for indexing to complete
-- Check Qdrant collections: http://localhost:6335/dashboard
+| Component | Technology |
+|-----------|-----------|
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui |
+| Backend | FastAPI, Python 3.11+, Pydantic v2 |
+| Vector DB | Qdrant (8 collections) |
+| Database | SQLite (aiosqlite) |
+| LLM | Ollama (default), OpenAI, Anthropic, Google |
+| Agent Runtime | ReAct loop, MCP client, CLI delegation |
+| Auth | JWT + bcrypt, rate limiting via slowapi |
+| Logging | structlog (JSON), rotating file handler |
+| PWA | vite-plugin-pwa, Workbox |
+| Real-time | WebSocket + SSE streaming |
 
 ## License
 
-MIT License - See LICENSE file
+MIT License — See LICENSE file
 
 ## Contributing
 
@@ -294,8 +302,3 @@ MIT License - See LICENSE file
 3. Commit your changes
 4. Push to the branch
 5. Create a Pull Request
-
-## Support
-
-- GitHub Issues: [Report bugs](https://github.com/ghively/knowledge-os/issues)
-- Documentation: [Wiki](https://github.com/ghively/knowledge-os/wiki)
