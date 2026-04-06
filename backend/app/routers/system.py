@@ -19,24 +19,37 @@ logger = logging.getLogger(__name__)
 ALLOWED_LOG_LEVELS = {"debug", "info", "warning", "error", "critical"}
 
 
-def _read_log_entries() -> list[dict[str, Any]]:
+def _read_log_entries(limit: int = 500) -> list[dict[str, Any]]:
+    """Read the last *limit* log entries from the structured JSON log file."""
     log_path = Path(settings.log_file_path)
     if not log_path.exists():
         return []
 
+    # Read file in reverse to avoid loading entire file into memory
     entries: list[dict[str, Any]] = []
-    with log_path.open("r", encoding="utf-8") as log_file:
-        for line in log_file:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(entry, dict):
-                entries.append(entry)
-    return entries
+    try:
+        with log_path.open("rb") as fh:
+            # Seek near end of file (up to 2MB tail)
+            fh.seek(0, 2)
+            file_size = fh.tell()
+            read_size = min(file_size, 2 * 1024 * 1024)
+            fh.seek(file_size - read_size)
+            # Skip partial first line
+            fh.readline()
+            for raw_line in fh:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict):
+                    entries.append(entry)
+    except OSError:
+        return []
+    # Return only the most recent entries
+    return entries[-limit:]
 
 
 @router.get("/logs")
@@ -131,8 +144,10 @@ def _ingest_single_log(payload: dict[str, Any], current_user: dict | None = None
     if current_user:
         extra["user_id"] = current_user.get("id")
 
+    ALLOWED_LOG_LEVELS = {"debug", "info", "warning", "error", "critical"}
+    safe_level = level if level in ALLOWED_LOG_LEVELS else "error"
     frontend_logger = logging.getLogger(f"frontend.{component}")
-    log_method = getattr(frontend_logger, level, frontend_logger.error)
+    log_method = getattr(frontend_logger, safe_level, frontend_logger.error)
     log_method(message, extra=extra)
 
 

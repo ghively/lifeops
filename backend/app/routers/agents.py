@@ -147,7 +147,16 @@ async def chat_with_agent(name: str, request: Request, data: ChatRequest = Body(
         }],
     )
 
-    response = await openclaw_service.send_message(name, content, session_id=session_id)
+    try:
+        response = await openclaw_service.send_message(name, content, session_id=session_id)
+    except Exception:
+        # Clean up orphaned user message on failure
+        try:
+            await client.delete(collection_name="chat_logs", points_selector=[user_message_id])
+        except Exception:
+            pass
+        raise
+
     agent_content = response.get("content") or response.get("message") or ""
     agent_message_id = str(uuid.uuid4())
     agent_embedding = await embedding_service.embed_text(agent_content)
