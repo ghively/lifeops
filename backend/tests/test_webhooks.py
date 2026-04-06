@@ -53,8 +53,8 @@ async def test_incoming_webhook_returns_400_for_invalid_json(test_client, mock_s
     signature = AgentWebhookService().build_signature(row["secret"], body)
 
     with patch(
-        "app.routers.agent_webhooks.agent_runtime.handle_incoming_webhook",
-        AsyncMock(side_effect=json.JSONDecodeError("bad json", "{invalid", 1)),
+        "app.routers.agent_webhooks.get_agent_runtime",
+        return_value=AsyncMock(handle_incoming_webhook=AsyncMock(side_effect=json.JSONDecodeError("bad json", "{invalid", 1))),
     ):
         response = await client.post(
             "/api/v1/webhooks/incoming/incoming-hook",

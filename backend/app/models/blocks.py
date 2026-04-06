@@ -55,3 +55,31 @@ class BlockUpdate(BaseModel):
 class BlockListResponse(BaseModel):
     """Block list response"""
     blocks: List[Dict[str, Any]]
+
+
+class BatchBlockUpdateItem(BaseModel):
+    """Single block update in a batch request."""
+    id: str
+    order: Optional[int] = None
+    parent_id: Optional[str] = None
+    level: Optional[int] = None
+
+
+class BatchBlockUpdateRequest(BaseModel):
+    """Batch update block order and nesting."""
+    blocks: List[BatchBlockUpdateItem] = Field(default_factory=list)
+
+
+class SyncBlockItem(BaseModel):
+    """A single block in a sync request."""
+    id: Optional[str] = None
+    type: str = "paragraph"
+    content: str = ""
+    level: int = 0
+    properties: Optional[Dict[str, Any]] = None
+    parent_id: Optional[str] = None
+
+
+class SyncBlocksRequest(BaseModel):
+    """Replace an object's block set in a single request."""
+    blocks: List[SyncBlockItem] = Field(default_factory=list)

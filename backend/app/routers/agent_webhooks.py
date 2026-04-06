@@ -5,12 +5,14 @@ import json
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
+from app.middleware.rate_limit import limiter
 from app.services.agent.runtime import get_agent_runtime
 
 router = APIRouter()
 
 
 @router.post("/incoming/{hook_id}")
+@limiter.limit("30/minute")
 async def receive_runtime_webhook(
     hook_id: str,
     request: Request,

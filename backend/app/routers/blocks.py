@@ -10,7 +10,10 @@ from app.database.qdrant_client import qdrant_manager, QdrantManager
 from app.database.sqlite import sqlite_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
-from app.models.blocks import BlockCreate, BlockListResponse, BlockUpdate
+from app.models.blocks import (
+    BlockCreate, BlockListResponse, BlockUpdate,
+    BatchBlockUpdateRequest, SyncBlocksRequest,
+)
 from app.services.embedding import embedding_service
 from app.services.relations import relation_service
 from app.services.websocket_manager import WebSocketEvents, websocket_manager
@@ -188,16 +191,16 @@ async def update_block(
 
 @router.post("/batch-update")
 @write_rate_limit
-async def batch_update_blocks(data: dict, request: Request, current_user: dict = Depends(get_current_user)):
+async def batch_update_blocks(data: BatchBlockUpdateRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """Batch update block order and nesting."""
     client = qdrant_manager.get_async_client()
-    requested_updates = [block_data for block_data in data.get("blocks", []) if block_data.get("id")]
+    requested_updates = [block_data for block_data in data.blocks if block_data.id]
     if not requested_updates:
         return {"message": "Updated 0 blocks", "count": 0}
 
     existing_points = await QdrantManager.safe_retrieve(client, 
         collection_name=COLLECTION_BLOCKS,
-        ids=[block_data["id"] for block_data in requested_updates],
+        ids=[block_data.id for block_data in requested_updates],
         with_payload=True,
         with_vectors=True,
     )
@@ -205,17 +208,17 @@ async def batch_update_blocks(data: dict, request: Request, current_user: dict =
 
     points = []
     for block_data in requested_updates:
-        block_id = block_data["id"]
+        block_id = block_data.id
         existing = existing_map.get(block_id)
         if existing is None:
             continue
         payload = dict(existing.payload or {})
-        if "order" in block_data:
-            payload["order"] = block_data["order"]
-        if "parent_id" in block_data:
-            payload["parent_id"] = block_data["parent_id"]
-        if "level" in block_data:
-            payload["level"] = block_data["level"]
+        if block_data.order is not None:
+            payload["order"] = block_data.order
+        if block_data.parent_id is not None:
+            payload["parent_id"] = block_data.parent_id
+        if block_data.level is not None:
+            payload["level"] = block_data.level
         payload["updated_at"] = utc_now_iso()
         points.append({"id": block_id, "vector": _point_vector(existing), "payload": payload})
 
