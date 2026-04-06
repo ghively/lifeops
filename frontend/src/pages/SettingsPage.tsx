@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Settings, Folder, Database, Bot, Save, Plus, Trash2, Loader2, RefreshCw, Download, GitBranch, Plug, Cable, TerminalSquare, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/useToast'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -61,6 +62,7 @@ function parseKeyValueLines(value: string) {
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const [settings, setSettings] = useState<Settings>({
     openclaw_url: 'http://localhost:18789',
     openclaw_token: '',
@@ -114,6 +116,10 @@ export function SettingsPage() {
     mutationFn: (newSettings: Settings) => settingsApi.update(newSettings),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
+      toast({ title: 'Settings saved', description: 'Your changes have been applied.' })
+    },
+    onError: (err) => {
+      toast({ title: 'Save failed', description: err instanceof Error ? err.message : 'Could not save settings', variant: 'destructive' })
     },
   })
 
@@ -200,6 +206,7 @@ export function SettingsPage() {
   }
 
   const handleRemoveFolder = (folderId: string) => {
+    if (!window.confirm('Remove this watched folder? Files already indexed will not be removed.')) return
     removeFolderMutation.mutate(folderId)
   }
 

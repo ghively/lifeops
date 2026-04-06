@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useToast } from '@/hooks/useToast'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -43,6 +44,7 @@ export function OutlinerPage() {
   const [isEditing, setIsEditing] = useState(false)
   const [editedTitle, setEditedTitle] = useState('')
   const [pendingBlocks, setPendingBlocks] = useState<BlockElement[] | null>(null)
+  const { toast } = useToast()
   const hasLoadedBlocksRef = useRef(false)
 
   // Collaboration and auth
@@ -50,14 +52,14 @@ export function OutlinerPage() {
   const { connect: connectCollaboration, disconnect: disconnectCollaboration } = useCollaborationStore()
 
   // Fetch object data
-  const { data: objectData, isLoading: objectLoading } = useQuery({
+  const { data: objectData, isLoading: objectLoading, isError: objectError, refetch: refetchObject } = useQuery({
     queryKey: ['object', id],
     queryFn: () => id ? objectsApi.get(id) : Promise.resolve(null),
     enabled: !!id,
   })
 
   // Fetch blocks
-  const { data: blocksData, isLoading: blocksLoading } = useQuery({
+  const { data: blocksData, isLoading: blocksLoading, isError: blocksError, refetch: refetchBlocks } = useQuery({
     queryKey: ['blocks', id],
     queryFn: () => {
       if (!id) {
@@ -108,6 +110,9 @@ export function OutlinerPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['object', id] })
     },
+    onError: (err) => {
+      toast({ title: 'Save failed', description: err instanceof Error ? err.message : 'Could not update object', variant: 'destructive' })
+    },
   })
 
   const saveBlocksMutation = useMutation({
@@ -125,6 +130,9 @@ export function OutlinerPage() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['blocks', id] })
+    },
+    onError: (err) => {
+      toast({ title: 'Save failed', description: err instanceof Error ? err.message : 'Could not save blocks', variant: 'destructive' })
     },
   })
 
@@ -177,6 +185,15 @@ export function OutlinerPage() {
       properties: {},
     })
   }, [createObjectMutation])
+
+  if (objectError || blocksError) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8 text-center">
+        <p className="text-destructive mb-4">Failed to load document. Please try again.</p>
+        <Button onClick={() => { refetchObject(); refetchBlocks(); }}>Retry</Button>
+      </div>
+    )
+  }
 
   // Loading state
   if (objectLoading || blocksLoading) {
