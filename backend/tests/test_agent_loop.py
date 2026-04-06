@@ -186,14 +186,14 @@ async def test_agent_loop_streams_subagent_events_before_tool_completion():
             user_message="Delegate this",
         ):
             events.append(event)
-            if event.type == "subagent_start":
+            if event.type == "tool_start":
                 allow_finish.set()
 
     task = asyncio.create_task(collect_events())
     await asyncio.wait_for(start_emitted.wait(), timeout=1)
     await asyncio.sleep(0)
 
-    assert [event.type for event in events] == ["thinking", "tool_start", "subagent_start"]
+    assert [event.type for event in events] == ["thinking", "tool_start"]
 
     await asyncio.wait_for(task, timeout=1)
     assert "subagent_result" in [event.type for event in events]

@@ -26,8 +26,8 @@ class TestRelationsRouter:
         obj2 = await test_client.post("/api/v1/objects", json={
             "title": "Object 2", "content": "Content 2", "type": "note",
         })
-        assert obj1.status_code == 200
-        assert obj2.status_code == 200
+        assert obj1.status_code == 201
+        assert obj2.status_code == 201
 
         relation_data = {
             "source_id": obj1.json()["id"],

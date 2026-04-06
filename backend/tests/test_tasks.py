@@ -55,7 +55,7 @@ class TestTasksRouter:
             },
         }
         response = await test_client.post("/api/v1/objects", json=task_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert data["type"] == "task"
 
@@ -68,7 +68,7 @@ class TestTasksRouter:
             "type": "task",
             "properties": {"status": "todo", "priority": "low"},
         })
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
         task_id = create_resp.json()["id"]
 
         response = await test_client.get(f"/api/v1/tasks/{task_id}")
@@ -90,7 +90,7 @@ class TestTasksRouter:
             "type": "task",
             "properties": {"status": "todo", "priority": "high"},
         })
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
         task_id = create_resp.json()["id"]
 
         response = await test_client.post(f"/api/v1/tasks/{task_id}/assign", json={

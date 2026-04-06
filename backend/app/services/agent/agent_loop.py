@@ -58,22 +58,28 @@ class AgentLoop:
         user_id: Optional[str] = None,
         max_execution_time: float = 300.0,
     ) -> AsyncGenerator[StreamingEvent, None]:
+        inner = self._run_inner(
+            agent_id=agent_id,
+            session_id=session_id,
+            identity=identity,
+            memory_entries=memory_entries,
+            history=history,
+            user_message=user_message,
+            execution_depth=execution_depth,
+            shared_context=shared_context,
+            allowed_tools=allowed_tools,
+            user_id=user_id,
+        )
+        deadline = asyncio.get_running_loop().time() + max_execution_time
         try:
-            async for event in asyncio.wait_for(
-                self._run_inner(
-                    agent_id=agent_id,
-                    session_id=session_id,
-                    identity=identity,
-                    memory_entries=memory_entries,
-                    history=history,
-                    user_message=user_message,
-                    execution_depth=execution_depth,
-                    shared_context=shared_context,
-                    allowed_tools=allowed_tools,
-                    user_id=user_id,
-                ),
-                timeout=max_execution_time,
-            ):
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+                try:
+                    event = await asyncio.wait_for(inner.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    break
                 yield event
         except asyncio.TimeoutError:
             logger.error(
@@ -86,6 +92,8 @@ class AgentLoop:
                 agent_id=agent_id,
                 data={"error": f"Agent execution timed out after {max_execution_time}s"},
             )
+        finally:
+            await inner.aclose()
 
     async def _run_inner(
         self,

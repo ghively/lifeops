@@ -290,7 +290,7 @@ def mock_async_qdrant_client():
 @pytest.fixture
 def mock_sqlite_manager():
     """Mock SQLite database manager."""
-    from unittest.mock import AsyncMock
+    from datetime import datetime
 
     mock_manager = MagicMock()
 
@@ -304,18 +304,152 @@ def mock_sqlite_manager():
         "mcp_server_configs": {},
         "agent_scheduled_tasks": {},
         "agent_webhooks": {},
+        "users": {},
+        "refresh_tokens": {},
+        "password_reset_tokens": {},
     }
 
     async def mock_execute(query, params=None):
+        normalized_query = " ".join(query.lower().split())
+        params = params or ()
+
+        if "insert into users" in normalized_query:
+            user_id, email, username, display_name, hashed_password, is_active, created_at, updated_at = params
+            storage["users"][user_id] = {
+                "id": user_id,
+                "email": email,
+                "username": username,
+                "display_name": display_name,
+                "hashed_password": hashed_password,
+                "is_active": bool(is_active),
+                "created_at": created_at,
+                "updated_at": updated_at,
+            }
+            return MagicMock(lastrowid=1, rowcount=1)
+
+        if "insert into refresh_tokens" in normalized_query:
+            token_id, user_id, token_hash, expires_at, created_at = params
+            storage["refresh_tokens"][token_id] = {
+                "id": token_id,
+                "user_id": user_id,
+                "token_hash": token_hash,
+                "expires_at": expires_at,
+                "created_at": created_at,
+            }
+            return MagicMock(lastrowid=1, rowcount=1)
+
+        if "delete from refresh_tokens where id = ?" in normalized_query:
+            token_id = params[0]
+            deleted = 1 if storage["refresh_tokens"].pop(token_id, None) else 0
+            return MagicMock(lastrowid=1, rowcount=deleted)
+
+        if "insert into password_reset_tokens" in normalized_query:
+            token_id, user_id, token_hash, expires_at, created_at = params
+            storage["password_reset_tokens"][token_id] = {
+                "id": token_id,
+                "user_id": user_id,
+                "token_hash": token_hash,
+                "expires_at": expires_at,
+                "created_at": created_at,
+                "used": 0,
+            }
+            return MagicMock(lastrowid=1, rowcount=1)
+
+        if "update users set hashed_password = ?, updated_at = ? where id = ?" in normalized_query:
+            hashed_password, updated_at, user_id = params
+            user = storage["users"].get(user_id)
+            if not user:
+                return MagicMock(lastrowid=1, rowcount=0)
+            user["hashed_password"] = hashed_password
+            user["updated_at"] = updated_at
+            return MagicMock(lastrowid=1, rowcount=1)
+
+        if "update password_reset_tokens set used = 1 where id = ?" in normalized_query:
+            token_id = params[0]
+            token = storage["password_reset_tokens"].get(token_id)
+            if not token:
+                return MagicMock(lastrowid=1, rowcount=0)
+            token["used"] = 1
+            return MagicMock(lastrowid=1, rowcount=1)
+
         return MagicMock(lastrowid=1, rowcount=1)
 
     async def mock_executemany(query, params):
         return MagicMock(rowcount=len(params) if params else 0)
 
     async def mock_fetchone(query, params=None):
+        normalized_query = " ".join(query.lower().split())
+        params = params or ()
+
+        if "from users where email = ? or username = ?" in normalized_query:
+            email, username = params
+            for user in storage["users"].values():
+                if user["email"] == email or user["username"] == username:
+                    return {
+                        "id": user["id"],
+                        "email": user["email"],
+                        "username": user["username"],
+                    }
+            return None
+
+        if "select * from users where email = ? and is_active = 1" in normalized_query:
+            email = params[0]
+            for user in storage["users"].values():
+                if user["email"] == email and user["is_active"]:
+                    return dict(user)
+            return None
+
+        if "from users where id = ?" in normalized_query:
+            user_id = params[0]
+            user = storage["users"].get(user_id)
+            if not user:
+                return None
+            return {
+                "id": user["id"],
+                "email": user["email"],
+                "username": user["username"],
+                "display_name": user["display_name"],
+                "is_active": user["is_active"],
+                "created_at": user["created_at"],
+                "updated_at": user["updated_at"],
+            }
+
+        if "select id from users where email = ? and is_active = 1" in normalized_query:
+            email = params[0]
+            for user in storage["users"].values():
+                if user["email"] == email and user["is_active"]:
+                    return {"id": user["id"]}
+            return None
+
         return None
 
     async def mock_fetchall(query, params=None):
+        normalized_query = " ".join(query.lower().split())
+        params = params or ()
+
+        if "select * from refresh_tokens" in normalized_query:
+            user_id = params[0]
+            expires_after = params[1] if len(params) > 1 else None
+            rows = []
+            for token in storage["refresh_tokens"].values():
+                if token["user_id"] != user_id:
+                    continue
+                if expires_after is not None and token["expires_at"] <= expires_after:
+                    continue
+                rows.append(dict(token))
+            rows.sort(key=lambda token: token["created_at"], reverse=True)
+            return rows
+
+        if "from password_reset_tokens prt join users u on u.id = prt.user_id" in normalized_query:
+            not_expired_after = params[0] if params else datetime.utcnow()
+            rows = []
+            for token in storage["password_reset_tokens"].values():
+                user = storage["users"].get(token["user_id"])
+                if not user or token["used"] != 0 or token["expires_at"] <= not_expired_after:
+                    continue
+                rows.append({**dict(token), "user_id": user["id"], "email": user["email"]})
+            return rows
+
         return []
 
     async def mock_upsert_setting(key, value):
@@ -504,21 +638,12 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
     from app.main import app
     from app.database.qdrant_client import qdrant_manager
     from app.database.sqlite import sqlite_manager
-    from app.middleware.auth import get_current_user, get_optional_user
     from app.services.backup import backup_service
     from app.services.embedding import embedding_service as emb_svc
     from app.services.file_watcher import file_watcher_service
     from app.services.openclaw import openclaw_service
     from app.services.context_builder import context_builder
-
-    async def fake_current_user():
-        return {
-            "id": "test-user-id",
-            "email": "test@example.com",
-            "username": "test-user",
-            "display_name": "Test User",
-            "is_active": True,
-        }
+    from app.middleware.auth import get_current_user, get_optional_user
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client))
@@ -553,15 +678,20 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
         stack.enter_context(patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(backup_service, "run_backup", AsyncMock(return_value=None)))
-        app.dependency_overrides[get_current_user] = fake_current_user
-        app.dependency_overrides[get_optional_user] = fake_current_user
+        async def fake_current_user():
+            return {"id": "test-user-id", "email": "test@example.com", "username": "test-user", "display_name": "Test User", "is_active": True}
+
         limiter_enabled = getattr(app.state.limiter, "enabled", True)
         app.state.limiter.enabled = False
+        app.state.auth_enforcement_enabled = False
+        app.dependency_overrides[get_current_user] = fake_current_user
+        app.dependency_overrides[get_optional_user] = fake_current_user
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client, mock_async_qdrant_client._storage
         app.state.limiter.enabled = limiter_enabled
+        app.state.auth_enforcement_enabled = True
         app.dependency_overrides.clear()
 
 
@@ -571,21 +701,12 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
     from app.main import app
     from app.database.qdrant_client import qdrant_manager
     from app.database.sqlite import sqlite_manager
-    from app.middleware.auth import get_current_user, get_optional_user
     from app.services.backup import backup_service
     from app.services.embedding import embedding_service as emb_svc
     from app.services.file_watcher import file_watcher_service
     from app.services.openclaw import openclaw_service
     from app.services.context_builder import context_builder
-
-    async def fake_current_user():
-        return {
-            "id": "test-user-id",
-            "email": "test@example.com",
-            "username": "test-user",
-            "display_name": "Test User",
-            "is_active": True,
-        }
+    from app.middleware.auth import get_current_user, get_optional_user
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client))
@@ -620,16 +741,79 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
         stack.enter_context(patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(backup_service, "run_backup", AsyncMock(return_value=None)))
-        app.dependency_overrides[get_current_user] = fake_current_user
-        app.dependency_overrides[get_optional_user] = fake_current_user
+        async def fake_current_user():
+            return {"id": "test-user-id", "email": "test@example.com", "username": "test-user", "display_name": "Test User", "is_active": True}
+
         limiter_enabled = getattr(app.state.limiter, "enabled", True)
         app.state.limiter.enabled = False
+        app.state.auth_enforcement_enabled = False
+        app.dependency_overrides[get_current_user] = fake_current_user
+        app.dependency_overrides[get_optional_user] = fake_current_user
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
         app.state.limiter.enabled = limiter_enabled
+        app.state.auth_enforcement_enabled = True
         app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def authenticated_client(test_client):
+    """Create a test client authenticated via register and login."""
+    register_response = await test_client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "testuser",
+            "email": "test@example.com",
+            "password": "testpass123",
+        },
+    )
+    assert register_response.status_code == 201, register_response.text
+
+    login_response = await test_client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "test@example.com",
+            "password": "testpass123",
+        },
+    )
+    assert login_response.status_code == 200, login_response.text
+
+    token = login_response.json()["access_token"]
+    test_client.headers["Authorization"] = f"Bearer {token}"
+    yield test_client
+    test_client.headers.pop("Authorization", None)
+
+
+@pytest.fixture
+async def authenticated_client_with_store(test_client_with_store):
+    """Create an authenticated client while keeping access to the backing store."""
+    client, store = test_client_with_store
+
+    register_response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "testuser",
+            "email": "test@example.com",
+            "password": "testpass123",
+        },
+    )
+    assert register_response.status_code == 201, register_response.text
+
+    login_response = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "test@example.com",
+            "password": "testpass123",
+        },
+    )
+    assert login_response.status_code == 200, login_response.text
+
+    token = login_response.json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {token}"
+    yield client, store
+    client.headers.pop("Authorization", None)
 
 
 @pytest.fixture

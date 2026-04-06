@@ -21,9 +21,11 @@ def sanitize_content(text: str | None) -> str:
         "table", "thead", "tbody", "tr", "th", "td", "hr", "img", "span", "div",
         "sup", "sub", "del", "ins", "mark",
     })
-    allowed_attrs = frozenset({
-        "href", "title", "alt", "src", "class", "id", "style",
-    })
+    allowed_attrs = {
+        "*": ["class", "id", "style"],
+        "a": ["href", "title"],
+        "img": ["alt", "src"],
+    }
     return bleach.clean(
         text,
         tags=allowed_tags,

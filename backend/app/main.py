@@ -197,6 +197,10 @@ AUTH_WHITELIST = {
 @app.middleware("http")
 async def auth_enforcement_middleware(request: Request, call_next):
     """Require authentication on all /api/v1/* routes except whitelisted paths."""
+    # Skip enforcement when disabled (e.g. during tests)
+    _auth_val = getattr(app.state, "auth_enforcement_enabled", True)
+    if _auth_val is False:
+        return await call_next(request)
     path = request.url.path
     if path.startswith("/api/v1/") and path not in AUTH_WHITELIST:
         # Check if already has valid auth header

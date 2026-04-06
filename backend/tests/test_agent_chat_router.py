@@ -22,9 +22,12 @@ async def test_runtime_chat_returns_rate_limit_payload(test_client):
     )
 
     with patch(
-        "app.routers.agent_chat.agent_runtime.check_chat_rate_limits",
-        new_callable=AsyncMock,
-        side_effect=AgentRateLimitExceeded("Too many requests", snapshot, retry_after_seconds=12),
+        "app.routers.agent_chat.get_agent_runtime",
+        return_value=AsyncMock(
+            check_chat_rate_limits=AsyncMock(
+                side_effect=AgentRateLimitExceeded("Too many requests", snapshot, retry_after_seconds=12)
+            )
+        ),
     ):
         response = await test_client.post(
             "/api/v1/agents/runtime/chat",

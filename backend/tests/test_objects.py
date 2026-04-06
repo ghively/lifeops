@@ -27,7 +27,7 @@ class TestObjectsRouter:
             "content": "Test content",
             "type": "note",
         })
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
 
         response = await test_client.get("/api/v1/objects")
         assert response.status_code == 200
@@ -53,7 +53,7 @@ class TestObjectsRouter:
             "content": "Test content",
             "type": "note",
         })
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
         obj_id = create_resp.json()["id"]
 
         response = await test_client.get(f"/api/v1/objects/{obj_id}")
@@ -77,7 +77,7 @@ class TestObjectsRouter:
             "type": "note",
         }
         response = await test_client.post("/api/v1/objects", json=object_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert "id" in data
         assert data["title"] == object_data["title"]
@@ -97,7 +97,7 @@ class TestObjectsRouter:
             "content": "Original content",
             "type": "note",
         })
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
         obj_id = create_resp.json()["id"]
 
         update_data = {"title": "Updated Title", "content": "Updated content"}
@@ -120,7 +120,7 @@ class TestObjectsRouter:
             "content": "Will be deleted",
             "type": "note",
         })
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
         obj_id = create_resp.json()["id"]
 
         response = await test_client.delete(f"/api/v1/objects/{obj_id}")
@@ -152,7 +152,7 @@ class TestObjectsRouter:
             },
         }
         response = await test_client.post("/api/v1/objects", json=object_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert "properties" in data
         assert data["properties"]["tags"] == ["tag1", "tag2", "tag3"]
@@ -172,7 +172,7 @@ class TestObjectsRouter:
             "layout": "default",
         }
         response = await test_client.post("/api/v1/objects", json=object_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert data["title"] == object_data["title"]
         assert data["icon"] == object_data["icon"]
@@ -201,7 +201,7 @@ class TestObjectsRouter:
             "properties": {"tags": ["seed"]},
         })
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert data["properties"]["tags"] == ["seed", "alpha", "beta"]
         assert data["properties"]["mentions"] == ["researcher"]

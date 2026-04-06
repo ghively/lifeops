@@ -64,7 +64,7 @@ class TestSearchRouter:
             "content": "Test content for similarity",
             "type": "note",
         })
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
         obj_id = create_resp.json()["id"]
 
         response = await test_client.get(f"/api/v1/search/similar/{obj_id}")

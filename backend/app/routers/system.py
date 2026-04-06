@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.config import settings
 from app.middleware.auth import get_current_user, get_optional_user
@@ -16,6 +16,7 @@ from app.services.websocket_manager import websocket_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+ALLOWED_LOG_LEVELS = {"debug", "info", "warning", "error", "critical"}
 
 
 def _read_log_entries() -> list[dict[str, Any]]:
@@ -113,6 +114,9 @@ async def ingest_frontend_log(
 
 def _ingest_single_log(payload: dict[str, Any], current_user: dict | None = None):
     level = str(payload.get("level", "error")).lower()
+    if level not in ALLOWED_LOG_LEVELS:
+        raise HTTPException(status_code=400, detail="Invalid log level")
+
     component = str(payload.get("component") or "frontend")
     message = str(payload.get("message") or "frontend log")
 

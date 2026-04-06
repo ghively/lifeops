@@ -8,6 +8,8 @@ replicas should configure a shared backend (e.g. Redis) to ensure rate limits
 are enforced consistently across all instances.
 """
 
+from fastapi import Request
+
 from app.vendor.slowapi_compat import Limiter, get_remote_address
 
 

@@ -12,6 +12,14 @@ from app.services.agent.models import MemoryEntry
 from app.services.embedding import embedding_service
 from app.utils.time import utc_now_iso
 
+logger = logging.getLogger(__name__)
+
+
+class MemoryManager:
+    def __init__(self, agents_root, max_memory_tokens: int = 1200):
+        self.agents_root = Path(agents_root)
+        self.max_memory_tokens = max_memory_tokens
+
     @staticmethod
     def _estimate_tokens(text: str) -> int:
         """Rough token estimation using len//4. Consider using tiktoken for accuracy."""

@@ -204,7 +204,7 @@ async def get_object(object_id: str, request: Request, current_user: dict = Depe
     return payload
 
 
-@router.post("")
+@router.post("", status_code=201)
 @write_rate_limit
 async def create_object(obj: ObjectCreate, request: Request, current_user: dict = Depends(get_current_user)):
     """Create a new object."""

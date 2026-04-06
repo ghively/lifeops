@@ -39,6 +39,7 @@ services:
       - BACKUP_PATH=/app/backups
       - WATCHED_FOLDERS_PATH=/app/data/watched_folders.json
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEBUG=true
     volumes:
       - backend-data:/app/data
       - backend-logs:/app/data/logs
