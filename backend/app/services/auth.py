@@ -280,7 +280,7 @@ class AuthService:
 
         # In production, you would send an email here
         # For now, we'll log the token (for development/testing)
-        logger.info(f"Password reset token for {email}: {reset_token}")
+        logger.info(f"Password reset token generated for {email}")
 
         return reset_token
 
