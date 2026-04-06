@@ -44,6 +44,10 @@ class LLMRouter:
                 return await self._complete_once(messages, tools=tools, config=router_config)
             except Exception as exc:
                 last_error = exc
+                # Don't retry on auth or invalid-request errors
+                exc_name = type(exc).__name__
+                if exc_name in ("AuthenticationError", "PermissionDeniedError", "NotFoundError", "BadRequestError"):
+                    raise
                 logger.warning("LLM call failed on attempt %s: %s", attempt + 1, exc)
                 if attempt >= self.retries:
                     break

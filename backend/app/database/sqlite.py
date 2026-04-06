@@ -2,6 +2,7 @@
 import os
 import json
 import logging
+import threading
 from typing import Any, Iterable, Optional
 import aiosqlite
 
@@ -16,6 +17,7 @@ class SQLiteManager:
     def __init__(self):
         self.db_path: str = settings.database_url.replace("sqlite:///", "")
         self.connection: Optional[aiosqlite.Connection] = None
+        self._write_lock = threading.Lock()  # H14: Thread safety for writes
     
     async def initialize(self):
         """Initialize SQLite database"""
@@ -30,6 +32,10 @@ class SQLiteManager:
         
         # Enable foreign keys
         await self.connection.execute("PRAGMA foreign_keys = ON")
+        
+        # H12: Enable WAL mode for better concurrency and crash recovery
+        await self.connection.execute("PRAGMA journal_mode=WAL")
+
         self.connection.row_factory = aiosqlite.Row
         
         # Create tables
@@ -38,232 +44,237 @@ class SQLiteManager:
         logger.info(f"SQLite initialized: {self.db_path}")
     
     async def _create_tables(self):
-        """Create database tables"""
-        # Settings table
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        """Create database tables within a single transaction (H15)"""
+        await self.connection.execute("BEGIN")
+        try:
+            # Settings table
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Watched folders table
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS watched_folders (
+                    id TEXT PRIMARY KEY,
+                    path TEXT UNIQUE NOT NULL,
+                    recursive INTEGER DEFAULT 1,
+                    include_patterns TEXT DEFAULT '["*"]',
+                    exclude_patterns TEXT DEFAULT '[".git", "node_modules"]',
+                    enabled INTEGER DEFAULT 1,
+                    file_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS file_sync_status (
+                    file_path TEXT PRIMARY KEY,
+                    checksum TEXT,
+                    last_modified TIMESTAMP,
+                    index_status TEXT DEFAULT 'pending',
+                    error_message TEXT,
+                    object_id TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS backup_log (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    details TEXT,
+                    started_at TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS agent_sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT,
+                    agent_name TEXT NOT NULL,
+                    task_id TEXT,
+                    status TEXT DEFAULT 'active',
+                    title TEXT,
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ended_at TIMESTAMP,
+                    summary TEXT,
+                    message_count INTEGER DEFAULT 0,
+                    messages_count INTEGER DEFAULT 0,
+                    metadata TEXT
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS agent_messages (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    name TEXT,
+                    content TEXT NOT NULL,
+                    tool_calls TEXT,
+                    tool_results TEXT,
+                    tokens_in INTEGER,
+                    tokens_out INTEGER,
+                    created_at TIMESTAMP NOT NULL,
+                    metadata TEXT,
+                    FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS agent_audit_log (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    session_id TEXT,
+                    user_id TEXT,
+                    event_type TEXT NOT NULL,
+                    details_json TEXT DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS agent_token_usage (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    total_tokens INTEGER DEFAULT 0,
+                    total_requests INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(agent_id, user_id, date)
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS mcp_server_configs (
+                    name TEXT PRIMARY KEY,
+                    transport TEXT NOT NULL,
+                    command TEXT,
+                    args TEXT DEFAULT '[]',
+                    env TEXT DEFAULT '{}',
+                    url TEXT,
+                    headers TEXT DEFAULT '{}',
+                    timeout_seconds INTEGER DEFAULT 30,
+                    enabled INTEGER DEFAULT 1,
+                    auto_connect INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS agent_scheduled_tasks (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    cron_expression TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    config TEXT DEFAULT '{}',
+                    enabled INTEGER DEFAULT 1,
+                    last_run TIMESTAMP,
+                    next_run TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS agent_webhooks (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    url_path TEXT UNIQUE NOT NULL,
+                    secret TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    enabled INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            await self._ensure_columns(
+                "agent_sessions",
+                {
+                    "agent_id": "TEXT",
+                    "title": "TEXT",
+                    "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "message_count": "INTEGER DEFAULT 0",
+                    "messages_count": "INTEGER DEFAULT 0",
+                    "metadata": "TEXT",
+                },
             )
-        """)
-        
-        # Watched folders table
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS watched_folders (
-                id TEXT PRIMARY KEY,
-                path TEXT UNIQUE NOT NULL,
-                recursive INTEGER DEFAULT 1,
-                include_patterns TEXT DEFAULT '["*"]',
-                exclude_patterns TEXT DEFAULT '[".git", "node_modules"]',
-                enabled INTEGER DEFAULT 1,
-                file_count INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+            await self._ensure_columns(
+                "agent_messages",
+                {
+                    "name": "TEXT",
+                    "metadata": "TEXT",
+                },
             )
-        """)
 
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS file_sync_status (
-                file_path TEXT PRIMARY KEY,
-                checksum TEXT,
-                last_modified TIMESTAMP,
-                index_status TEXT DEFAULT 'pending',
-                error_message TEXT,
-                object_id TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            await self._ensure_columns(
+                "mcp_server_configs",
+                {
+                    "headers": "TEXT DEFAULT '{}'",
+                    "timeout_seconds": "INTEGER DEFAULT 30",
+                    "enabled": "INTEGER DEFAULT 1",
+                    "auto_connect": "INTEGER DEFAULT 1",
+                    "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                },
             )
-        """)
 
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS backup_log (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                details TEXT,
-                started_at TIMESTAMP,
-                completed_at TIMESTAMP
-            )
-        """)
+            # Users table
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    username TEXT UNIQUE NOT NULL,
+                    display_name TEXT,
+                    hashed_password TEXT NOT NULL,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS agent_sessions (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT,
-                agent_name TEXT NOT NULL,
-                task_id TEXT,
-                status TEXT DEFAULT 'active',
-                title TEXT,
-                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                ended_at TIMESTAMP,
-                summary TEXT,
-                message_count INTEGER DEFAULT 0,
-                messages_count INTEGER DEFAULT 0,
-                metadata TEXT
-            )
-        """)
+            # Refresh tokens table
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    token_hash TEXT UNIQUE NOT NULL,
+                    expires_at TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
 
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS agent_messages (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                name TEXT,
-                content TEXT NOT NULL,
-                tool_calls TEXT,
-                tool_results TEXT,
-                tokens_in INTEGER,
-                tokens_out INTEGER,
-                created_at TIMESTAMP NOT NULL,
-                metadata TEXT,
-                FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
-            )
-        """)
+            # Password reset tokens table
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    token_hash TEXT UNIQUE NOT NULL,
+                    expires_at TIMESTAMP NOT NULL,
+                    used INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
 
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS agent_audit_log (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                session_id TEXT,
-                user_id TEXT,
-                event_type TEXT NOT NULL,
-                details_json TEXT DEFAULT '{}',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS agent_token_usage (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                date TEXT NOT NULL,
-                total_tokens INTEGER DEFAULT 0,
-                total_requests INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(agent_id, user_id, date)
-            )
-        """)
-
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS mcp_server_configs (
-                name TEXT PRIMARY KEY,
-                transport TEXT NOT NULL,
-                command TEXT,
-                args TEXT DEFAULT '[]',
-                env TEXT DEFAULT '{}',
-                url TEXT,
-                headers TEXT DEFAULT '{}',
-                timeout_seconds INTEGER DEFAULT 30,
-                enabled INTEGER DEFAULT 1,
-                auto_connect INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS agent_scheduled_tasks (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                cron_expression TEXT NOT NULL,
-                task_type TEXT NOT NULL,
-                config TEXT DEFAULT '{}',
-                enabled INTEGER DEFAULT 1,
-                last_run TIMESTAMP,
-                next_run TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS agent_webhooks (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                url_path TEXT UNIQUE NOT NULL,
-                secret TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                enabled INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        await self._ensure_columns(
-            "agent_sessions",
-            {
-                "agent_id": "TEXT",
-                "title": "TEXT",
-                "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-                "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-                "message_count": "INTEGER DEFAULT 0",
-                "messages_count": "INTEGER DEFAULT 0",
-                "metadata": "TEXT",
-            },
-        )
-
-        await self._ensure_columns(
-            "agent_messages",
-            {
-                "name": "TEXT",
-                "metadata": "TEXT",
-            },
-        )
-
-        await self._ensure_columns(
-            "mcp_server_configs",
-            {
-                "headers": "TEXT DEFAULT '{}'",
-                "timeout_seconds": "INTEGER DEFAULT 30",
-                "enabled": "INTEGER DEFAULT 1",
-                "auto_connect": "INTEGER DEFAULT 1",
-                "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-                "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            },
-        )
-
-        # Users table
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                email TEXT UNIQUE NOT NULL,
-                username TEXT UNIQUE NOT NULL,
-                display_name TEXT,
-                hashed_password TEXT NOT NULL,
-                is_active INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Refresh tokens table
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS refresh_tokens (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                token_hash TEXT UNIQUE NOT NULL,
-                expires_at TIMESTAMP NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            )
-        """)
-
-        # Password reset tokens table
-        await self.connection.execute("""
-            CREATE TABLE IF NOT EXISTS password_reset_tokens (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                token_hash TEXT UNIQUE NOT NULL,
-                expires_at TIMESTAMP NOT NULL,
-                used INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            )
-        """)
-
-        await self.connection.commit()
+            await self.connection.commit()
+        except Exception:
+            await self.connection.execute("ROLLBACK")
+            raise
 
     async def _ensure_columns(self, table_name: str, columns: dict[str, str]):
         """Add missing columns for existing tables."""
@@ -277,22 +288,32 @@ class SQLiteManager:
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
             )
     
+    async def _get_connection(self):
+        """Create a fresh connection for each request (H13)."""
+        conn = await aiosqlite.connect(self.db_path)
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await conn.execute("PRAGMA journal_mode=WAL")
+        conn.row_factory = aiosqlite.Row
+        return conn
+
     async def execute(self, query: str, parameters: tuple = ()):
-        """Execute a query"""
+        """Execute a write query with thread safety (H14)."""
         if not self.connection:
             raise RuntimeError("Database not initialized")
         
-        async with self.connection.execute(query, parameters) as cursor:
-            await self.connection.commit()
-            return cursor
+        with self._write_lock:
+            async with self.connection.execute(query, parameters) as cursor:
+                await self.connection.commit()
+                return cursor
 
     async def executemany(self, query: str, parameters: Iterable[tuple]):
-        """Execute many rows for a query"""
+        """Execute many rows for a query with thread safety (H14)."""
         if not self.connection:
             raise RuntimeError("Database not initialized")
 
-        await self.connection.executemany(query, parameters)
-        await self.connection.commit()
+        with self._write_lock:
+            await self.connection.executemany(query, parameters)
+            await self.connection.commit()
     
     async def fetchone(self, query: str, parameters: tuple = ()):
         """Fetch a single row"""
