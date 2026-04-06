@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { filesApi, settingsApi, type FileItem } from '@/services/api'
 import { cn } from '@/lib/utils'
+import { QueryError } from '@/components/QueryError'
 
 const fileTypeIcons: Record<string, React.ElementType> = {
   'text/plain': FileText,
@@ -54,10 +55,9 @@ export function FilesPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'indexed' | 'processing' | 'pending' | 'error'>('all')
   const [addFolderOpen, setAddFolderOpen] = useState(false)
   const [newFolderPath, setNewFolderPath] = useState('')
+  const [reindexingFileId, setReindexingFileId] = useState<string | null>(null)
   const queryClient = useQueryClient()
-
-  // Fetch files
-  const { data: filesData, isLoading, error } = useQuery({
+  const { data: filesData, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['files'],
     queryFn: filesApi.list,
     refetchInterval: 30000, // Poll every 30 seconds
@@ -80,7 +80,11 @@ export function FilesPage() {
   const reindexMutation = useMutation({
     mutationFn: (fileId: string) => filesApi.reindex(fileId),
     onSuccess: () => {
+      setReindexingFileId(null)
       queryClient.invalidateQueries({ queryKey: ['files'] })
+    },
+    onError: () => {
+      setReindexingFileId(null)
     },
   })
 
@@ -101,7 +105,16 @@ export function FilesPage() {
 
   const handleReindex = (fileId: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    setReindexingFileId(fileId)
     reindexMutation.mutate(fileId)
+  }
+
+  if (isError) {
+    return (
+      <div className="flex items-center justify-center h-full p-8">
+        <QueryError message={error instanceof Error ? error.message : 'Failed to load files'} onRetry={() => refetch()} />
+      </div>
+    )
   }
 
   if (isLoading) {
@@ -222,9 +235,9 @@ export function FilesPage() {
                         size="icon"
                         className="self-end opacity-100 transition-opacity sm:self-auto sm:opacity-0 sm:group-hover:opacity-100"
                         onClick={(e) => handleReindex(file.id, e)}
-                        disabled={reindexMutation.isPending}
+                        disabled={reindexingFileId === file.id}
                       >
-                        <RefreshCw className={cn("h-4 w-4", reindexMutation.isPending && "animate-spin")} />
+                        <RefreshCw className={cn("h-4 w-4", reindexingFileId === file.id && "animate-spin")} />
                       </Button>
                     </div>
                   </div>

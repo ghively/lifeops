@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { QueryError } from '@/components/QueryError'
 
 const typeIcons: Record<string, typeof FileText> = {
   object: FileText,
@@ -33,7 +34,7 @@ export function SearchPage() {
   const [activeQuery, setActiveQuery] = useState(initialQuery)
   const [searchType, setSearchType] = useState<'semantic' | 'exact'>(initialType)
 
-  const { data: resultsData, isLoading, error } = useQuery({
+  const { data: resultsData, isLoading, error, refetch } = useQuery({
     queryKey: ['search', activeQuery, searchType],
     queryFn: () => {
       if (!activeQuery) {
@@ -155,9 +156,7 @@ export function SearchPage() {
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : error ? (
-            <div className="text-center py-12 text-red-500">
-              <p>Error searching. Please try again.</p>
-            </div>
+            <QueryError message={error instanceof Error ? error.message : 'Search failed'} onRetry={() => refetch()} />
           ) : results.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <p className="text-lg font-medium">No results found</p>

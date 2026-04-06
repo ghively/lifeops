@@ -16,6 +16,7 @@ interface AgentChatPanelProps {
 
 export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) {
   const [message, setMessage] = useState('')
+  const [sendError, setSendError] = useState<string | null>(null)
   const [sessionId] = useState(() => `ui-${Math.random().toString(36).slice(2, 10)}`)
   const scrollRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
@@ -50,6 +51,10 @@ export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['chat-history', agent?.name] })
       setMessage('')
+      setSendError(null)
+    },
+    onError: (err) => {
+      setSendError(err instanceof Error ? err.message : 'Failed to send message')
     },
   })
 
@@ -76,6 +81,7 @@ export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) 
 
   const handleSend = () => {
     if (!message.trim() || !agent) return
+    setSendError(null)
     sendMessageMutation.mutate(message)
   }
 
@@ -226,6 +232,11 @@ export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) 
 
       {/* Input Area */}
       <div className="p-4 border-t border-border bg-muted/50">
+        {sendError && (
+          <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+            {sendError}
+          </div>
+        )}
         <div className="flex gap-2">
           <Input
             value={message}

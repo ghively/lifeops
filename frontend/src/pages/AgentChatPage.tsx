@@ -33,6 +33,7 @@ export function AgentChatPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [message, setMessage] = useState('')
+  const [isSending, setIsSending] = useState(false)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null | undefined>(undefined)
   const [pendingApproval, setPendingApproval] = useState<AgentApprovalRequest | null>(null)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
@@ -84,6 +85,7 @@ export function AgentChatPage() {
     sessionId: selectedSessionId,
     initialMessages: sessionMessagesQuery.data?.messages || [],
   })
+  const isMessagesLoading = sessionMessagesQuery.isLoading
 
   useEffect(() => {
     if (!activeSessionId || activeSessionId === selectedSessionId) {
@@ -124,14 +126,28 @@ export function AgentChatPage() {
     [agentsQuery.data?.agents, decodedAgentId]
   )
 
+  if (agentsQuery.isError) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 text-center">
+        <p className="text-destructive mb-4">Failed to load agents.</p>
+        <Button onClick={() => agentsQuery.refetch()}>Retry</Button>
+      </div>
+    )
+  }
+
   const handleSubmit = async () => {
     const trimmed = message.trim()
-    if (!trimmed) {
+    if (!trimmed || isSending) {
       return
     }
 
     setMessage('')
-    await sendMessage(trimmed)
+    setIsSending(true)
+    try {
+      await sendMessage(trimmed)
+    } finally {
+      setIsSending(false)
+    }
     queryClient.invalidateQueries({ queryKey: ['runtime-agent-sessions', decodedAgentId] })
   }
 
@@ -202,7 +218,12 @@ export function AgentChatPage() {
             <CardDescription>{sessionsQuery.data?.sessions.length || 0} saved conversation threads.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {sessionsQuery.isLoading ? (
+            {sessionsQuery.isError ? (
+              <div className="text-sm text-red-500">
+                Failed to load sessions.
+                <button type="button" className="ml-2 underline" onClick={() => sessionsQuery.refetch()}>Retry</button>
+              </div>
+            ) : sessionsQuery.isLoading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Loading sessions...
@@ -262,7 +283,12 @@ export function AgentChatPage() {
           <CardContent className="flex min-h-0 flex-1 flex-col p-0">
             <ScrollArea ref={scrollerRef} className="min-h-0 flex-1 px-4 py-4 sm:px-6">
               <div className="space-y-4">
-                {messages.length === 0 ? (
+                {isMessagesLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <span className="ml-2 text-sm text-muted-foreground">Loading messages...</span>
+                  </div>
+                ) : messages.length === 0 ? (
                   <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                     Start a new conversation with {decodedAgentId || 'an agent'}.
                   </div>
@@ -335,10 +361,10 @@ export function AgentChatPage() {
                     }
                   }}
                   placeholder={decodedAgentId ? `Message ${decodedAgentId}...` : 'Select an agent to begin'}
-                  disabled={!decodedAgentId || isStreaming}
+                  disabled={!decodedAgentId || isStreaming || isSending}
                 />
-                <Button onClick={() => void handleSubmit()} disabled={!message.trim() || !decodedAgentId || isStreaming}>
-                  {isStreaming ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                <Button onClick={() => void handleSubmit()} disabled={!message.trim() || !decodedAgentId || isStreaming || isSending}>
+                  {isStreaming || isSending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                   Send
                 </Button>
               </div>

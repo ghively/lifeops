@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PanelLeft, Search, Settings, Bell, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Sidebar } from './Sidebar'
@@ -28,6 +28,7 @@ export function MainLayout({ children }: MainLayoutProps) {
     if (!isMobile) {
       setMobileSidebarOpen(false)
     }
+    return () => clearNotifTimer()
   }, [isMobile])
 
   const handleAgentClick = (agent: AgentItem) => {
@@ -42,24 +43,36 @@ export function MainLayout({ children }: MainLayoutProps) {
   }
 
   const [notifStatus, setNotifStatus] = useState<string | null>(null)
+  const notifTimerRef = useRef<ReturnType<typeof setTimeout>>()
+
+  const clearNotifTimer = () => {
+    if (notifTimerRef.current) {
+      clearTimeout(notifTimerRef.current)
+      notifTimerRef.current = undefined
+    }
+  }
 
   const handleNotificationsClick = async () => {
     if (!('Notification' in window)) {
       setNotifStatus('unsupported')
-      setTimeout(() => setNotifStatus(null), 3000)
+      clearNotifTimer()
+      notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
       return
     }
 
     if (Notification.permission === 'default') {
       const result = await Notification.requestPermission()
       setNotifStatus(result === 'granted' ? 'enabled' : 'denied')
-      setTimeout(() => setNotifStatus(null), 3000)
+      clearNotifTimer()
+      notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
     } else if (Notification.permission === 'granted') {
       setNotifStatus('already')
-      setTimeout(() => setNotifStatus(null), 3000)
+      clearNotifTimer()
+      notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
     } else {
       setNotifStatus('blocked')
-      setTimeout(() => setNotifStatus(null), 3000)
+      clearNotifTimer()
+      notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
     }
   }
 

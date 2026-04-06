@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { agentRuntimeApi, settingsApi, type MCPServerConfigInput, type MCPServerItem } from '@/services/api'
+import { QueryError } from '@/components/QueryError'
 
 interface WatchedFolder {
   id: string

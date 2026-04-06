@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { create } from 'zustand'
 import {
   collaborationService,
@@ -7,6 +8,23 @@ import {
   type SelectionData,
   type RemoteOperation,
 } from '@/services/collaboration'
+
+/**
+ * Hook that automatically disconnects from the collaboration service on unmount.
+ * Call this in any component that uses the collaboration store.
+ */
+export function useCollaborationCleanup() {
+  const disconnect = useCollaborationStore((s) => s.disconnect)
+  const activeObjectId = useCollaborationStore((s) => s.activeObjectId)
+
+  useEffect(() => {
+    return () => {
+      if (activeObjectId) {
+        disconnect()
+      }
+    }
+  }, [activeObjectId, disconnect])
+}
 
 // ---------------------------------------------------------------------------
 // Types

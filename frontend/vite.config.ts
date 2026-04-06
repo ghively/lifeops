@@ -129,6 +129,17 @@ export default defineConfig({
     // Disable minification when VITE_DEV_BUILD is set
     minify: process.env.VITE_DEV_BUILD ? false : 'esbuild',
     sourcemap: process.env.VITE_DEV_BUILD ? true : false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-slate': ['slate', 'slate-react', 'slate-history'],
+          'vendor-yjs': ['yjs', 'y-protocols', 'y-websocket', 'lib0'],
+          'vendor-ui': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-select', '@radix-ui/react-popover'],
+          'vendor-query': ['@tanstack/react-query', 'axios'],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

@@ -8,6 +8,7 @@ import { systemApi, type SystemLogEntry, type SystemStatus } from '@/services/ap
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { QueryError } from '@/components/QueryError'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
@@ -274,7 +275,9 @@ export function LogsPage() {
         </CardHeader>
 
         <CardContent className="min-h-0 flex-1 overflow-auto">
-          {backendLogsQuery.isLoading && !backendLogsQuery.data ? (
+          {backendLogsQuery.isError && !backendLogsQuery.data ? (
+            <QueryError message="Failed to load backend logs" onRetry={() => backendLogsQuery.refetch()} />
+          ) : backendLogsQuery.isLoading && !backendLogsQuery.data ? (
             <div className="flex h-40 items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>

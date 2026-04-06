@@ -1,6 +1,22 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
+const AUTH_REFRESH_PATH = '/api/v1/auth/refresh'
+
+// H69: BroadcastChannel for cross-tab logout coordination
+const logoutChannel = typeof BroadcastChannel !== 'undefined'
+  ? new BroadcastChannel('auth-logout')
+  : null
+
+if (logoutChannel) {
+  logoutChannel.addEventListener('message', (event) => {
+    if (event.data?.type === 'logout') {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('refresh_token')
+      window.location.href = '/login'
+    }
+  })
+}
 
 // Type definitions
 export interface ObjectItem {
@@ -399,6 +415,8 @@ export const api = axios.create({
   timeout: 30000,
 })
 
+// H71: Zustand store is the source of truth for auth tokens.
+// localStorage reads here are fallbacks for edge cases (e.g., before store initializes).
 function getAuthToken() {
   return localStorage.getItem('access_token')
 }
@@ -435,6 +453,26 @@ api.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 )
+
+// H67: Retry interceptor for idempotent GET requests with exponential backoff
+api.interceptors.response.use(undefined, async (error: unknown, retryCount = 0) => {
+  if (!axios.isAxiosError(error)) return Promise.reject(error)
+  const originalRequest = error.config as InternalAxiosRequestConfig & { _retryCount?: number }
+  if (!originalRequest) return Promise.reject(error)
+
+  const isIdempotent = originalRequest.method === 'get'
+  const isNetworkError = !error.response
+  const isRetryableStatus = error.response?.status != null && error.response.status >= 500 && error.response.status < 600
+
+  if (isIdempotent && (isNetworkError || isRetryableStatus) && retryCount < 3) {
+    const count = originalRequest._retryCount ?? retryCount
+    const delay = Math.min(1000 * Math.pow(2, count), 8000)
+    await new Promise((r) => setTimeout(r, delay))
+    originalRequest._retryCount = count + 1
+    return api(originalRequest)
+  }
+  return Promise.reject(error)
+})
 
 // Mutex to prevent multiple simultaneous token refresh attempts
 let isRefreshing = false
@@ -485,18 +523,19 @@ api.interceptors.response.use(
       try {
         const refreshToken = localStorage.getItem('refresh_token')
         if (!refreshToken) {
-          // No refresh token, clear state and redirect once
+          // No refresh token, clear state and redirect once (H69: broadcast logout)
           localStorage.removeItem('access_token')
           localStorage.removeItem('refresh_token')
           isRefreshing = false
           processQueue(error, null)
+          logoutChannel?.postMessage({ type: 'logout' })
           window.location.href = '/login'
           return Promise.reject(error)
         }
 
-        // Try to refresh token
+        // Try to refresh token (H68: use constant)
         const response = await axios.post<AuthTokens>(
-          `${API_BASE_URL}/api/v1/auth/refresh`,
+          `${API_BASE_URL}${AUTH_REFRESH_PATH}`,
           { refresh_token: refreshToken },
           { headers: { 'Content-Type': 'application/json' } }
         )
@@ -518,9 +557,10 @@ api.interceptors.response.use(
       } catch (refreshError) {
         isRefreshing = false
         processQueue(refreshError, null)
-        // Refresh failed, clear tokens and redirect once
+        // Refresh failed, clear tokens and redirect once (H69: broadcast logout)
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
+        logoutChannel?.postMessage({ type: 'logout' })
         window.location.href = '/login'
         return Promise.reject(refreshError)
       }

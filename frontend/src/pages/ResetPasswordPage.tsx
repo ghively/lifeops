@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { Mail, Lock, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-react'
 import { authApi } from '@/services/api'
@@ -15,6 +15,7 @@ export function ResetPasswordPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const [devToken, setDevToken] = useState('')
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout>>()
 
   // Request step
   const [email, setEmail] = useState('')
@@ -68,7 +69,7 @@ export function ResetPasswordPage() {
       setStep('success')
 
       // Redirect to login after 3 seconds
-      setTimeout(() => {
+      redirectTimerRef.current = setTimeout(() => {
         navigate('/login')
       }, 3000)
     } catch (err: unknown) {

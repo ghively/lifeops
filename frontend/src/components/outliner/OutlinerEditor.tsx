@@ -322,7 +322,7 @@ export function OutlinerEditor({
   const editor = useMemo(() => withHistory(withReact(createEditor())), [])
   const editorContainerRef = useRef<HTMLDivElement | null>(null)
   const slashMenuRef = useRef<HTMLDivElement | null>(null)
-  const initialSignature = useMemo(() => JSON.stringify(initialBlocks), [initialBlocks])
+  const prevObjectIdRef = useRef(objectId)
   const [value, setValue] = useState<Descendant[]>(() => {
     if (initialBlocks.length === 0) {
       return [createEmptyBlock()]
@@ -336,17 +336,10 @@ export function OutlinerEditor({
     }))
   })
 
-  // Collaboration hooks
-  const sendCursor = useCollaborationStore((s) => s.sendCursor)
-  const collabStatus = useCollaborationStore((s) => s.status)
-  const { decorate: collabDecorate } = useCollaborativeCursors(editor, enableCollaboration ? objectId : undefined)
-  const [slashMenuOpen, setSlashMenuOpen] = useState(false)
-  const [slashQuery, setSlashQuery] = useState('')
-  const [slashTargetPath, setSlashTargetPath] = useState<number[] | null>(null)
-  const [slashPosition, setSlashPosition] = useState({ top: 0, left: 0 })
-  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
-
   useEffect(() => {
+    if (prevObjectIdRef.current === objectId) return
+    prevObjectIdRef.current = objectId
+
     if (initialBlocks.length === 0) {
       setValue([createEmptyBlock()])
       return
@@ -358,7 +351,17 @@ export function OutlinerEditor({
       checked: block.checked,
       children: block.children,
     })))
-  }, [initialBlocks, initialSignature])
+  }, [objectId, initialBlocks])
+
+  // Collaboration hooks
+  const sendCursor = useCollaborationStore((s) => s.sendCursor)
+  const collabStatus = useCollaborationStore((s) => s.status)
+  const { decorate: collabDecorate } = useCollaborativeCursors(editor, enableCollaboration ? objectId : undefined)
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false)
+  const [slashQuery, setSlashQuery] = useState('')
+  const [slashTargetPath, setSlashTargetPath] = useState<number[] | null>(null)
+  const [slashPosition, setSlashPosition] = useState({ top: 0, left: 0 })
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
 
   const closeSlashMenu = useCallback(() => {
     setSlashMenuOpen(false)

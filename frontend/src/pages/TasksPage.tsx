@@ -7,6 +7,7 @@ import { tasksApi, objectsApi, type TaskItem } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { useNavigate } from 'react-router-dom'
+import { QueryError } from '@/components/QueryError'
 
 const priorityColors = {
   urgent: 'border-l-red-500 bg-red-50/50',
@@ -48,7 +49,7 @@ export function TasksPage() {
   const [newTaskTitle, setNewTaskTitle] = useState('')
 
   // Fetch tasks (objects with type='task')
-  const { data: tasksData, isLoading } = useQuery({
+  const { data: tasksData, isLoading, isError, refetch } = useQuery({
     queryKey: ['tasks', { statusFilter, priorityFilter }],
     queryFn: () => tasksApi.list({
       status: statusFilter === 'all' ? undefined : statusFilter,
@@ -108,6 +109,14 @@ export function TasksPage() {
     ['medium', byPriority.medium || 0],
     ['low', byPriority.low || 0],
   ] as const), [byPriority, tasks.length])
+
+  if (isError) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
+        <QueryError message="Failed to load tasks" onRetry={() => refetch()} />
+      </div>
+    )
+  }
 
   if (isLoading) {
     return (

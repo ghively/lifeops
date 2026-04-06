@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { agentRuntimeApi, agentsApi, type AgentFile } from '@/services/api'
+import { QueryError } from '@/components/QueryError'
 
 const DEFAULT_FILE: AgentFileTab = 'AGENT.md'
 type DetailTab = 'identity' | 'schedule' | 'webhooks'
@@ -32,6 +33,7 @@ export function AgentsPage() {
   const [schedulePrompt, setSchedulePrompt] = useState('')
   const [webhookName, setWebhookName] = useState('')
   const [webhookEventType, setWebhookEventType] = useState('external.trigger')
+  const [cronError, setCronError] = useState('')
 
   const runtimeAgentsQuery = useQuery({
     queryKey: ['runtime-agents'],
@@ -186,6 +188,8 @@ export function AgentsPage() {
 
   const isDirty = draftContent !== savedContent
 
+  const CRON_REGEX = /^(every\s+\d+\s+(seconds?|minutes?|hours?|days?|weeks?|months?)|(@(annually|yearly|monthly|weekly|daily|hourly|reboot))|(\S+\s+\S+\s+\S+\s+\S+\s+\S+))$/i
+
   const handleCreateAgent = () => {
     const trimmed = newAgentId.trim()
     if (!trimmed) {
@@ -261,7 +265,9 @@ export function AgentsPage() {
               <CardDescription>{runtimeAgentsQuery.data?.agents.length || 0} agent identities on disk.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {runtimeAgentsQuery.isLoading ? (
+              {runtimeAgentsQuery.isError ? (
+                <QueryError message={runtimeAgentsQuery.error instanceof Error ? runtimeAgentsQuery.error.message : 'Failed to load agents'} onRetry={() => runtimeAgentsQuery.refetch()} />
+              ) : runtimeAgentsQuery.isLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Loading agents...
@@ -439,9 +445,17 @@ export function AgentsPage() {
                   </Select>
                   <Input value={schedulePrompt} onChange={(event) => setSchedulePrompt(event.target.value)} placeholder="Optional prompt" />
                 </div>
-                <Button onClick={() => createScheduledTaskMutation.mutate()} disabled={!selectedAgentId || createScheduledTaskMutation.isPending}>
+                <Button onClick={() => {
+                  if (!CRON_REGEX.test(scheduleCron.trim())) {
+                    setCronError('Invalid cron expression. Use "every N days", a 5-field cron, or a predefined schedule.')
+                    return
+                  }
+                  setCronError('')
+                  createScheduledTaskMutation.mutate()
+                }} disabled={!selectedAgentId || createScheduledTaskMutation.isPending}>
                   Add Scheduled Task
                 </Button>
+                {cronError && <p className="text-sm text-destructive">{cronError}</p>}
                 <div className="space-y-3">
                   {(scheduledTasksQuery.data?.tasks || []).map((task) => (
                     <div key={task.id} className="rounded-lg border p-3">
