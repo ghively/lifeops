@@ -15,6 +15,7 @@ from app.models.objects import ObjectCreate, ObjectListResponse, ObjectUpdate
 from app.services.embedding import embedding_service
 from app.services.relations import relation_service
 from app.services.websocket_manager import WebSocketEvents, websocket_manager
+from app.utils.sanitize import sanitize_content
 from app.utils.time import utc_now_iso
 
 router = APIRouter()
@@ -209,7 +210,7 @@ async def create_object(obj: ObjectCreate, request: Request, current_user: dict 
     """Create a new object."""
     client = qdrant_manager.get_async_client()
     object_id = str(uuid.uuid4())
-    content = obj.content or obj.title
+    content = sanitize_content(obj.content or obj.title)
     embedding = await embedding_service.embed_text(content)
 
     properties = _merge_properties({}, obj.properties.model_dump(exclude_none=True) if obj.properties else {})
@@ -269,7 +270,7 @@ async def update_object(
         payload["icon"] = update.icon
         changes.append("icon")
     if update.content is not None:
-        payload["content"] = update.content
+        payload["content"] = sanitize_content(update.content)
         changes.append("content")
     if update.layout is not None:
         payload["layout"] = update.layout

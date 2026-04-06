@@ -23,7 +23,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 RUN chown nginx:nginx /etc/nginx/conf.d/default.conf
 
-# Run as non-root user
+# Run as non-root user (H54: non-root container hardened)
 RUN chown -R nginx:nginx /usr/share/nginx/html && \
     chown -R nginx:nginx /var/cache/nginx && \
     chown -R nginx:nginx /var/log/nginx && \
