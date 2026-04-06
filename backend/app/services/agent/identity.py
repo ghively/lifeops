@@ -104,8 +104,12 @@ class IdentityLoader:
         (self.ensure_agent(agent_id) / name).write_text(content, encoding="utf-8")
         self._cache.pop(agent_id, None)
 
-    def load(self, agent_id: str) -> AgentIdentity:
-        agent_dir = self.ensure_agent(agent_id)
+    def load(self, agent_id: str, *, create_if_missing: bool = False) -> AgentIdentity:
+        agent_dir = self.agent_dir(agent_id)
+        if not agent_dir.exists():
+            if not create_if_missing:
+                raise FileNotFoundError(f"Agent '{agent_id}' does not exist at {agent_dir}")
+            agent_dir = self.ensure_agent(agent_id)
         file_mtimes = self._file_mtimes(agent_dir)
         cached = self._cache.get(agent_id)
         if cached and cached.file_mtimes == file_mtimes:
@@ -234,14 +238,14 @@ class IdentityLoader:
         provider_blob = tool_sections.get("llm provider", "")
         parsed = self._parse_frontmatter(provider_blob.replace("\n", "\n"))
         from app.config import settings
-        model = tools_meta.get("model") or parsed.get("model") or agent_meta.get("model") or settings.llm_model
+        model = tools_meta.get("model") or parsed.get("model") or agent_meta.get("model") or getattr(settings, 'llm_model', 'qwen2.5-coder:7b')
         return LLMProviderConfig(
-            provider=str(tools_meta.get("provider") or parsed.get("provider") or settings.llm_provider),
+            provider=str(tools_meta.get("provider") or parsed.get("provider") or getattr(settings, 'llm_provider', 'ollama')),
             base_url=tools_meta.get("base_url") or parsed.get("base_url"),
             api_key=tools_meta.get("api_key") or parsed.get("api_key"),
             model=str(model),
-            temperature=float(tools_meta.get("temperature") or parsed.get("temperature") or settings.llm_temperature),
-            max_tokens=int(tools_meta.get("max_tokens") or parsed.get("max_tokens") or settings.llm_max_tokens),
+            temperature=float(tools_meta.get("temperature") or parsed.get("temperature") or getattr(settings, 'llm_temperature', 0.2)),
+            max_tokens=int(tools_meta.get("max_tokens") or parsed.get("max_tokens") or getattr(settings, 'llm_max_tokens', 2048)),
             fallback_model=tools_meta.get("fallback") or parsed.get("fallback"),
         )
 
