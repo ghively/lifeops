@@ -137,6 +137,9 @@ class AgentScheduler:
         state = self._states.get(task_id)
         if not state:
             return
+        if task_id in self._running_jobs and not self._running_jobs[task_id].done():
+            logger.warning("Skipping overlapping job for task %s — previous run still active", task_id)
+            return
         self._running_jobs[task_id] = asyncio.create_task(self._execute_task(state.task))
 
     def _enqueue_job_if_due(self, task_id: str):
