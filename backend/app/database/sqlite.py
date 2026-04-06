@@ -276,6 +276,24 @@ class SQLiteManager:
             await self.connection.execute("ROLLBACK")
             raise
 
+        # H17: Create indexes on frequently queried columns
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_settings_key ON settings(key)",
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+            "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
+            "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_sessions_agent_id ON agent_sessions(agent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_messages_session_id ON agent_messages(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_scheduled_tasks_agent_id ON agent_scheduled_tasks(agent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_audit_log_timestamp ON agent_audit_log(timestamp)",
+        ]
+        for idx_sql in indexes:
+            try:
+                await self.connection.execute(idx_sql)
+            except Exception:
+                pass  # Index may already exist or table may not exist yet
+        await self.connection.commit()
+
     async def _ensure_columns(self, table_name: str, columns: dict[str, str]):
         """Add missing columns for existing tables."""
         async with self.connection.execute(f"PRAGMA table_info({table_name})") as cursor:
@@ -561,6 +579,7 @@ class SQLiteManager:
         )
 
     async def list_agent_audit_events(self, agent_id: str, page: int = 1, page_size: int = 50):
+        page_size = max(1, min(page_size, 500))  # Clamp to [1, 500]
         offset = max(page - 1, 0) * page_size
         rows = await self.fetchall(
             """
