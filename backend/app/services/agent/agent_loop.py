@@ -1,11 +1,11 @@
 """ReAct-style agent loop."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import asyncio
 from math import floor
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Union
 
 from app.services.agent.audit import AgentAuditLogger
 from app.services.agent.sandbox import ToolApprovalRequired, tool_approval_manager
@@ -114,8 +114,9 @@ class AgentLoop:
                         data={"arguments": arguments, "tool_call_id": tool_call.get("id")},
                     )
 
-                results = await asyncio.gather(
-                    *[
+                event_queue: asyncio.Queue[StreamingEvent] = asyncio.Queue()
+                result_tasks = [
+                    asyncio.create_task(
                         self._execute_tool_call(
                             agent_id=agent_id,
                             session_id=session_id,
@@ -126,17 +127,46 @@ class AgentLoop:
                             tool_name=tool_name,
                             arguments=arguments,
                             user_id=user_id,
+                            emit_event=event_queue.put,
                         )
-                        for tool_call, tool_name, arguments in parsed_calls
-                    ],
-                    return_exceptions=True,
-                )
-                normalized_results = []
-                for (tool_call, tool_name, arguments), raw_result in zip(parsed_calls, results):
-                    if isinstance(raw_result, Exception):
-                        normalized_results.append((tool_call, tool_name, arguments, self._tool_result_from_exception(tool_name or "tool", raw_result), []))
-                        continue
-                    normalized_results.append(raw_result)
+                    )
+                    for tool_call, tool_name, arguments in parsed_calls
+                ]
+                task_to_index = {task: index for index, task in enumerate(result_tasks)}
+                normalized_results = [None] * len(parsed_calls)
+
+                while task_to_index:
+                    queue_task = asyncio.create_task(event_queue.get())
+                    done, _pending = await asyncio.wait(
+                        set(task_to_index) | {queue_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+
+                    if queue_task in done:
+                        yield queue_task.result()
+                    else:
+                        queue_task.cancel()
+                        try:
+                            await queue_task
+                        except asyncio.CancelledError:
+                            pass
+
+                    for completed_task in (task for task in done if task is not queue_task):
+                        index = task_to_index.pop(completed_task)
+                        tool_call, tool_name, arguments = parsed_calls[index]
+                        try:
+                            normalized_results[index] = completed_task.result()
+                        except Exception as exc:
+                            normalized_results[index] = (
+                                tool_call,
+                                tool_name,
+                                arguments,
+                                self._tool_result_from_exception(tool_name or "tool", exc),
+                                [],
+                            )
+
+                while not event_queue.empty():
+                    yield event_queue.get_nowait()
 
                 for tool_call, tool_name, _arguments, result, emitted_events in normalized_results:
                     for event in emitted_events:
@@ -292,6 +322,7 @@ class AgentLoop:
         tool_name: str,
         arguments: Dict[str, Any],
         user_id: Optional[str],
+        emit_event: Optional[Callable[[StreamingEvent], Awaitable[None]]] = None,
     ):
         emitted_events: List[StreamingEvent] = []
         try:
@@ -303,11 +334,8 @@ class AgentLoop:
                     session_id=session_id,
                     arguments=arguments,
                     execution_depth=execution_depth,
-                    emit_event=lambda event: event,
+                    emit_event=emit_event,
                 )
-                if isinstance(result, tuple):
-                    result, subagent_events = result
-                    emitted_events.extend(subagent_events)
             else:
                 result = await self.tool_registry.execute(
                     tool_name,
@@ -365,7 +393,7 @@ class AgentLoop:
         session_id: str,
         arguments: Dict[str, Any],
         execution_depth: int,
-        emit_event=None,
+        emit_event: Optional[Callable[[StreamingEvent], Awaitable[None]]] = None,
     ):
         if execution_depth >= 1:
             return ToolResult(tool_name="spawn_subagents", success=False, error="Sub-agent depth limit reached", content="")
@@ -373,12 +401,20 @@ class AgentLoop:
             return ToolResult(tool_name="spawn_subagents", success=False, error="Sub-agent runner is unavailable", content="")
 
         tasks = [SubAgentTask(**item) for item in (arguments.get("tasks") or [])]
-        subagent_events: List[StreamingEvent] = []
         if not tasks:
             return ToolResult(tool_name="spawn_subagents", success=False, error="No sub-agent tasks provided", content="")
 
+        event_queue: asyncio.Queue[Union[StreamingEvent, object]] = asyncio.Queue()
+        sentinel = object()
+
+        async def publish_event(event: StreamingEvent) -> None:
+            if emit_event is not None:
+                await emit_event(event)
+                return
+            await event_queue.put(event)
+
         async def run_task(task: SubAgentTask):
-            subagent_events.append(
+            await publish_event(
                 StreamingEvent(
                     type="subagent_start",
                     session_id=session_id,
@@ -386,18 +422,12 @@ class AgentLoop:
                     data={"agent_id": task.agent_id, "prompt": task.prompt},
                 )
             )
-            return await self.sub_agent_runner(
+            result = await self.sub_agent_runner(
                 parent_agent_id=agent_id,
                 task=task,
                 execution_depth=execution_depth + 1,
             )
-
-        results = await asyncio.gather(*(run_task(task) for task in tasks), return_exceptions=True)
-        payload = []
-        for task, result in zip(tasks, results):
-            if isinstance(result, Exception):
-                result = self._subagent_result_from_exception(task, result)
-            subagent_events.append(
+            await publish_event(
                 StreamingEvent(
                     type="subagent_result",
                     session_id=session_id,
@@ -405,12 +435,45 @@ class AgentLoop:
                     data=result.model_dump(),
                 )
             )
-            payload.append(result.model_dump())
-        return (
-            ToolResult(
+            return result
+
+        async def collect_results() -> ToolResult:
+            results = await asyncio.gather(*(run_task(task) for task in tasks), return_exceptions=True)
+            payload = []
+            for task, result in zip(tasks, results):
+                if isinstance(result, Exception):
+                    result = self._subagent_result_from_exception(task, result)
+                    await publish_event(
+                        StreamingEvent(
+                            type="subagent_result",
+                            session_id=session_id,
+                            agent_id=agent_id,
+                            data=result.model_dump(),
+                        )
+                    )
+                payload.append(result.model_dump())
+            return ToolResult(
                 tool_name="spawn_subagents",
                 content=json.dumps(payload),
                 data={"results": payload},
-            ),
-            subagent_events,
-        )
+            )
+
+        if emit_event is not None:
+            return await collect_results()
+
+        async def finish_results():
+            try:
+                return await collect_results()
+            finally:
+                await event_queue.put(sentinel)
+
+        collector_task = asyncio.create_task(finish_results())
+        emitted_events: List[StreamingEvent] = []
+
+        while True:
+            event = await event_queue.get()
+            if event is sentinel:
+                break
+            emitted_events.append(event)
+
+        return await collector_task, emitted_events

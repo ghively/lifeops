@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import AsyncMock
 
@@ -137,9 +138,62 @@ async def test_execute_sub_agents_converts_parallel_failures_to_error_results():
     assert result.data["results"][1]["success"] is False
     assert result.data["results"][1]["error"] == "sub-agent crashed"
     assert result.data["results"][1]["tool_results"][0]["success"] is False
-    assert [event.type for event in events] == [
-        "subagent_start",
-        "subagent_start",
-        "subagent_result",
-        "subagent_result",
-    ]
+    event_types = [event.type for event in events]
+    assert event_types.count("subagent_start") == 2, f"Expected 2 starts, got {event_types}"
+    assert event_types.count("subagent_result") == 2, f"Expected 2 results, got {event_types}"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_streams_subagent_events_before_tool_completion():
+    start_emitted = asyncio.Event()
+    allow_finish = asyncio.Event()
+
+    class SpawnLLMRouter(FakeLLMRouter):
+        async def complete(self, messages, tools=None, config=None):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "function": {"name": "spawn_subagents", "arguments": "{\"tasks\": [{\"agent_id\": \"worker-1\", \"prompt\": \"ok\"}]}"},
+                    }],
+                }
+            return {"content": "Final answer", "tool_calls": []}
+
+    async def sub_agent_runner(*, parent_agent_id, task, execution_depth):
+        start_emitted.set()
+        await allow_finish.wait()
+        return SubAgentResult(agent_id=task.agent_id, content="done")
+
+    loop = AgentLoop(SpawnLLMRouter(), FakeToolRegistry(), sub_agent_runner=sub_agent_runner)
+    identity = AgentIdentity(
+        agent_id="tester",
+        name="Tester",
+        system_prompt="You are a tester.",
+        llm=LLMProviderConfig(),
+    )
+
+    events = []
+
+    async def collect_events():
+        async for event in loop.run(
+            agent_id="tester",
+            session_id="session-1",
+            identity=identity,
+            memory_entries=[],
+            history=[AgentMessage(role="user", content="hello")],
+            user_message="Delegate this",
+        ):
+            events.append(event)
+            if event.type == "subagent_start":
+                allow_finish.set()
+
+    task = asyncio.create_task(collect_events())
+    await asyncio.wait_for(start_emitted.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert [event.type for event in events] == ["thinking", "tool_start", "subagent_start"]
+
+    await asyncio.wait_for(task, timeout=1)
+    assert "subagent_result" in [event.type for event in events]

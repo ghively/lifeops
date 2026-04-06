@@ -199,6 +199,7 @@ class SQLiteManager:
                 "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                 "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                 "message_count": "INTEGER DEFAULT 0",
+                "messages_count": "INTEGER DEFAULT 0",
                 "metadata": "TEXT",
             },
         )

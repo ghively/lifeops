@@ -264,6 +264,7 @@ class AgentRuntime:
                     shared_context={**task.shared_context, "parent_agent_id": parent_agent_id},
                     allowed_tools=task.allowed_tools or None,
                     execution_depth=execution_depth,
+                    timeout_seconds=task.timeout_seconds,
                     metadata={"parent_agent_id": parent_agent_id, "subagent": True, "depth": execution_depth},
                 ),
                 timeout=task.timeout_seconds,

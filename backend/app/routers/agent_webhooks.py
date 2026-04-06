@@ -1,6 +1,8 @@
 """Incoming webhook router for runtime agents."""
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.services.agent.runtime import agent_runtime
@@ -27,5 +29,7 @@ async def receive_runtime_webhook(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
