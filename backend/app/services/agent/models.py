@@ -27,10 +27,10 @@ ScheduledTaskType = Literal["periodic_research", "memory_curation", "data_cleanu
 
 
 class LLMProviderConfig(BaseModel):
-    provider: ProviderName = "openai"
+    provider: ProviderName = "ollama"
     base_url: Optional[str] = None
     api_key: Optional[str] = None
-    model: str = "gpt-4o-mini"
+    model: str = "qwen2.5-coder:7b"
     temperature: float = 0.2
     max_tokens: int = 2048
     fallback_model: Optional[str] = None

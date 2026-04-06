@@ -18,7 +18,7 @@ class AgentTemplateService:
                     files={
                         "AGENT.md": """---
 name: Researcher
-model: gpt-4o-mini
+model: qwen2.5-coder:7b
 capabilities:
   - research
   - synthesis
@@ -40,8 +40,8 @@ Measured and precise.
 """,
                         "MEMORY.md": "# Long-Term Memory\n\nTrack durable research preferences, trusted sources, and open questions.\n",
                         "TOOLS.md": """## LLM Provider
-provider: openai
-model: gpt-4o-mini
+provider: ollama
+model: qwen2.5-coder:7b
 temperature: 0.1
 max_tokens: 2048
 
@@ -60,7 +60,7 @@ mcp_servers: []
                     files={
                         "AGENT.md": """---
 name: Coder
-model: gpt-4o-mini
+model: qwen2.5-coder:7b
 capabilities:
   - coding
   - debugging
@@ -82,8 +82,8 @@ Direct and technical.
 """,
                         "MEMORY.md": "# Long-Term Memory\n\nTrack repo conventions, risky areas, and validated implementation details.\n",
                         "TOOLS.md": """## LLM Provider
-provider: openai
-model: gpt-4o-mini
+provider: ollama
+model: qwen2.5-coder:7b
 temperature: 0.1
 max_tokens: 2048
 
@@ -102,7 +102,7 @@ mcp_servers: []
                     files={
                         "AGENT.md": """---
 name: Analyst
-model: gpt-4o-mini
+model: qwen2.5-coder:7b
 capabilities:
   - analysis
   - reporting
@@ -124,8 +124,8 @@ Concise and evidence-led.
 """,
                         "MEMORY.md": "# Long-Term Memory\n\nTrack recurring signals, important baselines, and decision criteria.\n",
                         "TOOLS.md": """## LLM Provider
-provider: openai
-model: gpt-4o-mini
+provider: ollama
+model: qwen2.5-coder:7b
 temperature: 0.2
 max_tokens: 2048
 
@@ -144,7 +144,7 @@ mcp_servers: []
                     files={
                         "AGENT.md": """---
 name: Writer
-model: gpt-4o-mini
+model: qwen2.5-coder:7b
 capabilities:
   - writing
   - editing
@@ -166,8 +166,8 @@ Audience-aware and clear.
 """,
                         "MEMORY.md": "# Long-Term Memory\n\nTrack voice preferences, recurring audiences, and style constraints.\n",
                         "TOOLS.md": """## LLM Provider
-provider: openai
-model: gpt-4o-mini
+provider: ollama
+model: qwen2.5-coder:7b
 temperature: 0.4
 max_tokens: 2048
 
@@ -186,7 +186,7 @@ mcp_servers: []
                     files={
                         "AGENT.md": """---
 name: Personal Assistant
-model: gpt-4o-mini
+model: qwen2.5-coder:7b
 capabilities:
   - planning
   - organization
@@ -208,8 +208,8 @@ Practical and clear.
 """,
                         "MEMORY.md": "# Long-Term Memory\n\nTrack durable preferences, routines, and standing commitments.\n",
                         "TOOLS.md": """## LLM Provider
-provider: openai
-model: gpt-4o-mini
+provider: ollama
+model: qwen2.5-coder:7b
 temperature: 0.2
 max_tokens: 2048
 

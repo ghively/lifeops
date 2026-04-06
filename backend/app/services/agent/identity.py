@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_AGENT_FILES = {
     "AGENT.md": """---
 name: Default Agent
-model: gpt-4o-mini
+model: qwen2.5-coder:7b
 capabilities:
   - chat
   - search
@@ -42,8 +42,8 @@ Direct and concise.
 This agent is newly created. Curate durable facts here over time.
 """,
     "TOOLS.md": """## LLM Provider
-provider: openai
-model: gpt-4o-mini
+provider: ollama
+model: qwen2.5-coder:7b
 temperature: 0.2
 max_tokens: 2048
 
@@ -122,7 +122,7 @@ class IdentityLoader:
         identity = AgentIdentity(
             agent_id=agent_id,
             name=str(agent_meta.get("name") or agent_id),
-            model=str(agent_meta.get("model") or tools_meta.get("model") or "gpt-4o-mini"),
+            model=str(agent_meta.get("model") or tools_meta.get("model") or "qwen2.5-coder:7b"),
             capabilities=self._coerce_list(agent_meta.get("capabilities")),
             constraints=self._coerce_list(agent_meta.get("constraints")),
             instructions=agent_body.strip(),
@@ -233,9 +233,9 @@ class IdentityLoader:
     ) -> LLMProviderConfig:
         provider_blob = tool_sections.get("llm provider", "")
         parsed = self._parse_frontmatter(provider_blob.replace("\n", "\n"))
-        model = tools_meta.get("model") or parsed.get("model") or agent_meta.get("model") or "gpt-4o-mini"
+        model = tools_meta.get("model") or parsed.get("model") or agent_meta.get("model") or "qwen2.5-coder:7b"
         return LLMProviderConfig(
-            provider=str(tools_meta.get("provider") or parsed.get("provider") or "openai"),
+            provider=str(tools_meta.get("provider") or parsed.get("provider") or "ollama"),
             base_url=tools_meta.get("base_url") or parsed.get("base_url"),
             api_key=tools_meta.get("api_key") or parsed.get("api_key"),
             model=str(model),

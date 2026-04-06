@@ -73,9 +73,17 @@ class LLMRouter:
         except Exception as exc:
             raise RuntimeError("openai package is required for LLM routing") from exc
 
+        # Auto-detect base_url for known providers
+        base_url = config.base_url
+        if not base_url:
+            if config.provider == "ollama":
+                base_url = "http://host.docker.internal:11434/v1"
+            elif config.provider == "ollama-local":
+                base_url = "http://localhost:11434/v1"
+
         client = AsyncOpenAI(
-            api_key=config.api_key or "not-set",
-            base_url=config.base_url,
+            api_key=config.api_key or "ollama",
+            base_url=base_url,
         )
         payload: Dict[str, Any] = {
             "model": config.model,
