@@ -11,7 +11,7 @@ from app.services.agent.audit import AgentAuditLogger
 from app.services.agent.sandbox import ToolApprovalRequired, tool_approval_manager
 from app.services.agent.security import AgentSecurityManager
 from app.services.websocket_manager import WebSocketEvents, websocket_manager
-from app.services.agent.models import AgentIdentity, AgentMessage, StreamingEvent, SubAgentTask, ToolResult
+from app.services.agent.models import AgentIdentity, AgentMessage, StreamingEvent, SubAgentResult, SubAgentTask, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,13 @@ class AgentLoop:
                     except json.JSONDecodeError:
                         arguments = {}
                     parsed_calls.append((tool_call, tool_name, arguments))
-                    yield StreamingEvent(type="tool_start", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data={"arguments": arguments})
+                    yield StreamingEvent(
+                        type="tool_start",
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        tool_name=tool_name,
+                        data={"arguments": arguments, "tool_call_id": tool_call.get("id")},
+                    )
 
                 results = await asyncio.gather(
                     *[
@@ -122,9 +128,17 @@ class AgentLoop:
                             user_id=user_id,
                         )
                         for tool_call, tool_name, arguments in parsed_calls
-                    ]
+                    ],
+                    return_exceptions=True,
                 )
-                for tool_call, tool_name, _arguments, result, emitted_events in results:
+                normalized_results = []
+                for (tool_call, tool_name, arguments), raw_result in zip(parsed_calls, results):
+                    if isinstance(raw_result, Exception):
+                        normalized_results.append((tool_call, tool_name, arguments, self._tool_result_from_exception(tool_name or "tool", raw_result), []))
+                        continue
+                    normalized_results.append(raw_result)
+
+                for tool_call, tool_name, _arguments, result, emitted_events in normalized_results:
                     for event in emitted_events:
                         yield event
                     messages.append({
@@ -133,7 +147,13 @@ class AgentLoop:
                         "name": tool_name,
                         "content": result.content or result.error or "",
                     })
-                    yield StreamingEvent(type="tool_result", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data=result.model_dump())
+                    yield StreamingEvent(
+                        type="tool_result",
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        tool_name=tool_name,
+                        data={**result.model_dump(), "tool_call_id": tool_call.get("id")},
+                    )
                 token_budget = self._estimate_messages_tokens(messages)
                 if token_budget > min(self.max_tokens, model_context_window):
                     raise RuntimeError("Token budget exceeded during tool loop")
@@ -192,6 +212,19 @@ class AgentLoop:
             "response": floor(context_window * 0.10),
             "context_window": context_window,
         }
+
+    def _tool_result_from_exception(self, tool_name: str, exc: Exception) -> ToolResult:
+        logger.exception("Agent tool execution crashed for %s", tool_name)
+        return ToolResult(tool_name=tool_name, success=False, error=str(exc), content="")
+
+    def _subagent_result_from_exception(self, task: SubAgentTask, exc: Exception) -> SubAgentResult:
+        return SubAgentResult(
+            agent_id=task.agent_id,
+            success=False,
+            content="",
+            error=str(exc),
+            tool_results=[self._tool_result_from_exception("spawn_subagents", exc)],
+        )
 
     def _list_tools(self, identity: AgentIdentity, *, execution_depth: int, allowed_tools: Optional[List[str]]) -> List[Dict[str, Any]]:
         tools = self.tool_registry.list_openai_tools(allowed_tools=allowed_tools)
@@ -359,9 +392,11 @@ class AgentLoop:
                 execution_depth=execution_depth + 1,
             )
 
-        results = await asyncio.gather(*(run_task(task) for task in tasks))
+        results = await asyncio.gather(*(run_task(task) for task in tasks), return_exceptions=True)
         payload = []
-        for result in results:
+        for task, result in zip(tasks, results):
+            if isinstance(result, Exception):
+                result = self._subagent_result_from_exception(task, result)
             subagent_events.append(
                 StreamingEvent(
                     type="subagent_result",

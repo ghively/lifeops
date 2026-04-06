@@ -28,17 +28,24 @@ vi.mock('axios', () => {
 })
 
 // Import after mock
-import { api } from '../api'
+import { APIError, agentRuntimeApi, api } from '../api'
 
 const mockApi = api as any
 
 describe('API Service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.unstubAllGlobals()
     // Mock localStorage
     const store: Record<string, string> = {}
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation((key) => store[key] || null)
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => { store[key] = value })
+    Object.defineProperty(window, 'localStorage', {
+      value: {
+        getItem: vi.fn((key: string) => store[key] || null),
+        setItem: vi.fn((key: string, value: string) => { store[key] = value }),
+        removeItem: vi.fn((key: string) => { delete store[key] }),
+      },
+      configurable: true,
+    })
   })
 
   describe('objects', () => {
@@ -112,6 +119,25 @@ describe('API Service', () => {
       const error = { response: { status: 404, data: { detail: 'Not found' } } }
       mockApi.get.mockRejectedValue(error)
       await expect(api.get('/api/v1/objects/nonexistent')).rejects.toEqual(error)
+    })
+
+    it('should preserve rate limit payloads for streaming chat', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        json: vi.fn().mockResolvedValue({
+          detail: 'Rate limit exceeded',
+          retry_after_seconds: 15,
+        }),
+      }))
+
+      await expect(agentRuntimeApi.chatWithAgent({ agent_id: 'agent-1', message: 'hello' })).rejects.toMatchObject({
+        name: 'APIError',
+        statusCode: 429,
+        response: {
+          retry_after_seconds: 15,
+        },
+      } satisfies Partial<APIError>)
     })
   })
 })

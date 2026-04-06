@@ -1,16 +1,16 @@
 """Runtime agent chat router."""
-from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.services.agent.models import MCPServerConfig
+from app.services.agent.rate_limiter import AgentRateLimitExceeded
 from app.services.agent.runtime import agent_runtime
 
 router = APIRouter()
@@ -82,6 +82,22 @@ async def runtime_chat(
     data: RuntimeChatRequest = Body(...),
     current_user: dict = Depends(get_current_user),
 ):
+    try:
+        await agent_runtime.check_chat_rate_limits(
+            agent_id=data.agent_id,
+            message=data.message,
+            user_id=current_user["id"],
+        )
+    except AgentRateLimitExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": exc.message,
+                **exc.snapshot.model_dump(),
+            },
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        )
+
     return StreamingResponse(
         agent_runtime.chat_sse(
             agent_id=data.agent_id,
@@ -89,6 +105,7 @@ async def runtime_chat(
             session_id=data.session_id,
             shared_context=data.shared_context,
             user_id=current_user["id"],
+            skip_rate_limit_checks=True,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

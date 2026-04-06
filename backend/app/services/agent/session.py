@@ -97,19 +97,21 @@ class SessionManager:
         await sqlite_manager.execute(
             """
             INSERT INTO agent_messages (
-                id, session_id, role, content, tool_calls, tool_results, tokens_in, tokens_out, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, session_id, role, name, content, tool_calls, tool_results, tokens_in, tokens_out, created_at, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message.id,
                 session_id,
                 message.role,
+                message.name,
                 message.content,
                 json.dumps(message.tool_calls),
                 json.dumps([item.model_dump() for item in message.tool_results]),
                 message.tokens_in,
                 message.tokens_out,
                 message.created_at,
+                json.dumps(message.metadata),
             ),
         )
         await sqlite_manager.execute(
@@ -140,11 +142,13 @@ class SessionManager:
                     id=row["id"],
                     role=row["role"],
                     content=row["content"],
+                    name=row.get("name"),
                     tool_calls=self._json_loads(row.get("tool_calls")) or [],
                     tool_results=[ToolResult(**item) for item in (self._json_loads(row.get("tool_results")) or [])],
                     tokens_in=row.get("tokens_in") or 0,
                     tokens_out=row.get("tokens_out") or 0,
                     created_at=row.get("created_at"),
+                    metadata=self._json_loads(row.get("metadata")) or {},
                 )
             )
         return history

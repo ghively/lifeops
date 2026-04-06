@@ -109,12 +109,14 @@ class SQLiteManager:
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
+                name TEXT,
                 content TEXT NOT NULL,
                 tool_calls TEXT,
                 tool_results TEXT,
                 tokens_in INTEGER,
                 tokens_out INTEGER,
                 created_at TIMESTAMP NOT NULL,
+                metadata TEXT,
                 FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
             )
         """)
@@ -197,6 +199,14 @@ class SQLiteManager:
                 "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                 "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                 "message_count": "INTEGER DEFAULT 0",
+                "metadata": "TEXT",
+            },
+        )
+
+        await self._ensure_columns(
+            "agent_messages",
+            {
+                "name": "TEXT",
                 "metadata": "TEXT",
             },
         )

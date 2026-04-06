@@ -101,6 +101,11 @@ export interface AgentUsageResponse {
   history: AgentUsageHistoryItem[]
 }
 
+interface AgentRateLimitErrorPayload {
+  detail?: string
+  retry_after_seconds?: number
+}
+
 export interface AgentAuditItem {
   id: string
   agent_id: string
@@ -743,15 +748,16 @@ export const agentRuntimeApi = {
 
     if (!response.ok) {
       let message = 'Failed to start agent chat'
+      let payload: AgentRateLimitErrorPayload | null = null
       try {
-        const payload = await response.json() as { detail?: string }
+        payload = await response.json() as AgentRateLimitErrorPayload
         if (payload.detail) {
           message = payload.detail
         }
       } catch {
         // Ignore malformed error bodies.
       }
-      throw new APIError(message, response.status)
+      throw new APIError(message, response.status, payload)
     }
 
     return { response }

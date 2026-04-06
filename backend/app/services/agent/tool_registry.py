@@ -138,10 +138,16 @@ class ToolRegistry:
             )
             raise ToolApprovalRequired(approval_request)
 
-        if runtime_tool:
-            result = await runtime_tool.execute(arguments, context=execution_context, identity=identity, definition=definition)
-        else:
-            result = await self.mcp_manager.execute_tool(name, arguments)
+        try:
+            if runtime_tool:
+                result = await runtime_tool.execute(arguments, context=execution_context, identity=identity, definition=definition)
+            else:
+                result = await self.mcp_manager.execute_tool(name, arguments)
+        except ToolApprovalRequired:
+            raise
+        except Exception as exc:
+            logger.exception("Tool execution failed for %s", name)
+            result = ToolResult(tool_name=name, success=False, error=str(exc), content="")
         result.content = self.security.sanitize_tool_output(result.content)
         if result.error:
             result.error = self.security.sanitize_tool_output(result.error)

@@ -53,3 +53,21 @@ async def test_tool_registry_includes_mcp_tools():
 
     result = await registry.execute("mcp__filesystem__read", {"path": "/tmp/demo"})
     assert result.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_tool_registry_converts_runtime_exceptions_to_failed_results():
+    registry = ToolRegistry()
+    registry._tools["boom"] = registry._tools["create_object"].__class__(
+        ToolDefinition(
+            name="boom",
+            description="Explodes",
+            parameters_schema={"type": "object", "properties": {}},
+        ),
+        AsyncMock(side_effect=RuntimeError("tool blew up")),
+    )
+
+    result = await registry.execute("boom", {})
+
+    assert result.success is False
+    assert result.error == "tool blew up"

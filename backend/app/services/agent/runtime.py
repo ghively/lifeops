@@ -72,9 +72,10 @@ class AgentRuntime:
         session_id: Optional[str] = None,
         shared_context: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        skip_rate_limit_checks: bool = False,
     ) -> AsyncGenerator[StreamingEvent, None]:
         identity = self.identity_loader.load(agent_id)
-        if user_id:
+        if user_id and not skip_rate_limit_checks:
             await agent_rate_limiter.check_request_limit(agent_id=agent_id, user_id=user_id, identity=identity)
         session = await self._get_or_create_session(agent_id, session_id)
         await self.session_manager.add_message(session.id, AgentMessage(role="user", content=message))
@@ -97,6 +98,7 @@ class AgentRuntime:
                 shared_context=shared_context,
                 user_id=user_id,
                 identity=identity,
+                skip_rate_limit_checks=skip_rate_limit_checks,
             ):
                 if event.type == "text_delta" and event.delta:
                     assistant_chunks.append(event.delta)
@@ -141,8 +143,37 @@ class AgentRuntime:
     async def flush_session_memory(self, agent_id: str) -> None:
         await self.memory_manager.flush_working_memory(agent_id)
 
-    def chat_sse(self, *, agent_id: str, message: str, session_id: Optional[str] = None, shared_context: Optional[Dict[str, Any]] = None, user_id: Optional[str] = None):
-        return stream_sse(self.chat(agent_id=agent_id, message=message, session_id=session_id, shared_context=shared_context, user_id=user_id))
+    def chat_sse(
+        self,
+        *,
+        agent_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        shared_context: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        skip_rate_limit_checks: bool = False,
+    ):
+        return stream_sse(
+            self.chat(
+                agent_id=agent_id,
+                message=message,
+                session_id=session_id,
+                shared_context=shared_context,
+                user_id=user_id,
+                skip_rate_limit_checks=skip_rate_limit_checks,
+            )
+        )
+
+    async def check_chat_rate_limits(self, *, agent_id: str, message: str, user_id: str) -> None:
+        identity = self.identity_loader.load(agent_id)
+        await agent_rate_limiter.check_request_limit(agent_id=agent_id, user_id=user_id, identity=identity)
+        projected_tokens = self.llm_router.count_tokens(message, identity.model)
+        await agent_rate_limiter.enforce_daily_token_limit(
+            agent_id=agent_id,
+            user_id=user_id,
+            identity=identity,
+            projected_tokens=projected_tokens + (identity.llm.max_tokens if identity.llm else 2048),
+        )
 
     def list_agents(self) -> List[Dict[str, str]]:
         return self.identity_loader.list_agents()
@@ -325,6 +356,7 @@ class AgentRuntime:
         execution_depth: int = 0,
         user_id: Optional[str] = None,
         identity=None,
+        skip_rate_limit_checks: bool = False,
     ) -> AsyncGenerator[StreamingEvent, None]:
         identity = identity or self.identity_loader.load(agent_id)
         if identity.mcp_servers:
@@ -333,7 +365,7 @@ class AgentRuntime:
         history = await self.session_manager.load_history(session_id)
         memories = await self.memory_manager.retrieve_relevant(agent_id, message)
         projected_tokens = self.llm_router.count_tokens(message, identity.model)
-        if user_id:
+        if user_id and not skip_rate_limit_checks:
             await agent_rate_limiter.enforce_daily_token_limit(
                 agent_id=agent_id,
                 user_id=user_id,

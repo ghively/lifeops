@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Deque, DefaultDict, Dict
 
-from fastapi import HTTPException
-
 from app.database.sqlite import sqlite_manager
 from app.services.agent.models import AgentIdentity, AgentUsageSnapshot
 from app.utils.time import utc_now_iso
@@ -22,6 +20,14 @@ DEFAULT_TOKENS_PER_DAY = 200_000
 @dataclass
 class _MinuteWindow:
     timestamps: Deque[float]
+
+
+class AgentRateLimitExceeded(Exception):
+    def __init__(self, message: str, snapshot: AgentUsageSnapshot, *, retry_after_seconds: int):
+        super().__init__(message)
+        self.message = message
+        self.snapshot = snapshot
+        self.retry_after_seconds = retry_after_seconds
 
 
 class AgentRateLimiter:
@@ -51,10 +57,22 @@ class AgentRateLimiter:
             minute_limit = self._minute_limit(identity)
             if len(window) >= minute_limit:
                 retry_after = max(1, int(60 - (now - window[0])))
-                raise HTTPException(
-                    status_code=429,
-                    detail=f"Rate limit exceeded for agent '{agent_id}'. Retry in {retry_after} seconds.",
-                    headers={"Retry-After": str(retry_after)},
+                today = self._today()
+                daily = await sqlite_manager.get_agent_token_usage(agent_id, user_id, today)
+                raise AgentRateLimitExceeded(
+                    f"Rate limit exceeded for agent '{agent_id}'. Retry in {retry_after} seconds.",
+                    AgentUsageSnapshot(
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        minute_requests=len(window),
+                        minute_limit=minute_limit,
+                        daily_tokens=int((daily or {}).get("total_tokens") or 0),
+                        daily_token_limit=self._day_limit(identity),
+                        daily_requests=int((daily or {}).get("total_requests") or 0),
+                        retry_after_seconds=retry_after,
+                        date=today,
+                    ),
+                    retry_after_seconds=retry_after,
                 )
             window.append(now)
 
@@ -102,10 +120,20 @@ class AgentRateLimiter:
         current_tokens = int((row or {}).get("total_tokens") or 0)
         limit = self._day_limit(identity)
         if current_tokens + projected_tokens > limit:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Daily token budget exceeded for agent '{agent_id}'.",
-                headers={"Retry-After": "86400"},
+            raise AgentRateLimitExceeded(
+                f"Daily token budget exceeded for agent '{agent_id}'.",
+                AgentUsageSnapshot(
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    minute_requests=len(self._requests[self._key(agent_id, user_id)].timestamps),
+                    minute_limit=self._minute_limit(identity),
+                    daily_tokens=current_tokens,
+                    daily_token_limit=limit,
+                    daily_requests=int((row or {}).get("total_requests") or 0),
+                    retry_after_seconds=86400,
+                    date=self._today(),
+                ),
+                retry_after_seconds=86400,
             )
         return AgentUsageSnapshot(
             agent_id=agent_id,
@@ -137,4 +165,3 @@ class AgentRateLimiter:
 
 
 agent_rate_limiter = AgentRateLimiter()
-

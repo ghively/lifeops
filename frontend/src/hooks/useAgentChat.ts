@@ -12,6 +12,15 @@ export interface AgentChatUIMessage {
   metadata?: Record<string, unknown>
 }
 
+interface ToolEventMetadata extends Record<string, unknown> {
+  tool_call_id?: string
+}
+
+interface ToolResultEventLike {
+  tool_name?: string
+  data?: Record<string, unknown>
+}
+
 interface UseAgentChatOptions {
   agentId?: string
   sessionId?: string | null
@@ -36,7 +45,7 @@ function createMessageId(prefix: string) {
 export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAgentChatOptions) {
   const [messages, setMessages] = useState<AgentChatUIMessage[]>(() => initialMessages.map(mapHistoryMessage))
   const [isStreaming, setIsStreaming] = useState(false)
-  const [currentToolCall, setCurrentToolCall] = useState<string | null>(null)
+  const [activeToolCalls, setActiveToolCalls] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionId || null)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -66,7 +75,7 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
 
     setError(null)
     setIsStreaming(true)
-    setCurrentToolCall(null)
+    setActiveToolCalls([])
     setMessages((current) => [
       ...current,
       { id: userMessageId, role: 'user', content: message, createdAt: sentAt, status: 'complete' },
@@ -147,10 +156,14 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
           }
 
           if (event.type === 'tool_start') {
-            setCurrentToolCall(event.tool_name || 'tool')
+            const toolCallId = getToolCallId(event.data)
+            const toolMessageId = toolCallId || createMessageId('tool')
+            setActiveToolCalls((current) =>
+              current.includes(toolMessageId) ? current : [...current, toolMessageId]
+            )
             setMessages((current) => {
               const toolMessage: AgentChatUIMessage = {
-                id: createMessageId('tool'),
+                id: toolMessageId,
                 role: 'tool',
                 content: event.tool_name ? `Running ${event.tool_name}` : 'Running tool',
                 createdAt: new Date().toISOString(),
@@ -164,17 +177,20 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
           }
 
           if (event.type === 'tool_result') {
-            setCurrentToolCall(null)
+            const toolCallId = getToolCallId(event.data)
+            if (toolCallId) {
+              setActiveToolCalls((current) => current.filter((item) => item !== toolCallId))
+            }
             setMessages((current) => {
               const next = [...current]
-              const index = next.findIndex((item) => item.role === 'tool' && item.status === 'streaming')
+              const index = findMatchingToolMessageIndex(next, event)
               const content = typeof event.data?.content === 'string'
                 ? event.data.content
                 : typeof event.message === 'string'
                   ? event.message
                   : `${event.tool_name || 'Tool'} finished`
               const toolMessage: AgentChatUIMessage = {
-                id: createMessageId('tool'),
+                id: toolCallId || createMessageId('tool'),
                 role: 'tool',
                 content,
                 createdAt: new Date().toISOString(),
@@ -275,7 +291,7 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
           }
 
           if (event.type === 'done') {
-            setCurrentToolCall(null)
+            setActiveToolCalls([])
             setMessages((current) =>
               current
                 .filter((item) => item.id !== 'thinking-indicator')
@@ -314,7 +330,7 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
       return null
     } finally {
       setIsStreaming(false)
-      setCurrentToolCall(null)
+      setActiveToolCalls([])
       abortControllerRef.current = null
     }
   }, [activeSessionId, agentId, isStreaming])
@@ -322,22 +338,52 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
   const resetMessages = useCallback((nextMessages: RuntimeAgentMessage[]) => {
     setMessages(nextMessages.map(mapHistoryMessage))
     setError(null)
-    setCurrentToolCall(null)
+    setActiveToolCalls([])
     setIsStreaming(false)
   }, [])
+
+  const currentToolCall = useMemo(() => {
+    if (activeToolCalls.length === 0) {
+      return null
+    }
+
+    const toolNames = messages
+      .filter((item) => item.role === 'tool' && item.status === 'streaming' && activeToolCalls.includes(item.id))
+      .map((item) => item.toolName || 'tool')
+
+    return toolNames.length > 0 ? toolNames.join(', ') : null
+  }, [activeToolCalls, messages])
 
   return useMemo(() => ({
     messages,
     isStreaming,
+    activeToolCalls,
     currentToolCall,
     error,
     activeSessionId,
     sendMessage,
     resetMessages,
-  }), [activeSessionId, currentToolCall, error, isStreaming, messages, resetMessages, sendMessage])
+  }), [activeSessionId, activeToolCalls, currentToolCall, error, isStreaming, messages, resetMessages, sendMessage])
 }
 
-function parseSseChunk(chunk: string): { event?: string; data: RuntimeChatEvent } | null {
+function getToolCallId(data?: Record<string, unknown>) {
+  return typeof (data as ToolEventMetadata | undefined)?.tool_call_id === 'string'
+    ? (data as ToolEventMetadata).tool_call_id
+    : null
+}
+
+export function findMatchingToolMessageIndex(messages: AgentChatUIMessage[], event: ToolResultEventLike) {
+  const toolCallId = getToolCallId(event.data)
+  if (toolCallId) {
+    return messages.findIndex((item) => item.id === toolCallId)
+  }
+
+  return messages.findIndex(
+    (item) => item.role === 'tool' && item.status === 'streaming' && item.toolName === event.tool_name,
+  )
+}
+
+export function parseSseChunk(chunk: string): { event?: string; data: RuntimeChatEvent } | null {
   const lines = chunk.split('\n')
   let eventName = ''
   let dataLine = ''
@@ -348,15 +394,16 @@ function parseSseChunk(chunk: string): { event?: string; data: RuntimeChatEvent 
     }
 
     if (line.startsWith('data:')) {
-      dataLine += line.slice(5).trim()
+      dataLine += `${line.slice(5)}\n`
     }
   }
 
-  if (!dataLine) {
+  const payloadText = dataLine.trim()
+  if (!payloadText) {
     return null
   }
 
-  const payload = JSON.parse(dataLine) as RuntimeChatEvent
+  const payload = JSON.parse(payloadText) as RuntimeChatEvent
   return {
     event: eventName,
     data: payload,
