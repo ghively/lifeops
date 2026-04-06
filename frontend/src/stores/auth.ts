@@ -107,8 +107,7 @@ export const useAuthStore = create<AuthState>()(
             try {
               await get().refreshAccessToken()
             } catch {
-              // Refresh failed, clear auth state
-              localStorage.removeItem('access_token')
+              // H72: Refresh failed, clear auth state and redirect to login
               localStorage.removeItem('refresh_token')
               set({
                 user: null,
@@ -117,6 +116,9 @@ export const useAuthStore = create<AuthState>()(
                 isAuthenticated: false,
                 isLoading: false,
               })
+              if (typeof window !== 'undefined') {
+                window.location.href = '/login'
+              }
             }
           } else {
             set({ isLoading: false })

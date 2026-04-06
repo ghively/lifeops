@@ -1,18 +1,7 @@
 import { create } from 'zustand'
+import { getSystemWsUrl } from '@/lib/wsUrl'
 
-const DEFAULT_WS_URL = (() => {
-  const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined
-  if (configuredApiUrl) {
-    return `${configuredApiUrl.replace(/^http/, 'ws')}/ws/system`
-  }
-
-  if (typeof window !== 'undefined') {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/ws/system`
-  }
-
-  return '/ws/system'
-})()
+const DEFAULT_WS_URL = getSystemWsUrl()
 
 function getAuthenticatedWsUrl() {
   const token = localStorage.getItem('access_token')

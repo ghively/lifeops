@@ -1,20 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { getSystemWsUrl } from '@/lib/wsUrl'
 
 export type WebSocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
-const GLOBAL_WS_URL = (() => {
-  const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined
-  if (configuredApiUrl) {
-    return `${configuredApiUrl.replace(/^http/, 'ws')}/ws/system`
-  }
-
-  if (typeof window !== 'undefined') {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/ws/system`
-  }
-
-  return '/ws/system'
-})()
+const GLOBAL_WS_URL = getSystemWsUrl()
 
 interface UseWebSocketOptions {
   onOpen?: () => void

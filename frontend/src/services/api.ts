@@ -736,7 +736,7 @@ export const agentRuntimeApi = {
   testMCPServer: (data: MCPServerConfigInput) =>
     api.post<{ success: boolean; tools: MCPToolItem[]; status: MCPServerItem }>('/agents/runtime/mcp/test', data).then((r) => r.data),
 
-  chatWithAgent: async (data: AgentChatRequest): Promise<AgentChatResponse> => {
+  chatWithAgent: async (data: AgentChatRequest, signal?: AbortSignal): Promise<AgentChatResponse> => {
     const response = await fetch(`${getApiBaseUrl()}/agents/runtime/chat`, {
       method: 'POST',
       headers: createAuthenticatedRequestHeaders({
@@ -744,6 +744,7 @@ export const agentRuntimeApi = {
         Accept: 'text/event-stream',
       }),
       body: JSON.stringify(data),
+      signal,
     })
 
     if (!response.ok) {
