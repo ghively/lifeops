@@ -19,6 +19,7 @@ from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
 from app.logging_config import AppMetrics, bind_request_context, clear_request_context, configure_logging
 from app.middleware.rate_limit import limiter, read_rate_limit
+from app.middleware.auth import authenticate_websocket
 from app.services.embedding import embedding_service
 from app.services.backup import backup_service
 from app.services.auth import auth_service
@@ -224,6 +225,11 @@ async def root(request: Request):
 @app.websocket("/ws/agents/{agent_name}")
 async def websocket_endpoint(websocket: WebSocket, agent_name: str = "system"):
     """Shared WebSocket endpoint for live updates."""
+    try:
+        await authenticate_websocket(websocket)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
     await websocket_manager.connect(websocket)
     try:
         while True:
