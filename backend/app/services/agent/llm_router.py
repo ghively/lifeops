@@ -90,11 +90,14 @@ class LLMRouter:
             elif config.provider == "ollama-local":
                 base_url = "http://localhost:11434/v1"
 
-        client = AsyncOpenAI(
-            api_key=config.api_key or "ollama",
-            base_url=base_url,
-            timeout=httpx.Timeout(60.0, connect=10.0),
-        )
+        cache_key = (config.api_key or "ollama", base_url or "")
+        if cache_key not in self._client_cache:
+            self._client_cache[cache_key] = AsyncOpenAI(
+                api_key=config.api_key or "ollama",
+                base_url=base_url,
+                timeout=httpx.Timeout(60.0, connect=10.0),
+            )
+        client = self._client_cache[cache_key]
         payload: Dict[str, Any] = {
             "model": config.model,
             "messages": messages,
@@ -106,6 +109,9 @@ class LLMRouter:
             payload["tool_choice"] = "auto"
 
         response = await client.chat.completions.create(**payload)
+        if not response.choices:
+            logger.warning("LLM returned empty choices for model %s", config.model)
+            return {"content": "", "tool_calls": [], "finish_reason": "stop", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
         choice = response.choices[0]
         message = choice.message
         tool_calls = []
