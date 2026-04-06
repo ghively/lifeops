@@ -11,7 +11,7 @@ from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.services.agent.models import MCPServerConfig
 from app.services.agent.rate_limiter import AgentRateLimitExceeded
-from app.services.agent.runtime import agent_runtime
+from app.services.agent.runtime import get_agent_runtime
 
 router = APIRouter()
 
@@ -83,7 +83,7 @@ async def runtime_chat(
     current_user: dict = Depends(get_current_user),
 ):
     try:
-        await agent_runtime.check_chat_rate_limits(
+        await get_agent_runtime().check_chat_rate_limits(
             agent_id=data.agent_id,
             message=data.message,
             user_id=current_user["id"],
@@ -99,7 +99,7 @@ async def runtime_chat(
         )
 
     return StreamingResponse(
-        agent_runtime.chat_sse(
+        get_agent_runtime().chat_sse(
             agent_id=data.agent_id,
             message=data.message,
             session_id=data.session_id,
@@ -115,13 +115,13 @@ async def runtime_chat(
 @router.get("/cli-status")
 @read_rate_limit
 async def cli_status(request: Request, current_user: dict = Depends(get_current_user)):
-    return {"agents": agent_runtime.tool_registry.cli_tool.health_check()}
+    return {"agents": get_agent_runtime().tool_registry.cli_tool.health_check()}
 
 
 @router.get("/mcp/servers")
 @read_rate_limit
 async def list_mcp_servers(request: Request, current_user: dict = Depends(get_current_user)):
-    return {"servers": [status.model_dump() for status in await agent_runtime.tool_registry.mcp_manager.list_servers()]}
+    return {"servers": [status.model_dump() for status in await get_agent_runtime().tool_registry.mcp_manager.list_servers()]}
 
 
 @router.post("/mcp/servers")
@@ -132,10 +132,10 @@ async def create_mcp_server(
     current_user: dict = Depends(get_current_user),
 ):
     config = MCPServerConfig(**data.model_dump())
-    status = await agent_runtime.tool_registry.mcp_manager.configure_server(config, persist=True)
+    status = await get_agent_runtime().tool_registry.mcp_manager.configure_server(config, persist=True)
     if config.enabled and config.auto_connect:
         try:
-            status = await agent_runtime.tool_registry.mcp_manager.connect_server(config.name)
+            status = await get_agent_runtime().tool_registry.mcp_manager.connect_server(config.name)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     return status.model_dump()
@@ -145,7 +145,7 @@ async def create_mcp_server(
 @write_rate_limit
 async def delete_mcp_server(name: str, request: Request, current_user: dict = Depends(get_current_user)):
     try:
-        await agent_runtime.tool_registry.mcp_manager.remove_server(name)
+        await get_agent_runtime().tool_registry.mcp_manager.remove_server(name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"deleted": True, "name": name}
@@ -155,7 +155,7 @@ async def delete_mcp_server(name: str, request: Request, current_user: dict = De
 @write_rate_limit
 async def connect_mcp_server(name: str, request: Request, current_user: dict = Depends(get_current_user)):
     try:
-        status = await agent_runtime.tool_registry.mcp_manager.connect_server(name)
+        status = await get_agent_runtime().tool_registry.mcp_manager.connect_server(name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -167,7 +167,7 @@ async def connect_mcp_server(name: str, request: Request, current_user: dict = D
 @write_rate_limit
 async def disconnect_mcp_server(name: str, request: Request, current_user: dict = Depends(get_current_user)):
     try:
-        status = await agent_runtime.tool_registry.mcp_manager.disconnect_server(name)
+        status = await get_agent_runtime().tool_registry.mcp_manager.disconnect_server(name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return status.model_dump()
@@ -177,10 +177,10 @@ async def disconnect_mcp_server(name: str, request: Request, current_user: dict 
 @read_rate_limit
 async def list_mcp_server_tools(name: str, request: Request, current_user: dict = Depends(get_current_user)):
     try:
-        status = await agent_runtime.tool_registry.mcp_manager.get_server_status(name)
+        status = await get_agent_runtime().tool_registry.mcp_manager.get_server_status(name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"server": status.model_dump(), "tools": agent_runtime.tool_registry.mcp_manager.list_server_tools(name)}
+    return {"server": status.model_dump(), "tools": get_agent_runtime().tool_registry.mcp_manager.list_server_tools(name)}
 
 
 @router.post("/mcp/test")
@@ -191,7 +191,7 @@ async def test_mcp_server(
     current_user: dict = Depends(get_current_user),
 ):
     config = MCPServerConfig(**data.model_dump())
-    result = await agent_runtime.tool_registry.mcp_manager.test_connection(config)
+    result = await get_agent_runtime().tool_registry.mcp_manager.test_connection(config)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
@@ -200,7 +200,7 @@ async def test_mcp_server(
 @router.get("")
 @read_rate_limit
 async def list_runtime_agents(request: Request, current_user: dict = Depends(get_current_user)):
-    return {"agents": agent_runtime.list_agents()}
+    return {"agents": get_agent_runtime().list_agents()}
 
 
 @router.get("/sessions")
@@ -210,7 +210,7 @@ async def list_runtime_sessions(
     agent_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    return {"sessions": await agent_runtime.list_sessions(agent_id)}
+    return {"sessions": await get_agent_runtime().list_sessions(agent_id)}
 
 
 @router.get("/sessions/{session_id}/messages")
@@ -220,7 +220,7 @@ async def get_runtime_session_messages(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
-    return {"messages": await agent_runtime.get_session_messages(session_id)}
+    return {"messages": await get_agent_runtime().get_session_messages(session_id)}
 
 
 @router.delete("/sessions/{session_id}")
@@ -230,14 +230,14 @@ async def delete_runtime_session(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
-    await agent_runtime.delete_session(session_id)
+    await get_agent_runtime().delete_session(session_id)
     return {"deleted": True, "session_id": session_id}
 
 
 @router.get("/templates")
 @read_rate_limit
 async def list_runtime_templates(request: Request, current_user: dict = Depends(get_current_user)):
-    return {"templates": agent_runtime.list_templates()}
+    return {"templates": get_agent_runtime().list_templates()}
 
 
 @router.post("/create-from-template")
@@ -247,7 +247,7 @@ async def create_runtime_agent_from_template(
     data: CreateFromTemplateRequest = Body(...),
     current_user: dict = Depends(get_current_user),
 ):
-    return agent_runtime.create_agent(data.agent_id, template_id=data.template_id)
+    return get_agent_runtime().create_agent(data.agent_id, template_id=data.template_id)
 
 
 @router.post("/schedule")
@@ -257,7 +257,7 @@ async def create_runtime_schedule(
     data: ScheduleTaskRequest = Body(...),
     current_user: dict = Depends(get_current_user),
 ):
-    return await agent_runtime.create_scheduled_task(**data.model_dump())
+    return await get_agent_runtime().create_scheduled_task(**data.model_dump())
 
 
 @router.get("/schedule")
@@ -267,13 +267,13 @@ async def list_runtime_schedule(
     agent_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    return {"tasks": await agent_runtime.list_scheduled_tasks(agent_id)}
+    return {"tasks": await get_agent_runtime().list_scheduled_tasks(agent_id)}
 
 
 @router.delete("/schedule/{task_id}")
 @write_rate_limit
 async def delete_runtime_schedule(task_id: str, request: Request, current_user: dict = Depends(get_current_user)):
-    await agent_runtime.delete_scheduled_task(task_id)
+    await get_agent_runtime().delete_scheduled_task(task_id)
     return {"deleted": True, "id": task_id}
 
 
@@ -281,7 +281,7 @@ async def delete_runtime_schedule(task_id: str, request: Request, current_user: 
 @write_rate_limit
 async def run_runtime_schedule(task_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     try:
-        return await agent_runtime.run_scheduled_task(task_id)
+        return await get_agent_runtime().run_scheduled_task(task_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -294,7 +294,7 @@ async def trigger_memory_curation(
     data: MemoryCurationRequest = Body(default=MemoryCurationRequest()),
     current_user: dict = Depends(get_current_user),
 ):
-    return await agent_runtime.curate_memory(agent_id, frequency=data.frequency)
+    return await get_agent_runtime().curate_memory(agent_id, frequency=data.frequency)
 
 
 @router.post("/webhooks")
@@ -304,7 +304,7 @@ async def create_runtime_webhook(
     data: WebhookCreateRequest = Body(...),
     current_user: dict = Depends(get_current_user),
 ):
-    return await agent_runtime.create_webhook(**data.model_dump())
+    return await get_agent_runtime().create_webhook(**data.model_dump())
 
 
 @router.get("/webhooks")
@@ -314,13 +314,13 @@ async def list_runtime_webhooks(
     agent_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    return {"webhooks": await agent_runtime.list_webhooks(agent_id)}
+    return {"webhooks": await get_agent_runtime().list_webhooks(agent_id)}
 
 
 @router.delete("/webhooks/{webhook_id}")
 @write_rate_limit
 async def delete_runtime_webhook(webhook_id: str, request: Request, current_user: dict = Depends(get_current_user)):
-    await agent_runtime.delete_webhook(webhook_id)
+    await get_agent_runtime().delete_webhook(webhook_id)
     return {"deleted": True, "id": webhook_id}
 
 
@@ -332,19 +332,19 @@ async def create_runtime_agent(
     data: RuntimeAgentCreateRequest = Body(default=RuntimeAgentCreateRequest()),
     current_user: dict = Depends(get_current_user),
 ):
-    return agent_runtime.create_agent(agent_id, template_id=data.template_id)
+    return get_agent_runtime().create_agent(agent_id, template_id=data.template_id)
 
 
 @router.get("/{agent_id}")
 @read_rate_limit
 async def get_runtime_agent(agent_id: str, request: Request, current_user: dict = Depends(get_current_user)):
-    return agent_runtime.get_agent(agent_id)
+    return get_agent_runtime().get_agent(agent_id)
 
 
 @router.get("/{agent_id}/usage")
 @read_rate_limit
 async def get_runtime_agent_usage(agent_id: str, request: Request, current_user: dict = Depends(get_current_user)):
-    return await agent_runtime.get_usage(agent_id, current_user["id"])
+    return await get_agent_runtime().get_usage(agent_id, current_user["id"])
 
 
 @router.get("/{agent_id}/audit")
@@ -356,13 +356,13 @@ async def get_runtime_agent_audit(
     page_size: int = Query(default=50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
 ):
-    return await agent_runtime.get_audit_log(agent_id, page=page, page_size=page_size)
+    return await get_agent_runtime().get_audit_log(agent_id, page=page, page_size=page_size)
 
 
 @router.delete("/{agent_id}")
 @write_rate_limit
 async def delete_runtime_agent(agent_id: str, request: Request, current_user: dict = Depends(get_current_user)):
-    agent_runtime.delete_agent(agent_id)
+    get_agent_runtime().delete_agent(agent_id)
     return {"deleted": True, "agent_id": agent_id}
 
 
@@ -371,7 +371,7 @@ async def delete_runtime_agent(agent_id: str, request: Request, current_user: di
 async def get_runtime_agent_file(agent_id: str, name: str, request: Request, current_user: dict = Depends(get_current_user)):
     if name not in ALLOWED_AGENT_FILES:
         raise HTTPException(status_code=404, detail="Unsupported runtime file")
-    return PlainTextResponse(agent_runtime.get_file(agent_id, name))
+    return PlainTextResponse(get_agent_runtime().get_file(agent_id, name))
 
 
 @router.put("/{agent_id}/files/{name}")
@@ -385,5 +385,5 @@ async def update_runtime_agent_file(
 ):
     if name not in ALLOWED_AGENT_FILES:
         raise HTTPException(status_code=404, detail="Unsupported runtime file")
-    agent_runtime.update_file(agent_id, name, data.content)
+    get_agent_runtime().update_file(agent_id, name, data.content)
     return {"updated": True, "agent_id": agent_id, "file": name}

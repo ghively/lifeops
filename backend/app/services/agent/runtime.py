@@ -388,4 +388,10 @@ class AgentRuntime:
             yield event
 
 
-agent_runtime = AgentRuntime()
+_agent_runtime: Optional[AgentRuntime] = None
+
+def get_agent_runtime() -> AgentRuntime:
+    global _agent_runtime
+    if _agent_runtime is None:
+        _agent_runtime = AgentRuntime()
+    return _agent_runtime

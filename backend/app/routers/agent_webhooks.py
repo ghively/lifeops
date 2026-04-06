@@ -5,7 +5,7 @@ import json
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from app.services.agent.runtime import agent_runtime
+from app.services.agent.runtime import get_agent_runtime
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ async def receive_runtime_webhook(
 ):
     body = await request.body()
     try:
-        return await agent_runtime.handle_incoming_webhook(
+        return await get_agent_runtime().handle_incoming_webhook(
             hook_id=hook_id,
             body=body,
             signature=x_knowledgeos_signature,
