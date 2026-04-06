@@ -164,9 +164,55 @@ OPENCLAW_TOKEN=
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 ```
 
-### Agent Configuration (TOOLS.md)
+### Agent Configuration
 
-Each agent's LLM provider is configured in its TOOLS.md:
+Each agent is defined by 4 markdown files in their directory (`backend/agents/{agent_name}/`). You can edit these through the UI or directly.
+
+#### AGENT.md — Identity & Capabilities
+
+```markdown
+---
+name: Researcher
+model: qwen2.5-coder:7b
+capabilities:
+  - web_research
+  - summarization
+  - fact_checking
+constraints:
+  - Always cite sources
+  - Never fabricate information
+---
+
+You are a research assistant. Your job is to find accurate information,
+summarize findings, and provide sourced answers.
+
+## Instructions
+1. When given a question, break it into sub-questions
+2. Use available tools to gather information
+3. Cross-reference multiple sources
+4. Provide concise, well-structured answers
+```
+
+#### SOUL.md — Personality & Behavior
+
+```markdown
+## Personality
+- Curious and thorough
+- Prefers precision over speed
+- Honest about uncertainty
+
+## Tone
+- Professional but approachable
+- Avoid jargon unless the user uses it
+- Use bullet points for structured information
+
+## Decision Making
+- Always verify claims before presenting them
+- If uncertain, say so explicitly
+- Prefer primary sources over secondary
+```
+
+#### TOOLS.md — LLM, CLI Agents & MCP Servers
 
 ```markdown
 ## LLM Provider
@@ -174,11 +220,14 @@ provider: ollama
 model: qwen2.5-coder:7b
 temperature: 0.2
 max_tokens: 2048
+fallback_model: llama3.1:8b
 
 ## CLI Agents Available
 - codex: coding, git, file operations
-- gemini: analysis, research, documentation
-- kimi: research, web search, coding
+- claude_code: coding, analysis, file operations
+- kimi: research, web search, coding (256K context)
+- gemini: analysis, research, documentation (free tier)
+- opencode: coding assistant
 
 ## MCP Servers
 - name: brave-search
@@ -187,7 +236,90 @@ max_tokens: 2048
   args: ["-y", "@anthropic/mcp-server-brave-search"]
   env:
     BRAVE_API_KEY: sk-xxx
+
+- name: filesystem
+  transport: stdio
+  command: npx
+  args: ["-y", "@anthropic/mcp-server-filesystem", "/app/data"]
 ```
+
+#### MEMORY.md — Long-Term Memory (auto-curated)
+
+```markdown
+# Auto-curated by the agent during memory curation tasks.
+
+## User Preferences
+- Prefers concise summaries over detailed reports
+- Works in software engineering domain
+- Timezone: America/Chicago
+
+## Learned Context
+- Project uses FastAPI + React stack
+- Qdrant for vector storage
+- Ollama for local LLM inference
+```
+
+#### memory/YYYY-MM-DD.md — Daily Logs (auto-written)
+
+```markdown
+# 2026-04-05
+
+## Session 1
+- User asked about microservices patterns
+- Found 3 relevant articles via search
+- Summarized key differences between monolith and microservices
+```
+
+### Creating Agents
+
+**From the UI:**
+1. Go to **Agents** → **Create Agent**
+2. Pick a template (Researcher, Coder, Analyst, Writer, Personal Assistant)
+3. Edit the identity files as needed
+4. Start chatting
+
+**Via API:**
+```bash
+# Create from template
+curl -X POST http://localhost:8010/api/v1/agents/runtime/create-from-template \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"template": "researcher", "name": "my-researcher"}'
+
+# Edit a file
+curl -X PUT http://localhost:8010/api/v1/agents/runtime/my-researcher/files/TOOLS.md \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: text/markdown" \
+  -d '## LLM Provider\nprovider: ollama\nmodel: deepseek-r1:8b'
+```
+
+### Agent Templates
+
+| Template | Purpose | Best LLM |
+|----------|---------|----------|
+| **Researcher** | Web research, fact-checking | qwen2.5-coder:7b |
+| **Coder** | Code generation, debugging | qwen2.5-coder:7b |
+| **Analyst** | Data analysis, reports | llama3.1:8b |
+| **Writer** | Content creation, editing | llama3.1:8b |
+| **Personal Assistant** | General tasks, scheduling | qwen2.5-coder:7b |
+
+### Switching LLM Providers
+
+Change the provider and model in TOOLS.md:
+
+```markdown
+## LLM Provider
+provider: openai           # ollama | openai | anthropic | google
+model: gpt-4o-mini
+base_url:                  # auto-detected for ollama; set for others
+api_key: sk-xxx            # not needed for ollama
+```
+
+**Provider base URLs (auto-detected for Ollama):**
+- Ollama: `http://host.docker.internal:11434/v1` (automatic)
+- OpenAI: `https://api.openai.com/v1`
+- Anthropic: `https://api.anthropic.com/v1`
+- Google: `https://generativelanguage.googleapis.com/v1beta`
 
 ## Security
 
