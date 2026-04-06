@@ -4,6 +4,12 @@ All notable changes to Knowledge OS will be documented in this file.
 
 ## [0.3.0] - 2026-04-05
 
+### Security & Stability Audit (2026-04-05 21:30 CDT)
+- Full system audit: 7 parallel agents covering frontend, backend, agent runtime, databases, auth, websocket, pages
+- **196 issues found**: 16 critical, 100 high, ~72 low
+- Tracked in `memory/bug-tracker.md` — all items marked ⬜ pending fix
+- Top criticals: WebSocket auth missing, path traversal, command injection via MCP, token leaks, container root
+
 ### Added
 
 #### Agent Runtime System
