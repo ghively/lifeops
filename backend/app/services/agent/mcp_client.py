@@ -331,8 +331,7 @@ class MCPClientManager:
 
     def _stdio_client_context(self, config: MCPServerConfig):
         sdk = self._load_mcp_stdio()
-        env = os.environ.copy()
-        env.update(config.env)
+        env = _filter_subprocess_env(config.env)
         params = sdk["StdioServerParameters"](
             command=config.command,
             args=config.args,
@@ -437,6 +436,27 @@ class MCPClientManager:
         except ImportError as exc:  # pragma: no cover - depends on runtime environment
             raise RuntimeError("The 'mcp' package is not available in the current Python environment") from exc
         return streamable_http_client
+
+
+import re
+
+
+_SENSITIVE_ENV_PATTERNS = re.compile(
+    r"(SECRET|TOKEN|KEY|PASSWORD|API_KEY|OPENCLAW)",
+    re.IGNORECASE,
+)
+
+
+def _filter_subprocess_env(config_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Return a safe environment dict for MCP subprocess, stripping sensitive host vars."""
+    env: Dict[str, str] = {}
+    for key, value in os.environ.items():
+        if _SENSITIVE_ENV_PATTERNS.search(key):
+            continue
+        env[key] = value
+    if config_env:
+        env.update(config_env)
+    return env
 
 
 class _streamable_http_with_client:

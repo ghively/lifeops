@@ -131,7 +131,33 @@ async def create_mcp_server(
     data: MCPServerCreateRequest = Body(...),
     current_user: dict = Depends(get_current_user),
 ):
+    import re
+    import shlex
+
     config = MCPServerConfig(**data.model_dump())
+
+    # Validate command to prevent arbitrary command execution
+    command = config.command.strip()
+    dangerous_chars = re.compile(r'[|&;$`]')
+    if dangerous_chars.search(command):
+        raise HTTPException(status_code=400, detail="Command contains forbidden shell metacharacters")
+
+    safe_binaries = {"node", "python", "python3", "npx", "uvx", "deno"}
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid command: {exc}") from exc
+
+    if not parts:
+        raise HTTPException(status_code=400, detail="Command cannot be empty")
+
+    binary = parts[0].split("/")[-1]  # get basename
+    if binary not in safe_binaries:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Command '{parts[0]}' is not in the allowed binaries: {', '.join(sorted(safe_binaries))}",
+        )
+
     status = await get_agent_runtime().tool_registry.mcp_manager.configure_server(config, persist=True)
     if config.enabled and config.auto_connect:
         try:
