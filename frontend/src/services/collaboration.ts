@@ -73,25 +73,15 @@ export interface CollaborationCallbacks {
   onError?: (message: string) => void
 }
 
+import { getWsUrl } from '@/lib/wsUrl'
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function buildWsUrl(objectId: string): string {
-  const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined
-  let baseUrl: string
-  if (configuredApiUrl) {
-    baseUrl = `${configuredApiUrl.replace(/^http/, 'ws')}`
-  } else if (typeof window !== 'undefined') {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    baseUrl = `${protocol}//${window.location.host}`
-  } else {
-    baseUrl = ''
-  }
-
-  // Append auth token as query param (WebSocket can't send custom headers in browsers)
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') : null
   const wsPath = `/api/v1/collaboration/ws/${objectId}`
-  return token ? `${baseUrl}${wsPath}?token=${encodeURIComponent(token)}` : `${baseUrl}${wsPath}`
+  return getWsUrl(wsPath, token)
 }
 
 // ---------------------------------------------------------------------------
