@@ -18,6 +18,10 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p /app/data /app/data/logs /app/backups
 
+# Run as non-root user
+RUN useradd -m -s /bin/bash appuser && chown -R appuser:appuser /app
+USER appuser
+
 # Expose port
 EXPOSE 8000
 
