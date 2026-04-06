@@ -66,21 +66,29 @@ class QdrantManager:
     
     async def initialize(self):
         """Initialize Qdrant connection and create collections"""
-        # Sync client for initialization
-        self.client = QdrantClient(
-            host=settings.qdrant_host,
-            port=settings.qdrant_port,
-            api_key=settings.qdrant_api_key or None,
-            prefer_grpc=False
-        )
-        
-        # Async client for async operations
-        self.async_client = AsyncQdrantClient(
-            host=settings.qdrant_host,
-            port=settings.qdrant_port,
-            api_key=settings.qdrant_api_key or None,
-            prefer_grpc=False
-        )
+        try:
+            # Sync client for initialization
+            self.client = QdrantClient(
+                host=settings.qdrant_host,
+                port=settings.qdrant_port,
+                api_key=settings.qdrant_api_key or None,
+                prefer_grpc=False,
+                timeout=5.0,
+            )
+            
+            # Async client for async operations
+            self.async_client = AsyncQdrantClient(
+                host=settings.qdrant_host,
+                port=settings.qdrant_port,
+                api_key=settings.qdrant_api_key or None,
+                prefer_grpc=False,
+                timeout=5.0,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to connect to Qdrant at {settings.qdrant_host}:{settings.qdrant_port}. "
+                f"Ensure Qdrant is running. Error: {exc}"
+            ) from exc
         
         # Create collections if they don't exist
         for collection_name, config in COLLECTIONS.items():
