@@ -21,6 +21,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN chown nginx:nginx /etc/nginx/conf.d/default.conf
 
 # Run as non-root user
 RUN chown -R nginx:nginx /usr/share/nginx/html && \

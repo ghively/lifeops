@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -18,9 +19,13 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p /app/data /app/data/logs /app/backups
 
-# Run as non-root user
+# Run as non-root user (via entrypoint script that fixes volume permissions)
 RUN useradd -m -s /bin/bash appuser && chown -R appuser:appuser /app
-USER appuser
+
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+USER root
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Expose port
 EXPOSE 8000
