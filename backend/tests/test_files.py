@@ -81,8 +81,7 @@ class TestFilesRouter:
             "path": "/test/new-file.md",
         }
         response = await test_client.post("/api/v1/files/notify", json=data)
-        if response.status_code != 200:
-            print("RESPONSE:", response.json())
+        with open("/tmp/test_debug.txt", "w") as f: f.write(str(response.status_code) + " " + response.text)
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
 

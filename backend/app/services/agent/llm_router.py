@@ -18,6 +18,7 @@ class LLMRouter:
     def __init__(self, default_config: Optional[LLMProviderConfig] = None, retries: int = 2):
         self.default_config = default_config or LLMProviderConfig()
         self.retries = retries
+        self._client_cache: dict[tuple[str, str], Any] = {}
 
     def count_tokens(self, text: str, model: Optional[str] = None) -> int:
         try:
@@ -25,7 +26,8 @@ class LLMRouter:
 
             encoding = tiktoken.encoding_for_model(model or self.default_config.model)
             return len(encoding.encode(text or ""))
-        except Exception:
+        except Exception as exc:
+            logger.warning("tiktoken unavailable for model %s (%s), using len//4 fallback", model or self.default_config.model, exc)
             return max(1, len(text or "") // 4)
 
     async def complete(

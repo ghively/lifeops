@@ -5,6 +5,8 @@ import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel
+from typing import Any, Dict, Optional
 
 from app.config import settings as app_settings
 from app.database.sqlite import sqlite_manager
@@ -50,12 +52,33 @@ async def get_settings(request: Request, current_user: dict = Depends(get_curren
     return {k: v for k, v in all_settings.items() if k not in SENSITIVE_SETTINGS}
 
 
+class SettingsUpdate(BaseModel):
+    """Settings update request body."""
+    openclaw_url: Optional[str] = None
+    openclaw_token: Optional[str] = None
+    openclaw_enabled: Optional[bool] = None
+    backup_snapshots: Optional[bool] = None
+    backup_markdown: Optional[bool] = None
+    backup_git: Optional[bool] = None
+    git_repo_url: Optional[str] = None
+    snapshot_interval_hours: Optional[int] = None
+    markdown_export_interval_hours: Optional[int] = None
+    git_sync_interval_minutes: Optional[int] = None
+    embedding_model: Optional[str] = None
+    image_embedding_model: Optional[str] = None
+    max_context_tokens: Optional[int] = None
+    auto_index: Optional[bool] = None
+
+    def to_update_dict(self) -> Dict[str, Any]:
+        return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
 @router.put("")
 @write_rate_limit
-async def update_settings(data: dict, request: Request, current_user: dict = Depends(get_current_user)):
+async def update_settings(data: SettingsUpdate, request: Request, current_user: dict = Depends(get_current_user)):
     """Update application settings."""
     current = await _load_settings()
-    current.update(data)
+    current.update(data.to_update_dict())
     for key, value in current.items():
         await sqlite_manager.upsert_setting(key, value)
     logger.info("Settings updated")

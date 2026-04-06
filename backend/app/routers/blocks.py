@@ -233,13 +233,13 @@ async def batch_update_blocks(data: BatchBlockUpdateRequest, request: Request, c
 @write_rate_limit
 async def sync_blocks_for_object(
     object_id: str,
-    data: dict,
+    data: SyncBlocksRequest,
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
     """Replace an object's block set in a single request."""
     client = qdrant_manager.get_async_client()
-    incoming_blocks = data.get("blocks", [])
+    incoming_blocks = data.blocks
 
     existing, _ = await client.scroll(
         collection_name=COLLECTION_BLOCKS,
@@ -257,12 +257,12 @@ async def sync_blocks_for_object(
         }
         for point in existing
     ]
-    incoming_ids = {block["id"] for block in incoming_blocks if block.get("id")}
+    incoming_ids = {block.id for block in incoming_blocks if block.id}
     deleted_ids = [block_id for block_id in existing_map if block_id not in incoming_ids]
 
     upsert_payloads = []
     for order, block in enumerate(incoming_blocks):
-        block_id = block.get("id") or str(uuid.uuid4())
+        block_id = block.id or str(uuid.uuid4())
         existing_point = existing_map.get(block_id)
         existing_payload = dict(existing_point.payload or {}) if existing_point else {}
         created_at = existing_payload.get("created_at") if existing_payload else None
@@ -270,12 +270,12 @@ async def sync_blocks_for_object(
             {
                 "id": block_id,
                 "object_id": object_id,
-                "type": block.get("type", "paragraph"),
-                "content": block.get("content", ""),
-                "level": block.get("level", 0),
+                "type": block.type,
+                "content": block.content,
+                "level": block.level,
                 "order": order,
-                "properties": block.get("properties", {}),
-                "parent_id": block.get("parent_id"),
+                "properties": block.properties if block.properties is not None else {},
+                "parent_id": block.parent_id,
                 "references": existing_payload.get("references", []),
                 "referenced_by": existing_payload.get("referenced_by", []),
                 "created_at": created_at or utc_now_iso(),

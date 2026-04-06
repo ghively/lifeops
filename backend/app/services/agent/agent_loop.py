@@ -138,6 +138,10 @@ class AgentLoop:
             token_usage["completion_tokens"] += int(usage.get("completion_tokens") or 0)
             token_usage["total_tokens"] = token_usage["prompt_tokens"] + token_usage["completion_tokens"]
             tool_calls = response.get("tool_calls") or []
+            if not isinstance(tool_calls, list):
+                logger.warning("tool_calls is not a list (got %s), ignoring", type(tool_calls).__name__)
+                yield StreamingEvent(type="error", session_id=session_id, agent_id=agent_id, data={"error": f"Invalid tool_calls format: {type(tool_calls).__name__}"})
+                tool_calls = []
             if tool_calls:
                 assistant_message = {"role": "assistant", "content": response.get("content", ""), "tool_calls": tool_calls}
                 messages.append(assistant_message)
@@ -147,7 +151,9 @@ class AgentLoop:
                     tool_name = function.get("name")
                     try:
                         arguments = json.loads(function.get("arguments") or "{}")
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        logger.warning("Malformed tool_call JSON for %s: %s", tool_name, e)
+                        yield StreamingEvent(type="error", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data={"error": f"Malformed tool_call arguments: {e}"})
                         arguments = {}
                     parsed_calls.append((tool_call, tool_name, arguments))
                     yield StreamingEvent(
