@@ -56,6 +56,50 @@ class AgentLoop:
         shared_context: Optional[Dict[str, Any]] = None,
         allowed_tools: Optional[List[str]] = None,
         user_id: Optional[str] = None,
+        max_execution_time: float = 300.0,
+    ) -> AsyncGenerator[StreamingEvent, None]:
+        try:
+            async for event in asyncio.wait_for(
+                self._run_inner(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    identity=identity,
+                    memory_entries=memory_entries,
+                    history=history,
+                    user_message=user_message,
+                    execution_depth=execution_depth,
+                    shared_context=shared_context,
+                    allowed_tools=allowed_tools,
+                    user_id=user_id,
+                ),
+                timeout=max_execution_time,
+            ):
+                yield event
+        except asyncio.TimeoutError:
+            logger.error(
+                "Agent loop exceeded max execution time (%.1fs) for agent %s session %s",
+                max_execution_time, agent_id, session_id,
+            )
+            yield StreamingEvent(
+                type="error",
+                session_id=session_id,
+                agent_id=agent_id,
+                data={"error": f"Agent execution timed out after {max_execution_time}s"},
+            )
+
+    async def _run_inner(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        identity: AgentIdentity,
+        memory_entries: List[Any],
+        history: List[AgentMessage],
+        user_message: str,
+        execution_depth: int = 0,
+        shared_context: Optional[Dict[str, Any]] = None,
+        allowed_tools: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> AsyncGenerator[StreamingEvent, None]:
         sanitized_user_message = self.security_manager.sanitize_user_input(user_message)
         findings = await self.security_manager.maybe_log_injection_attempt(
