@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { flushPendingLogs } from './lib/logger'
 
 import { useWebSocketStore } from './stores/websocket'
 import { MainLayout } from './components/layout/MainLayout'
@@ -29,6 +30,8 @@ function App() {
   const { connect } = useWebSocketStore()
 
   useEffect(() => {
+    // Flush any frontend logs queued while backend was unreachable
+    flushPendingLogs()
     // Connect to WebSocket on mount
     connect()
     return () => {

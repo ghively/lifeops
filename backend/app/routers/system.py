@@ -97,9 +97,21 @@ async def ingest_frontend_log(
     request: Request,
     current_user: dict | None = Depends(get_optional_user),
 ):
-    """Persist warn/error frontend logs through the backend logger."""
+    """Persist warn/error frontend logs through the backend logger. Supports single or batch."""
     del request
 
+    # Batch mode: multiple entries from localStorage flush
+    batch = payload.get("batch")
+    if isinstance(batch, list) and batch:
+        for entry in batch[:100]:  # Cap at 100 per request
+            _ingest_single_log(entry, current_user)
+        return {"status": "ok", "count": len(batch[:100])}
+
+    _ingest_single_log(payload, current_user)
+    return {"status": "ok"}
+
+
+def _ingest_single_log(payload: dict[str, Any], current_user: dict | None = None):
     level = str(payload.get("level", "error")).lower()
     component = str(payload.get("component") or "frontend")
     message = str(payload.get("message") or "frontend log")
@@ -118,8 +130,6 @@ async def ingest_frontend_log(
     frontend_logger = logging.getLogger(f"frontend.{component}")
     log_method = getattr(frontend_logger, level, frontend_logger.error)
     log_method(message, extra=extra)
-
-    return {"status": "ok"}
 
 
 @router.get("/status")

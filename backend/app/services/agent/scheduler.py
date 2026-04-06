@@ -151,28 +151,32 @@ class AgentScheduler:
         if self.runtime is None or self.memory_curation is None:
             raise RuntimeError("Scheduler is not bound to the runtime")
 
-        result: Dict[str, Any]
-        if task.task_type == "memory_curation":
-            result = await self.memory_curation.curate_agent_memory(
-                task.agent_id,
-                frequency=str(task.config.get("frequency") or "daily"),
-            )
-        elif task.task_type == "data_cleanup":
-            result = await self.runtime.run_background_task(
-                agent_id=task.agent_id,
-                message=str(task.config.get("prompt") or "Clean up outdated working data and summarize any deletions."),
-                shared_context=task.config.get("shared_context") or {},
-                timeout_seconds=int(task.config.get("timeout_seconds") or 120),
-                metadata={"scheduled_task_id": task.id, "task_type": task.task_type},
-            )
-        else:
-            result = await self.runtime.run_background_task(
-                agent_id=task.agent_id,
-                message=str(task.config.get("prompt") or f"Run scheduled task: {task.name}"),
-                shared_context=task.config.get("shared_context") or {},
-                timeout_seconds=int(task.config.get("timeout_seconds") or 120),
-                metadata={"scheduled_task_id": task.id, "task_type": task.task_type},
-            )
+        try:
+            result: Dict[str, Any]
+            if task.task_type == "memory_curation":
+                result = await self.memory_curation.curate_agent_memory(
+                    task.agent_id,
+                    frequency=str(task.config.get("frequency") or "daily"),
+                )
+            elif task.task_type == "data_cleanup":
+                result = await self.runtime.run_background_task(
+                    agent_id=task.agent_id,
+                    message=str(task.config.get("prompt") or "Clean up outdated working data and summarize any deletions."),
+                    shared_context=task.config.get("shared_context") or {},
+                    timeout_seconds=int(task.config.get("timeout_seconds") or 120),
+                    metadata={"scheduled_task_id": task.id, "task_type": task.task_type},
+                )
+            else:
+                result = await self.runtime.run_background_task(
+                    agent_id=task.agent_id,
+                    message=str(task.config.get("prompt") or f"Run scheduled task: {task.name}"),
+                    shared_context=task.config.get("shared_context") or {},
+                    timeout_seconds=int(task.config.get("timeout_seconds") or 120),
+                    metadata={"scheduled_task_id": task.id, "task_type": task.task_type},
+                )
+        except Exception:
+            logger.exception("Scheduled task failed: %s (id=%s)", task.name, task.id)
+            result = {"error": "Task execution failed", "task_name": task.name}
 
         last_run = utc_now_iso()
         next_run = self._compute_next_run(task.cron_expression)

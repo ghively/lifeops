@@ -81,7 +81,66 @@ function sendToBackend(entry: FrontendLogEntry) {
       user_agent: entry.userAgent,
       extra: entry.extra,
     }),
-  }).catch(() => undefined)
+  }).catch(() => {
+    // Backend unreachable — persist to localStorage so logs aren't lost
+    try {
+      const key = 'kos_pending_logs'
+      const pending: unknown[] = JSON.parse(localStorage.getItem(key) || '[]')
+      pending.push(entry)
+      // Keep last 200 to avoid filling storage
+      if (pending.length > 200) pending.splice(0, pending.length - 200)
+      localStorage.setItem(key, JSON.stringify(pending))
+    } catch {
+      // localStorage full or unavailable — give up
+    }
+  })
+}
+
+/** Retry sending any queued logs from localStorage. */
+export function flushPendingLogs(): void {
+  try {
+    const key = 'kos_pending_logs'
+    const raw = localStorage.getItem(key)
+    if (!raw) return
+    const pending: FrontendLogEntry[] = JSON.parse(raw)
+    if (!pending.length) return
+    localStorage.removeItem(key)
+
+    const token = localStorage.getItem('access_token')
+    const batch = pending.slice(0, 50) // Send in batches
+    const remaining = pending.slice(50)
+    if (remaining.length) {
+      localStorage.setItem(key, JSON.stringify(remaining))
+    }
+
+    void fetch(`${API_BASE_URL}/api/v1/system/logs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        batch: batch.map((e) => ({
+          timestamp: e.timestamp,
+          level: e.level,
+          source: e.source,
+          component: e.component,
+          message: e.message,
+          url: e.url,
+          user_agent: e.userAgent,
+          extra: e.extra,
+        })),
+      }),
+    }).catch(() => {
+      // Still unreachable — put back
+      const existing: unknown[] = JSON.parse(localStorage.getItem(key) || '[]')
+      existing.push(...batch)
+      if (existing.length > 200) existing.splice(0, existing.length - 200)
+      localStorage.setItem(key, JSON.stringify(existing))
+    })
+  } catch {
+    // ignore
+  }
 }
 
 function createEntry(level: LogLevel, component: string, message: string, extra?: Record<string, unknown>): FrontendLogEntry {

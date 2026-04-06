@@ -44,22 +44,33 @@ class BackupService:
             """,
             (backup_id, backup_type, "running", "", utc_now_iso()),
         )
-        if backup_type == "snapshot":
-            details = await self._create_qdrant_snapshot()
-        elif backup_type == "markdown":
-            details = await self._export_markdown()
-        elif backup_type == "git":
-            details = await self._git_sync()
-        else:
-            details = "Unsupported backup type"
-        await sqlite_manager.execute(
-            """
-            UPDATE backup_log
-            SET status = ?, details = ?, completed_at = ?
-            WHERE id = ?
-            """,
-            ("completed", details or "", utc_now_iso(), backup_id),
-        )
+        try:
+            if backup_type == "snapshot":
+                details = await self._create_qdrant_snapshot()
+            elif backup_type == "markdown":
+                details = await self._export_markdown()
+            elif backup_type == "git":
+                details = await self._git_sync()
+            else:
+                details = "Unsupported backup type"
+            await sqlite_manager.execute(
+                """
+                UPDATE backup_log
+                SET status = ?, details = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                ("completed", details or "", utc_now_iso(), backup_id),
+            )
+        except Exception:
+            logger.exception("Backup failed: type=%s, id=%s", backup_type, backup_id)
+            await sqlite_manager.execute(
+                """
+                UPDATE backup_log
+                SET status = ?, details = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                ("failed", "See backend logs for error details", utc_now_iso(), backup_id),
+            )
     
     async def _create_qdrant_snapshot(self):
         """Create a Qdrant snapshot"""

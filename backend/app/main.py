@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.vendor.slowapi_compat import (
     RateLimitExceeded,
@@ -92,6 +93,29 @@ app = FastAPI(
 app.state.limiter = limiter
 app.state.metrics = AppMetrics.create()
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all for unhandled exceptions — log with full traceback, return structured 500."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.exception(
+        "Unhandled exception",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "request_id": request_id,
+        },
+    )
 
 # Configure CORS with configurable origins
 app.add_middleware(
@@ -210,8 +234,11 @@ async def websocket_endpoint(websocket: WebSocket, agent_name: str = "system"):
         websocket_manager.disconnect(websocket)
     except Exception:
         logger.exception("Unhandled WebSocket error for agent '%s'", agent_name)
+        try:
+            await websocket.send_json({"type": "error", "message": "Internal server error"})
+        except Exception:
+            pass
         websocket_manager.disconnect(websocket)
-        raise
 
 
 # Note: Collaboration WebSocket is handled by the collaboration router at /api/collaboration/ws/{object_id}
