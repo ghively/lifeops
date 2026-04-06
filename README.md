@@ -4,7 +4,7 @@
 [![Version](https://img.shields.io/badge/version-v0.3.0-blue)](https://github.com/ghively/knowledge-os/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A **knowledge management system** with a built-in AI agent runtime. Create objects, take notes, manage tasks, and chat with AI agents — all powered by local LLMs via Ollama.
+A **knowledge management system** with a built-in AI agent runtime. Create objects, take notes, manage tasks, and chat with AI agents — works with any LLM provider.
 
 ## Features
 
@@ -54,11 +54,11 @@ A **knowledge management system** with a built-in AI agent runtime. Create objec
                     ┌───────────┼───────────┐
                     ▼           ▼           ▼
                ┌─────────┐ ┌────────┐ ┌──────────┐
-               │ Ollama  │ │ SQLite │ │  CLI     │
-               │ (LLM)   │ │ (DB)   │ │  Agents  │
-               │ :11434  │ │         │ │ Codex,   │
-               └─────────┘ └────────┘ │ Claude,  │
-                                     │ Kimi,    │
+               │  LLM    │ │ SQLite │ │  CLI     │
+               │(external│ │ (DB)   │ │  Agents  │
+               │ Ollama, │ │         │ │ Codex,   │
+               │ OpenAI) │ │         │ │ Claude,  │
+               └─────────┘ └────────┘ │ Kimi,    │
                                      │ Gemini   │
                                      └──────────┘
 ```
@@ -97,27 +97,41 @@ Agent Orchestrator
 
 ### Prerequisites
 - **Docker & Docker Compose**
-- **Ollama** (recommended) — [Install](https://ollama.ai)
+- **An LLM provider** — Ollama (local), OpenAI, Anthropic, or Google
 
-### 1. Install Ollama and Pull a Model
+### 1. Set Up an LLM Provider
 
+The agent runtime works with any OpenAI-compatible LLM. **Ollama** (recommended for local, free inference) is the default but must be running separately — it's not part of the Docker stack.
+
+**Option A: Ollama (local, free)**
 ```bash
-# Install Ollama (macOS)
-brew install ollama
+# Install Ollama
+brew install ollama  # macOS
+# Or: curl -fsSL https://ollama.ai/install.sh | sh  # Linux
 
-# Pull the recommended model (7B parameter, great for tool calling)
+# Pull a model
 ollama pull qwen2.5-coder:7b
 
-# Verify it's running
-ollama list
+# Start Ollama (if not running)
+ollama serve
 ```
 
-**Recommended models for 8B budget:**
-| Model | Size | Best For |
-|-------|------|----------|
-| `qwen2.5-coder:7b` | 4.7GB | Primary agent (tool calling, code, reasoning) |
-| `deepseek-r1:8b` | 5.2GB | Deep reasoning tasks |
-| `llama3.1:8b` | 4.9GB | General-purpose backup |
+**Option B: Cloud provider (OpenAI, Anthropic, Google)**
+```bash
+# Set API key in .env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=sk-xxx
+```
+
+**Recommended models:**
+| Model | Provider | Size | Best For |
+|-------|----------|------|----------|
+| `qwen2.5-coder:7b` | Ollama (local) | 4.7GB | Tool calling, code, reasoning |
+| `deepseek-r1:8b` | Ollama (local) | 5.2GB | Deep reasoning |
+| `llama3.1:8b` | Ollama (local) | 4.9GB | General-purpose |
+| `gpt-4o-mini` | OpenAI | API | Fast, cheap, capable |
+| `claude-sonnet-4-20250514` | Anthropic | API | Best reasoning |
 
 ### 2. Clone and Start
 
@@ -153,8 +167,12 @@ BACKEND_PORT=8010
 QDRANT_HTTP_PORT=6335
 QDRANT_GRPC_PORT=6336
 
-# LLM Provider (auto-configured for Ollama by default)
+# LLM Provider (default: Ollama; set LLM_BASE_URL for custom endpoints)
 # Override per-agent in TOOLS.md
+LLM_PROVIDER=ollama
+LLM_MODEL=qwen2.5-coder:7b
+LLM_BASE_URL=
+LLM_API_KEY=
 
 # OpenClaw Integration (optional)
 OPENCLAW_URL=http://host.docker.internal:18789

@@ -114,7 +114,7 @@ class MemoryEntry(BaseModel):
 class AgentIdentity(BaseModel):
     agent_id: str
     name: str
-    model: str = "gpt-4o-mini"
+    model: str = ""  # Falls back to LLM_PROVIDER env var
     capabilities: List[str] = Field(default_factory=list)
     constraints: List[str] = Field(default_factory=list)
     instructions: str = ""

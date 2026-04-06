@@ -66,6 +66,14 @@ class Settings:
     # Git settings
     git_repo_url: str = os.getenv("GIT_REPO_URL", "")
 
+    # LLM Provider settings (Agent Runtime)
+    llm_provider: str = os.getenv("LLM_PROVIDER", "ollama")
+    llm_model: str = os.getenv("LLM_MODEL", "qwen2.5-coder:7b")
+    llm_base_url: str = os.getenv("LLM_BASE_URL", "")
+    llm_api_key: str = os.getenv("LLM_API_KEY", "")
+    llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+    llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+
     # JWT/Authentication settings
     secret_key: str = os.getenv("JWT_SECRET_KEY", "")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24h

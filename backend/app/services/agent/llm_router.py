@@ -77,7 +77,8 @@ class LLMRouter:
         base_url = config.base_url
         if not base_url:
             if config.provider == "ollama":
-                base_url = "http://host.docker.internal:11434/v1"
+                from app.config import settings
+                base_url = settings.llm_base_url or "http://host.docker.internal:11434/v1"
             elif config.provider == "ollama-local":
                 base_url = "http://localhost:11434/v1"
 

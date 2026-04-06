@@ -122,7 +122,7 @@ class IdentityLoader:
         identity = AgentIdentity(
             agent_id=agent_id,
             name=str(agent_meta.get("name") or agent_id),
-            model=str(agent_meta.get("model") or tools_meta.get("model") or "qwen2.5-coder:7b"),
+            model=str(agent_meta.get("model") or tools_meta.get("model")),
             capabilities=self._coerce_list(agent_meta.get("capabilities")),
             constraints=self._coerce_list(agent_meta.get("constraints")),
             instructions=agent_body.strip(),
@@ -233,14 +233,15 @@ class IdentityLoader:
     ) -> LLMProviderConfig:
         provider_blob = tool_sections.get("llm provider", "")
         parsed = self._parse_frontmatter(provider_blob.replace("\n", "\n"))
-        model = tools_meta.get("model") or parsed.get("model") or agent_meta.get("model") or "qwen2.5-coder:7b"
+        from app.config import settings
+        model = tools_meta.get("model") or parsed.get("model") or agent_meta.get("model") or settings.llm_model
         return LLMProviderConfig(
-            provider=str(tools_meta.get("provider") or parsed.get("provider") or "ollama"),
+            provider=str(tools_meta.get("provider") or parsed.get("provider") or settings.llm_provider),
             base_url=tools_meta.get("base_url") or parsed.get("base_url"),
             api_key=tools_meta.get("api_key") or parsed.get("api_key"),
             model=str(model),
-            temperature=float(tools_meta.get("temperature") or parsed.get("temperature") or 0.2),
-            max_tokens=int(tools_meta.get("max_tokens") or parsed.get("max_tokens") or 2048),
+            temperature=float(tools_meta.get("temperature") or parsed.get("temperature") or settings.llm_temperature),
+            max_tokens=int(tools_meta.get("max_tokens") or parsed.get("max_tokens") or settings.llm_max_tokens),
             fallback_model=tools_meta.get("fallback") or parsed.get("fallback"),
         )
 
