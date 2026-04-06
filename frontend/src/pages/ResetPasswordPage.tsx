@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { Mail, Lock, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-react'
 import { authApi } from '@/services/api'
@@ -16,6 +16,12 @@ export function ResetPasswordPage() {
   const [error, setError] = useState('')
   const [devToken, setDevToken] = useState('')
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current)
+    }
+  }, [])
 
   // Request step
   const [email, setEmail] = useState('')
