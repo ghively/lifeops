@@ -18,6 +18,36 @@ from app.utils.time import utc_now_iso
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Allowed base directories for file operations
+_ALLOWED_BASE_DIRS: set[str] = set()
+
+
+async def _get_allowed_dirs() -> set[str]:
+    """Lazily load allowed watched directories from the database."""
+    if not _ALLOWED_BASE_DIRS:
+        from app.database.sqlite import sqlite_manager
+        folders = await sqlite_manager.fetchall("SELECT path FROM watched_folders WHERE enabled = 1")
+        for f in folders:
+            _ALLOWED_BASE_DIRS.add(f["path"])
+    return _ALLOWED_BASE_DIRS
+
+
+def validate_file_path(path: str) -> str:
+    """Validate a file path to prevent path traversal attacks."""
+    import os
+    if not path:
+        raise HTTPException(status_code=400, detail="path is required")
+    # Reject paths with .. components
+    parts = path.replace("\\", "/").split("/")
+    if ".." in parts:
+        raise HTTPException(status_code=400, detail="Path traversal is not allowed")
+    resolved = os.path.realpath(path)
+    # Ensure the resolved path is within an allowed directory
+    allowed = _ALLOWED_BASE_DIRS
+    if not any(resolved.startswith(d) for d in allowed):
+        raise HTTPException(status_code=400, detail="File path is outside allowed directories")
+    return resolved
+
 
 @router.get("")
 @read_rate_limit

@@ -33,8 +33,13 @@ interface WebSocketState {
   lastMessage: unknown | null
 }
 
-const MAX_RECONNECT_ATTEMPTS = 5
-const RECONNECT_DELAY = 3000
+const MAX_RECONNECT_ATTEMPTS = 10
+const BASE_RECONNECT_DELAY = 3000
+const MAX_RECONNECT_DELAY = 30000
+
+// Module-level refs for timer IDs (not part of zustand state to avoid re-renders)
+let pingIntervalId: ReturnType<typeof setInterval> | null = null
+let reconnectTimerId: ReturnType<typeof setTimeout> | null = null
 
 export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   socket: null,
@@ -55,6 +60,13 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
 
     ws.onopen = () => {
       console.log('WebSocket connected')
+
+      // Clear any previous ping interval
+      if (pingIntervalId !== null) {
+        clearInterval(pingIntervalId)
+        pingIntervalId = null
+      }
+
       set({ 
         socket: ws, 
         isConnected: true,
@@ -62,11 +74,14 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
       })
       
       // Send ping to keep connection alive
-      const pingInterval = setInterval(() => {
+      pingIntervalId = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'ping' }))
         } else {
-          clearInterval(pingInterval)
+          if (pingIntervalId !== null) {
+            clearInterval(pingIntervalId)
+            pingIntervalId = null
+          }
         }
       }, 30000)
     }
@@ -85,16 +100,25 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
 
     ws.onclose = () => {
       console.log('WebSocket disconnected')
+
+      // Clear ping interval on close
+      if (pingIntervalId !== null) {
+        clearInterval(pingIntervalId)
+        pingIntervalId = null
+      }
+
+      const nextAttempts = reconnectAttempts + 1
       set({ 
         socket: null, 
         isConnected: false,
-        reconnectAttempts: reconnectAttempts + 1
+        reconnectAttempts: nextAttempts
       })
       
-      // Attempt reconnect
-      setTimeout(() => {
+      // Attempt reconnect with exponential backoff
+      const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, nextAttempts - 1), MAX_RECONNECT_DELAY)
+      reconnectTimerId = setTimeout(() => {
         get().connect()
-      }, RECONNECT_DELAY)
+      }, delay)
     }
 
     ws.onerror = (error) => {
@@ -103,10 +127,22 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   },
 
   disconnect: () => {
+    // Clear reconnect timer to prevent auto-reconnect after intentional disconnect
+    if (reconnectTimerId !== null) {
+      clearTimeout(reconnectTimerId)
+      reconnectTimerId = null
+    }
+
+    // Clear ping interval
+    if (pingIntervalId !== null) {
+      clearInterval(pingIntervalId)
+      pingIntervalId = null
+    }
+
     const { socket } = get()
     if (socket) {
       socket.close()
-      set({ socket: null, isConnected: false })
+      set({ socket: null, isConnected: false, reconnectAttempts: 0 })
     }
   },
 
