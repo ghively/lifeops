@@ -33,7 +33,7 @@ export function AgentChatPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [message, setMessage] = useState('')
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null | undefined>(undefined)
   const [pendingApproval, setPendingApproval] = useState<AgentApprovalRequest | null>(null)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const connect = useWebSocketStore((state) => state.connect)
@@ -66,7 +66,7 @@ export function AgentChatPage() {
       return
     }
 
-    if (selectedSessionId && sessionsQuery.data.sessions.some((session) => session.id === selectedSessionId)) {
+    if (selectedSessionId !== undefined) {
       return
     }
 
