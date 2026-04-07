@@ -3,7 +3,7 @@ fastapi==0.109.0
 structlog==24.4.0
 uvicorn[standard]==0.27.0
 websockets==12.0
-python-multipart==0.0.6
+python-multipart==0.0.24
 pydantic==2.12.5
 pydantic-settings==2.13.1
 qdrant-client==1.17.1
