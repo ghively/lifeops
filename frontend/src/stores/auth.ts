@@ -8,6 +8,7 @@ interface AuthState {
   refreshToken: string | null
   isAuthenticated: boolean
   isLoading: boolean
+  isInitialized: boolean
   error: string | null
 
   // Actions
@@ -17,7 +18,7 @@ interface AuthState {
   refreshUser: () => Promise<void>
   refreshAccessToken: () => Promise<void>
   clearError: () => void
-  initialize: () => void
+  initialize: () => Promise<void>
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -28,17 +29,16 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       isAuthenticated: false,
       isLoading: false,
+      isInitialized: false,
       error: null,
 
       login: async (email: string, password: string) => {
         set({ isLoading: true, error: null })
         try {
           const response = await authApi.login(email, password)
-          // SECURITY (H51): Access token kept in memory only (not localStorage) to mitigate XSS token theft.
-          // Refresh token is persisted in localStorage as a stopgap; the recommended migration path
-          // is to move refresh tokens to httpOnly cookies set by the backend, eliminating client-side
-          // access entirely. See: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+          // Store tokens: refresh in localStorage (survives refresh), access in memory+localStorage
           localStorage.setItem('refresh_token', response.refresh_token)
+          localStorage.setItem('access_token', response.access_token)
           set({
             user: response.user,
             accessToken: response.access_token,
@@ -57,8 +57,8 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null })
         try {
           const response = await authApi.register(data)
-          // SECURITY (H51): See login handler comment re: localStorage token storage.
           localStorage.setItem('refresh_token', response.refresh_token)
+          localStorage.setItem('access_token', response.access_token)
           set({
             user: response.user,
             accessToken: response.access_token,
@@ -83,59 +83,41 @@ export const useAuthStore = create<AuthState>()(
           console.error('Logout error:', error)
         } finally {
           localStorage.removeItem('refresh_token')
+          localStorage.removeItem('access_token')
           set({
             user: null,
             accessToken: null,
             refreshToken: null,
             isAuthenticated: false,
           })
+          // Clear persisted Zustand state so rehydration doesn't restore stale auth
+          useAuthStore.persist.clearStorage()
         }
       },
 
       refreshUser: async () => {
-        const { isAuthenticated } = get()
-        if (!isAuthenticated) return
-
-        set({ isLoading: true, error: null })
+        // Let the axios interceptor handle token refresh on 401.
+        // This just fetches the current user profile.
         try {
           const user = await authApi.getMe()
-          set({ user, isLoading: false })
-        } catch (error) {
-          // Token might be expired, try to refresh
-          const { refreshToken } = get()
-          if (refreshToken) {
-            try {
-              await get().refreshAccessToken()
-            } catch {
-              // H72: Refresh failed, clear auth state and redirect to login
-              localStorage.removeItem('refresh_token')
-              set({
-                user: null,
-                accessToken: null,
-                refreshToken: null,
-                isAuthenticated: false,
-                isLoading: false,
-              })
-              if (typeof window !== 'undefined') {
-                window.location.href = '/login'
-              }
-            }
-          } else {
-            set({ isLoading: false })
-          }
+          set({ user, isInitialized: true })
+        } catch {
+          // If getMe fails (e.g. refresh also failed), interceptor handles redirect
+          set({ isInitialized: true })
         }
       },
 
       refreshAccessToken: async () => {
-        const { refreshToken } = get()
+        const refreshToken = localStorage.getItem('refresh_token')
         if (!refreshToken) {
           throw new Error('No refresh token available')
         }
 
         try {
           const response = await authApi.refreshToken(refreshToken)
-          // SECURITY (H51): Access token kept in memory only.
+          localStorage.setItem('access_token', response.access_token)
           if (response.refresh_token) {
+            localStorage.setItem('refresh_token', response.refresh_token)
           }
           set({
             user: response.user,
@@ -145,6 +127,7 @@ export const useAuthStore = create<AuthState>()(
           })
         } catch (error) {
           localStorage.removeItem('refresh_token')
+          localStorage.removeItem('access_token')
           set({
             user: null,
             accessToken: null,
@@ -157,15 +140,36 @@ export const useAuthStore = create<AuthState>()(
 
       clearError: () => set({ error: null }),
 
-      initialize: () => {
+      initialize: async () => {
         const refreshToken = localStorage.getItem('refresh_token')
+        const accessToken = localStorage.getItem('access_token')
+
+        if (!refreshToken && !accessToken) {
+          set({ isInitialized: true, isAuthenticated: false })
+          return
+        }
+
+        // Restore tokens from localStorage into Zustand state
+        if (accessToken) {
+          set({ accessToken, isAuthenticated: true })
+        }
         if (refreshToken) {
-          set({
-            refreshToken,
-            isAuthenticated: true,
-          })
-          // Fetch user data
-          get().refreshUser()
+          set({ refreshToken })
+        }
+
+        // Verify the session is still valid by fetching user profile
+        // The axios interceptor will handle token refresh if needed
+        try {
+          const user = await authApi.getMe()
+          set({ user, isAuthenticated: true, isInitialized: true })
+        } catch {
+          // Session invalid — interceptor already tried refresh and failed
+          set({ isAuthenticated: false, isInitialized: true })
+          localStorage.removeItem('refresh_token')
+          localStorage.removeItem('access_token')
+          if (typeof window !== 'undefined') {
+            window.location.href = '/login'
+          }
         }
       },
     }),
@@ -178,8 +182,3 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 )
-
-// Initialize auth on app load
-if (typeof window !== 'undefined') {
-  useAuthStore.getState().initialize()
-}

@@ -134,7 +134,6 @@ export default defineConfig({
         manualChunks: {
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
           'vendor-slate': ['slate', 'slate-react', 'slate-history'],
-          'vendor-yjs': ['yjs', 'y-protocols', 'y-websocket', 'lib0'],
           'vendor-ui': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-select', '@radix-ui/react-popover'],
           'vendor-query': ['@tanstack/react-query', 'axios'],
         },

@@ -5,6 +5,7 @@ import { flushPendingLogs } from './lib/logger'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 import { useWebSocketStore } from './stores/websocket'
+import { useAuthStore } from './stores/auth'
 import { MainLayout } from './components/layout/MainLayout'
 import { ProtectedRoute } from './components/auth/ProtectedRoute'
 import { OutlinerPage } from './pages/OutlinerPage'
@@ -23,7 +24,12 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 1000 * 60 * 2, // 2 minutes
       gcTime: 1000 * 60 * 10, // 10 minutes (formerly cacheTime)
-      retry: 2,
+      retry: (failureCount, error) => {
+        // Never retry on 401 — auth interceptor handles refresh+redirect
+        const status = (error as { response?: { status?: number } })?.response?.status
+        if (status === 401) return false
+        return failureCount < 2
+      },
       retryDelay: (attemptIndex) => Math.min(1000 * Math.pow(2, attemptIndex), 5000),
       refetchOnReconnect: true,
       refetchOnWindowFocus: false,
@@ -36,16 +42,27 @@ const queryClient = new QueryClient({
 
 function App() {
   const { connect } = useWebSocketStore()
+  const { initialize, isAuthenticated, isInitialized } = useAuthStore()
+
+  useEffect(() => {
+    // Initialize auth on mount (verify tokens, fetch user)
+    initialize()
+  }, [initialize])
+
+  useEffect(() => {
+    // Only connect WebSocket after auth is confirmed
+    if (isInitialized && isAuthenticated) {
+      connect()
+    }
+    return () => {
+      useWebSocketStore.getState().disconnect()
+    }
+  }, [connect, isInitialized, isAuthenticated])
 
   useEffect(() => {
     // Flush any frontend logs queued while backend was unreachable
     flushPendingLogs()
-    // Connect to WebSocket on mount
-    connect()
-    return () => {
-      useWebSocketStore.getState().disconnect()
-    }
-  }, [connect])
+  }, [])
 
   return (
     <QueryClientProvider client={queryClient}>

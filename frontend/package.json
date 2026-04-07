@@ -39,12 +39,9 @@
     "slate-react": "^0.101.0",
     "tailwind-merge": "^2.1.0",
     "uuid": "^9.0.1",
-    "y-protocols": "^1.0.6",
-    "y-websocket": "^1.5.0",
-    "yjs": "^13.6.10",
     "zustand": "^4.4.7"
   },
-  "// audit-note": "Dependencies use ^ ranges and are ~18 months old. Run 'npm audit' to check for known vulnerabilities. Do NOT mass-upgrade — individual dep upgrades should be tested to avoid breakage.",
+  "// audit-note": "Dependencies use ^ ranges and are ~18 months old. Run 'npm audit' to check for known vulnerabilities. Do NOT mass-upgrade \u2014 individual dep upgrades should be tested to avoid breakage.",
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@testing-library/jest-dom": "^6.1.5",
