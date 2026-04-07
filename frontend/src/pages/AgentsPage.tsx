@@ -34,6 +34,7 @@ export function AgentsPage() {
   const [webhookName, setWebhookName] = useState('')
   const [webhookEventType, setWebhookEventType] = useState('external.trigger')
   const [cronError, setCronError] = useState('')
+  const [showSecret, setShowSecret] = useState<Record<string, boolean>>({})
 
   const runtimeAgentsQuery = useQuery({
     queryKey: ['runtime-agents'],
@@ -486,7 +487,12 @@ export function AgentsPage() {
                     <div key={webhook.id} className="rounded-lg border p-3">
                       <div className="font-medium">{webhook.name}</div>
                       <div className="mt-1 break-all text-xs text-muted-foreground">/api/v1/webhooks/incoming/{webhook.url_path}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">Secret: {webhook.secret}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Secret: {showSecret[webhook.id] ? webhook.secret : '••••••••••••••'}
+                        <button onClick={() => setShowSecret({ ...showSecret, [webhook.id]: !showSecret[webhook.id] })} className="ml-2 text-xs text-blue-500 hover:underline">
+                          {showSecret[webhook.id] ? 'Hide' : 'Show'}
+                        </button>
+                      </div>
                       <div className="mt-1 text-xs text-muted-foreground">Event: {webhook.event_type}</div>
                       <Button size="sm" variant="outline" className="mt-3" onClick={() => deleteWebhookMutation.mutate(webhook.id)}>
                         Delete
