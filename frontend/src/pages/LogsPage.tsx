@@ -12,7 +12,7 @@ import { QueryError } from '@/components/QueryError'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
-type SourceFilter = 'all' | 'backend' | 'frontend'
+type SourceFilter = 'all' | 'backend' | 'frontend' | 'nginx'
 type LevelFilter = 'all' | 'debug' | 'info' | 'warn' | 'error'
 
 interface DisplayLogEntry {
@@ -115,7 +115,7 @@ export function LogsPage() {
   const backendLogsQuery = useQuery({
     queryKey: ['system-logs', level, source, search],
     queryFn: () =>
-      systemApi.getLogs({
+      systemApi.getUnifiedLogs({
         level: level === 'all' ? undefined : level,
         source: source === 'all' ? undefined : source,
         search: search || undefined,
@@ -185,7 +185,7 @@ export function LogsPage() {
             <ScrollText className="h-6 w-6" />
             Logs
           </h1>
-          <p className="mt-1 text-muted-foreground">Backend and frontend application logs in one view.</p>
+          <p className="mt-1 text-muted-foreground">Backend, frontend, and nginx access logs in one view.</p>
         </div>
         <Button variant="outline" onClick={exportLogs}>
           <Download className="mr-2 h-4 w-4" />
@@ -249,6 +249,7 @@ export function LogsPage() {
                   <SelectItem value="all">All</SelectItem>
                   <SelectItem value="backend">Backend</SelectItem>
                   <SelectItem value="frontend">Frontend</SelectItem>
+                  <SelectItem value="nginx">Nginx</SelectItem>
                 </SelectContent>
               </Select>
             </div>

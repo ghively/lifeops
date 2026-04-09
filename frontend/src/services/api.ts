@@ -568,7 +568,17 @@ api.interceptors.response.use(
 
     if (error.response) {
       const message = (error.response.data as { detail?: string })?.detail || 'An error occurred'
-      throw new APIError(message, error.response.status, error.response.data)
+      const status = error.response.status
+      // Log 4xx/5xx errors for monitoring (H73)
+      if (status >= 400) {
+        const { logger } = await import('@/lib/logger')
+        logger.error('api', `HTTP ${status}: ${message}`, {
+          url: originalRequest?.url,
+          method: originalRequest?.method,
+          status,
+        })
+      }
+      throw new APIError(message, status, error.response.data)
     }
     throw new APIError(error.message || 'Network error')
   }
@@ -852,12 +862,24 @@ export const settingsApi = {
     api.post('/settings/backup', { type }).then((r) => r.data),
 }
 
+export interface SmokeTestResult {
+  status: 'pass' | 'fail'
+  duration_ms: number
+  results: Record<string, { status: 'pass' | 'fail' | 'warn' | 'skip'; message: string }>
+}
+
 export const systemApi = {
   getLogs: (params?: { level?: string; limit?: number; source?: string; search?: string }) =>
     api.get<{ logs: SystemLogEntry[]; count: number }>('/system/logs', { params }).then((r) => r.data),
 
+  getUnifiedLogs: (params?: { level?: string; limit?: number; source?: string; search?: string }) =>
+    api.get<{ logs: SystemLogEntry[]; count: number }>('/system/logs/unified', { params }).then((r) => r.data),
+
   getStatus: () =>
     api.get<SystemStatus>('/system/status').then((r) => r.data),
+
+  smokeTest: () =>
+    api.get<SmokeTestResult>('/system/smoke-test').then((r) => r.data),
 }
 
 // Relations API

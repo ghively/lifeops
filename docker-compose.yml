@@ -40,9 +40,11 @@ services:
       - WATCHED_FOLDERS_PATH=/app/data/watched_folders.json
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEBUG=true
+      - AGENTS_ROOT=/app/agents
     volumes:
       - backend-data:/app/data
       - backend-logs:/app/data/logs
+      - nginx-logs:/var/log/nginx:ro
       - ./backups:/app/backups
       # Mount host directories for file watching (configure as needed)
       - ${HOME}/Documents:/host/documents:ro
@@ -68,6 +70,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${FRONTEND_PORT:-3010}:80"
+    volumes:
+      - nginx-logs:/var/log/nginx
     depends_on:
       - backend
     restart: unless-stopped
@@ -100,6 +104,8 @@ volumes:
   backend-data:
     driver: local
   backend-logs:
+    driver: local
+  nginx-logs:
     driver: local
   file-watcher-data:
     driver: local
