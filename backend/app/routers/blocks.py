@@ -5,7 +5,19 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+import re
+
 from app.constants import COLLECTION_BLOCKS
+
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+
+
+def _normalize_block_id(raw_id: str) -> tuple[str, bool]:
+    """Return (uuid_string, was_legacy). Converts non-UUID IDs to UUIDs."""
+    if _UUID_RE.match(raw_id):
+        return raw_id, False
+    # Deterministic UUID5 from the legacy ID so the same legacy ID always maps to the same UUID
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"block://{raw_id}")), True
 from app.database.qdrant_client import qdrant_manager, QdrantManager
 from app.database.sqlite import sqlite_manager
 from app.middleware.auth import get_current_user
@@ -93,6 +105,7 @@ async def create_block(block: BlockCreate, request: Request, current_user: dict 
     """Create a new block."""
     client = qdrant_manager.get_async_client()
     block_id = block.id or str(uuid.uuid4())
+    block_id, _ = _normalize_block_id(block_id)
     embedding = await embedding_service.embed_text(block.content)
     sanitized_content = sanitize_content(block.content)
 
@@ -259,12 +272,24 @@ async def sync_blocks_for_object(
         }
         for point in existing
     ]
-    incoming_ids = {block.id for block in incoming_blocks if block.id}
+    # Normalize incoming IDs: build legacy->UUID mapping
+    id_map: dict[str, str] = {}  # raw_id -> normalized_id
+    for block in incoming_blocks:
+        if block.id:
+            normalized, _ = _normalize_block_id(block.id)
+            if normalized != block.id:
+                id_map[block.id] = normalized
+
+    incoming_ids = set()
+    for block in incoming_blocks:
+        bid = block.id or str(uuid.uuid4())
+        incoming_ids.add(id_map.get(bid, bid))
     deleted_ids = [block_id for block_id in existing_map if block_id not in incoming_ids]
 
     upsert_payloads = []
     for order, block in enumerate(incoming_blocks):
-        block_id = block.id or str(uuid.uuid4())
+        raw_id = block.id or str(uuid.uuid4())
+        block_id = id_map.get(raw_id, raw_id)
         existing_point = existing_map.get(block_id)
         existing_payload = dict(existing_point.payload or {}) if existing_point else {}
         created_at = existing_payload.get("created_at") if existing_payload else None
