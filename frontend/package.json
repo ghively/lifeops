@@ -33,6 +33,7 @@
     "lucide-react": "^0.294.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^6.21.0",
     "slate": "^0.101.0",
     "slate-history": "^0.100.0",
@@ -41,7 +42,7 @@
     "uuid": "^9.0.1",
     "zustand": "^4.4.7"
   },
-  "// audit-note": "Dependencies use ^ ranges and are ~18 months old. Run 'npm audit' to check for known vulnerabilities. Do NOT mass-upgrade \u2014 individual dep upgrades should be tested to avoid breakage.",
+  "// audit-note": "Dependencies use ^ ranges and are ~18 months old. Run 'npm audit' to check for known vulnerabilities. Do NOT mass-upgrade — individual dep upgrades should be tested to avoid breakage.",
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@testing-library/jest-dom": "^6.1.5",
