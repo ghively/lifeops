@@ -31,5 +31,14 @@ export default defineConfig({
       },
       testMatch: /app-features\.spec/,
     },
+    // Integration health tests — use stored session, verify actual functionality
+    {
+      name: 'chromium-integration',
+      use: {
+        browserName: 'chromium',
+        storageState: 'e2e/.auth-storage.json',
+      },
+      testMatch: /integration-health\.spec/,
+    },
   ],
 })
