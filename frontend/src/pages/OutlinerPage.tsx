@@ -4,7 +4,6 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Plus,
   MoreHorizontal,
   ChevronLeft,
   Share,
@@ -14,6 +13,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { OutlinerEditor, type BlockElement } from '@/components/outliner/OutlinerEditor'
+import { TodayPaper } from '@/components/home/TodayPaper'
 import { objectsApi, blocksApi, type BlockItem } from '@/services/api'
 import { useCollaborationStore } from '@/stores/collaboration'
 import { useAuthStore } from '@/stores/auth'
@@ -212,24 +212,9 @@ export function OutlinerPage() {
     )
   }
 
-  // No object selected - show welcome
+  // No object selected - show Today workspace
   if (!id) {
-    return (
-      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="text-center py-20">
-          <div className="text-6xl mb-4">📝</div>
-          <h1 className="text-3xl font-bold mb-4">Welcome to Knowledge OS</h1>
-          <p className="text-muted-foreground mb-8 max-w-md mx-auto">
-            Your personal knowledge management system with AI agent integration.
-            Create notes, assign tasks to agents, and index your files.
-          </p>
-          <Button onClick={handleCreatePage}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create Your First Page
-          </Button>
-        </div>
-      </div>
-    )
+    return <TodayPaper onCreatePage={handleCreatePage} />
   }
 
   const object = objectData as ObjectData

@@ -6,6 +6,8 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 
 import { useWebSocketStore } from './stores/websocket'
 import { useAuthStore } from './stores/auth'
+import { ThemeProvider } from './components/theme/ThemeProvider'
+import { TweaksPanel } from './components/theme/TweaksPanel'
 import { MainLayout } from './components/layout/MainLayout'
 import { ProtectedRoute } from './components/auth/ProtectedRoute'
 import { OutlinerPage } from './pages/OutlinerPage'
@@ -66,7 +68,9 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
       <BrowserRouter>
+        <TweaksPanel />
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<LoginPage />} />
@@ -96,6 +100,7 @@ function App() {
           />
         </Routes>
       </BrowserRouter>
+      </ThemeProvider>
     </QueryClientProvider>
   )
 }

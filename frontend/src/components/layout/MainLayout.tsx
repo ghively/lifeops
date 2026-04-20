@@ -1,46 +1,70 @@
 import { useEffect, useRef, useState } from 'react'
-import { PanelLeft, Search, Settings, Bell, Download } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import {
+  PanelLeft,
+  Search,
+  Bell,
+  Plus,
+  Settings2,
+  Download,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Sidebar } from './Sidebar'
-import { Button } from '@/components/ui/button'
-import { useNavigate } from 'react-router-dom'
 import { type AgentItem } from '@/services/api'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useInstallPrompt } from '@/hooks/useInstallPrompt'
 import { useAgentNotifications } from '@/hooks/useAgentNotifications'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 
 interface MainLayoutProps {
   children: React.ReactNode
 }
 
+// Map top-level route prefixes to human labels for the crumb trail.
+const ROUTE_LABELS: Array<{ prefix: string; label: string; accent?: boolean }> = [
+  { prefix: '/tasks', label: 'Tasks' },
+  { prefix: '/files', label: 'Files' },
+  { prefix: '/agents', label: 'Agents' },
+  { prefix: '/settings', label: 'Settings' },
+  { prefix: '/logs', label: 'Logs' },
+  { prefix: '/search', label: 'Search' },
+  { prefix: '/object', label: 'Notes', accent: true },
+  { prefix: '/', label: 'Today', accent: true },
+]
+
+function resolveCrumbs(pathname: string, search: string) {
+  if (pathname === '/' || pathname === '') {
+    return [
+      { label: 'Spaces', accent: false, current: false },
+      { label: 'Today', accent: true, current: true },
+    ]
+  }
+  const match = ROUTE_LABELS.find((r) => pathname.startsWith(r.prefix))
+  if (!match) {
+    return [{ label: 'Spaces', accent: false, current: true }]
+  }
+  const crumbs: Array<{ label: string; accent: boolean; current: boolean }> = [
+    { label: 'Spaces', accent: false, current: false },
+    { label: match.label, accent: !!match.accent, current: true },
+  ]
+  if (match.prefix === '/tasks' && search.includes('filter=today')) {
+    crumbs.push({ label: 'Today', accent: true, current: true })
+  }
+  return crumbs
+}
+
 export function MainLayout({ children }: MainLayoutProps) {
   const { isAuthenticated } = useAuthStore()
+  const { toggleTweaks } = useThemeStore()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const isMobile = useMediaQuery('(max-width: 1023px)')
   const { canInstall, install } = useInstallPrompt()
   const navigate = useNavigate()
+  const location = useLocation()
   useAgentNotifications(isAuthenticated)
-
-  useEffect(() => {
-    if (!isMobile) {
-      setMobileSidebarOpen(false)
-    }
-    return () => clearNotifTimer()
-  }, [isMobile])
-
-  const handleAgentClick = (agent: AgentItem) => {
-    setMobileSidebarOpen(false)
-    navigate(`/agents/${encodeURIComponent(agent.name)}/chat`)
-  }
-
-  const handleSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && searchQuery.trim()) {
-      navigate(`/search?q=${encodeURIComponent(searchQuery)}`)
-    }
-  }
 
   const [notifStatus, setNotifStatus] = useState<string | null>(null)
   const notifTimerRef = useRef<ReturnType<typeof setTimeout>>()
@@ -52,6 +76,22 @@ export function MainLayout({ children }: MainLayoutProps) {
     }
   }
 
+  useEffect(() => {
+    if (!isMobile) setMobileSidebarOpen(false)
+    return () => clearNotifTimer()
+  }, [isMobile])
+
+  const handleAgentClick = (agent: AgentItem) => {
+    setMobileSidebarOpen(false)
+    navigate(`/agents/${encodeURIComponent(agent.name)}/chat`)
+  }
+
+  const handleSearchSubmit = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && searchQuery.trim()) {
+      navigate(`/search?q=${encodeURIComponent(searchQuery)}`)
+    }
+  }
+
   const handleNotificationsClick = async () => {
     if (!('Notification' in window)) {
       setNotifStatus('unsupported')
@@ -59,104 +99,144 @@ export function MainLayout({ children }: MainLayoutProps) {
       notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
       return
     }
-
     if (Notification.permission === 'default') {
       const result = await Notification.requestPermission()
       setNotifStatus(result === 'granted' ? 'enabled' : 'denied')
-      clearNotifTimer()
-      notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
     } else if (Notification.permission === 'granted') {
       setNotifStatus('already')
-      clearNotifTimer()
-      notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
     } else {
       setNotifStatus('blocked')
-      clearNotifTimer()
-      notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
     }
+    clearNotifTimer()
+    notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
   }
 
+  const crumbs = resolveCrumbs(location.pathname, location.search)
+  const notifsOn =
+    notifStatus === 'enabled' ||
+    notifStatus === 'already' ||
+    (typeof Notification !== 'undefined' &&
+      Notification.permission === 'granted')
+
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* Sidebar */}
-      <Sidebar 
+    <div
+      className="flex"
+      style={{
+        height: '100vh',
+        width: '100%',
+        background: 'var(--bg)',
+        overflow: 'hidden',
+      }}
+    >
+      <Sidebar
         collapsed={isMobile ? false : sidebarCollapsed}
         isMobile={isMobile}
         mobileOpen={mobileSidebarOpen}
         onToggle={() => {
           if (isMobile) {
-            setMobileSidebarOpen(false)
+            setMobileSidebarOpen((o) => !o)
             return
           }
-          setSidebarCollapsed(!sidebarCollapsed)
+          setSidebarCollapsed((c) => !c)
         }}
         onAgentClick={handleAgentClick}
         onNavigate={() => setMobileSidebarOpen(false)}
       />
 
-      {/* Main Content */}
-      <div className={cn(
-        'flex min-h-screen flex-1 min-w-0 flex-col transition-all duration-300'
-      )}>
-        {/* Header */}
-        <header className="sticky top-0 z-30 border-b bg-card/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-card/85">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-            <Button
+      <div
+        className={cn('flex flex-1 min-w-0 flex-col')}
+        style={{ background: 'var(--bg)' }}
+      >
+        {/* Topbar */}
+        <header className="kos-topbar">
+          {isMobile && (
+            <button
+              type="button"
               aria-label="Toggle sidebar"
               data-testid="header-sidebar-toggle"
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                if (isMobile) {
-                  setMobileSidebarOpen((open) => !open)
-                  return
-                }
-                setSidebarCollapsed(!sidebarCollapsed)
-              }}
-              className="shrink-0 lg:hidden"
+              onClick={() => setMobileSidebarOpen((o) => !o)}
+              className="kos-icon-btn"
             >
-              <PanelLeft className="h-5 w-5" />
-            </Button>
-            
-            {/* Search */}
-            <div className="relative min-w-0 flex-1 sm:max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search... (Ctrl+K)"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={handleSearch}
-                className="h-10 w-full rounded-md bg-muted pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
+              <PanelLeft size={16} />
+            </button>
+          )}
+
+          <div className="kos-crumbs">
+            {crumbs.map((c, i) => (
+              <span key={`${c.label}-${i}`} style={{ display: 'inline-flex', gap: 8 }}>
+                <span
+                  className={cn(
+                    c.current && 'cur',
+                    c.current && c.accent && 'cur-accent',
+                  )}
+                >
+                  {c.label}
+                </span>
+                {i < crumbs.length - 1 && <span>/</span>}
+              </span>
+            ))}
           </div>
 
-            <div className="flex items-center justify-end gap-2">
+          <label className="kos-search">
+            <Search size={15} style={{ opacity: 0.7 }} />
+            <input
+              type="text"
+              placeholder="Search notes, tasks, files, agents…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchSubmit}
+              aria-label="Search"
+            />
+            <span className="kos-kbd">⌘K</span>
+          </label>
+
+          <div
+            className="kos-top-actions"
+            style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          >
             {canInstall && (
-              <Button aria-label="Install app" variant="outline" size="sm" onClick={() => void install()}>
-                <Download className="mr-2 h-4 w-4" />
-                Install
-              </Button>
+              <button
+                type="button"
+                aria-label="Install app"
+                className="kos-icon-btn"
+                onClick={() => void install()}
+                title="Install"
+              >
+                <Download size={15} />
+              </button>
             )}
-            <Button aria-label="Notifications" variant="ghost" size="icon" className="relative" onClick={() => void handleNotificationsClick()}>
-              <Bell className="h-5 w-5" />
-              {notifStatus === 'enabled' || notifStatus === 'already' ? (
-                <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500" />
-              ) : typeof Notification !== 'undefined' && Notification.permission !== 'granted' ? (
-                <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
-              ) : null}
-            </Button>
-            <Button aria-label="Settings" variant="ghost" size="icon" onClick={() => navigate('/settings')}>
-              <Settings className="h-5 w-5" />
-            </Button>
-          </div>
+            <button
+              type="button"
+              aria-label="New"
+              className="kos-icon-btn"
+              title="New"
+              onClick={() => navigate('/')}
+            >
+              <Plus size={16} />
+            </button>
+            <button
+              type="button"
+              aria-label="Notifications"
+              className={cn('kos-icon-btn', notifsOn && 'kos-dot-badge')}
+              onClick={() => void handleNotificationsClick()}
+              title="Notifications"
+            >
+              <Bell size={16} />
+            </button>
+            <button
+              type="button"
+              aria-label="Tweaks"
+              className="kos-icon-btn"
+              onClick={toggleTweaks}
+              title="Tweaks"
+            >
+              <Settings2 size={16} />
+            </button>
           </div>
         </header>
 
-        {/* Content Area */}
-        <main className="flex-1 overflow-auto">
+        {/* Content */}
+        <main className="flex-1 overflow-auto" style={{ background: 'var(--bg)' }}>
           {children}
         </main>
       </div>

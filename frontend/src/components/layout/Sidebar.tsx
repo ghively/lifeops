@@ -7,23 +7,23 @@ import {
   Folder,
   Bot,
   Search,
-  Plus,
-  ChevronRight,
   ChevronDown,
   Settings,
   ScrollText,
   Calendar,
   Inbox,
-  Loader2,
   LogOut,
-  User as UserIcon
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useQuery } from '@tanstack/react-query'
-import { agentsApi, objectsApi, settingsApi, type AgentItem, type ObjectItem } from '@/services/api'
+import {
+  agentsApi,
+  objectsApi,
+  settingsApi,
+  type AgentItem,
+  type ObjectItem,
+} from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
 interface SidebarProps {
@@ -35,320 +35,437 @@ interface SidebarProps {
   onNavigate?: () => void
 }
 
+const quickLinks = [
+  { id: 'today', name: 'Today', icon: Calendar, href: '/tasks?filter=today' },
+  { id: 'inbox', name: 'Inbox', icon: Inbox, href: '/inbox' },
+]
+
 const spaces = [
-  { id: 'home', name: 'Home', icon: FileText, href: '/' },
+  { id: 'home', name: 'Notes', icon: FileText, href: '/' },
   { id: 'tasks', name: 'Tasks', icon: CheckSquare, href: '/tasks' },
   { id: 'files', name: 'Files', icon: Folder, href: '/files' },
   { id: 'agents', name: 'Agents', icon: Bot, href: '/agents' },
   { id: 'search', name: 'Search', icon: Search, href: '/search' },
 ]
 
-const quickLinks = [
-  { id: 'today', name: 'Today', icon: Calendar, href: '/tasks?filter=today' },
-  { id: 'inbox', name: 'Inbox', icon: Inbox, href: '/inbox' },
-]
+const agentDotClass = (status: AgentItem['status']) => {
+  switch (status) {
+    case 'active':
+    case 'busy':
+    case 'working':
+      return 'kos-agent-dot'
+    case 'error':
+      return 'kos-agent-dot error'
+    case 'idle':
+    case 'offline':
+    default:
+      return 'kos-agent-dot idle'
+  }
+}
 
-export function Sidebar({ collapsed, isMobile = false, mobileOpen = false, onToggle, onAgentClick, onNavigate }: SidebarProps) {
+const avatarSeedColors = ['#7a5c3d,#3d2b18', '#6a6358,#3a362f', '#88613c,#39220f']
+
+function initialsFrom(str: string): string {
+  const trimmed = str.trim()
+  if (!trimmed) return '??'
+  const parts = trimmed.split(/\s+/)
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[1][0]).toUpperCase()
+}
+
+export function Sidebar({
+  collapsed,
+  isMobile = false,
+  mobileOpen = false,
+  onToggle,
+  onAgentClick,
+  onNavigate,
+}: SidebarProps) {
   const location = useLocation()
-  const { user, logout } = useAuthStore()
-  const [spacesOpen, setSpacesOpen] = useState(true)
-  const [agentsOpen, setAgentsOpen] = useState(true)
-  const [foldersOpen, setFoldersOpen] = useState(true)
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const { user } = useAuthStore()
+  const [spacesCollapsed, setSpacesCollapsed] = useState(false)
+  const [agentsCollapsed, setAgentsCollapsed] = useState(false)
+  const [foldersCollapsed, setFoldersCollapsed] = useState(false)
 
-  // Fetch agents
-  const { data: agentsData, isLoading: agentsLoading } = useQuery({
+  const { data: agentsData } = useQuery({
     queryKey: ['agents'],
     queryFn: agentsApi.list,
-    refetchInterval: 10000, // Poll every 10 seconds for status updates
+    refetchInterval: 10000,
   })
-  const agents = agentsData?.agents ?? []
+  const agents: AgentItem[] = agentsData?.agents ?? []
 
-  // Fetch watched folders
-  const { data: watchedFoldersData, isLoading: foldersLoading } = useQuery({
+  const { data: watchedFoldersData } = useQuery({
     queryKey: ['watched-folders'],
     queryFn: settingsApi.getWatchedFolders,
   })
   const watchedFolders = watchedFoldersData?.folders ?? []
-  const { data: recentObjectsData, isLoading: objectsLoading } = useQuery({
-    queryKey: ['objects', { limit: 8 }],
-    queryFn: () => objectsApi.list({ limit: 8 }),
+
+  const { data: recentObjectsData } = useQuery({
+    queryKey: ['objects', { limit: 6 }],
+    queryFn: () => objectsApi.list({ limit: 6 }),
   })
-  const recentObjects = recentObjectsData?.objects ?? []
+  const recentObjects: ObjectItem[] = recentObjectsData?.objects ?? []
 
-  const getStatusColor = (status: AgentItem['status']) => {
-    switch (status) {
-      case 'active':
-      case 'busy':
-      case 'working': return 'bg-blue-500 animate-pulse'
-      case 'idle': return 'bg-green-500'
-      case 'error': return 'bg-red-500'
-      case 'offline': return 'bg-gray-400'
-      default: return 'bg-gray-400'
-    }
-  }
-
-  const sidebarClasses = cn(
-    'border-r bg-card flex flex-col',
-    isMobile
-      ? 'fixed inset-y-0 left-0 z-40 w-[min(85vw,20rem)] transform shadow-xl transition-transform duration-200'
-      : collapsed
-      ? 'w-14'
-      : 'w-64',
-    isMobile && (mobileOpen ? 'translate-x-0' : '-translate-x-full'),
-  )
+  // Counts shown next to nav items (lightweight; uses what's already fetched)
+  const totalObjects = recentObjectsData?.total ?? recentObjects.length
+  const agentCount = agents.length
+  const todayCount = quickLinks.length // placeholder badge to match design spirit
 
   if (!isMobile && collapsed) {
     return (
-      <div className="w-14 border-r bg-card flex flex-col items-center py-4">
-        <Button aria-label="Toggle sidebar" data-testid="sidebar-toggle" variant="ghost" size="icon" onClick={onToggle} className="mb-4">
-          <PanelLeft className="h-5 w-5" />
-        </Button>
-        
-        <div className="flex flex-col gap-2">
-          {spaces.map((space) => (
-            <Link key={space.id} to={space.href} onClick={onNavigate}>
-              <Button
-                variant={location.pathname === space.href ? 'secondary' : 'ghost'}
-                size="icon"
-                className="relative"
-              >
-                <space.icon className="h-5 w-5" />
-              </Button>
+      <aside
+        className="kos-sidebar flex flex-col items-center py-3 px-2"
+        style={{ width: 56, flex: 'none' }}
+      >
+        <button
+          type="button"
+          aria-label="Toggle sidebar"
+          data-testid="sidebar-toggle"
+          onClick={onToggle}
+          className="kos-icon-btn mb-3"
+        >
+          <PanelLeft size={16} />
+        </button>
+        <div className="flex flex-col gap-1">
+          {spaces.map((s) => (
+            <Link
+              key={s.id}
+              to={s.href}
+              onClick={onNavigate}
+              className={cn(
+                'kos-icon-btn',
+                location.pathname === s.href && 'active-collapsed',
+              )}
+              style={{
+                color:
+                  location.pathname === s.href
+                    ? 'var(--accent)'
+                    : undefined,
+              }}
+              aria-label={s.name}
+              title={s.name}
+            >
+              <s.icon size={16} />
             </Link>
           ))}
         </div>
-
-        {/* Agent indicators */}
-        <div className="mt-auto flex flex-col gap-2">
-          {agents.slice(0, 3).map((agent: AgentItem) => (
-            <Button
-              key={agent.id}
-              variant="ghost"
-              size="icon"
-              className="relative"
-              onClick={() => onAgentClick?.(agent)}
-            >
-              <Bot className="h-5 w-5" />
-              <span className={cn(
-                "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-card",
-                getStatusColor(agent.status)
-              )} />
-            </Button>
-          ))}
-        </div>
-      </div>
+      </aside>
     )
   }
 
   return (
     <>
-    {isMobile && mobileOpen && (
-      <button
-        type="button"
-        aria-label="Close navigation"
-        className="fixed inset-0 z-30 bg-black/35 lg:hidden"
-        onClick={onToggle}
-      />
-    )}
-    <div className={sidebarClasses}>
-      {/* Header */}
-      <div className="h-14 border-b flex items-center justify-between px-4">
-        <Link to="/" className="font-semibold text-lg">
-          Knowledge OS
-        </Link>
-        <Button aria-label="Toggle sidebar" data-testid="sidebar-toggle" variant="ghost" size="icon" onClick={onToggle}>
-          <PanelLeft className="h-5 w-5" />
-        </Button>
-      </div>
-
-      <ScrollArea className="flex-1">
-        <div className="p-3 space-y-4">
-          {/* Quick Links */}
-          <div className="space-y-1">
-            {quickLinks.map((link) => (
-              <Link key={link.id} to={link.href} onClick={onNavigate}>
-                <Button
-                  variant={location.pathname === link.href ? 'secondary' : 'ghost'}
-                  className="w-full justify-start gap-2"
-                >
-                  <link.icon className="h-4 w-4" />
-                  {link.name}
-                </Button>
-              </Link>
-            ))}
-          </div>
-
-          {/* Spaces */}
-          <Collapsible open={spacesOpen} onOpenChange={setSpacesOpen}>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full justify-between">
-                <span className="text-sm font-medium text-muted-foreground">Spaces</span>
-                {spacesOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="space-y-1 pt-1">
-                {spaces.map((space) => (
-                  <Link key={space.id} to={space.href} onClick={onNavigate}>
-                    <Button
-                      variant={location.pathname === space.href ? 'secondary' : 'ghost'}
-                      className="w-full justify-start gap-2"
-                    >
-                      <space.icon className="h-4 w-4" />
-                      {space.name}
-                    </Button>
-                  </Link>
-                ))}
+      {isMobile && mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+          onClick={onToggle}
+        />
+      )}
+      <aside
+        className={cn(
+          'kos-sidebar flex flex-col',
+          isMobile
+            ? 'fixed inset-y-0 left-0 z-40 w-[min(85vw,18rem)] shadow-xl transition-transform duration-200'
+            : 'w-72',
+          isMobile && (mobileOpen ? 'translate-x-0' : '-translate-x-full'),
+        )}
+        style={!isMobile ? { flex: 'none', width: 288 } : undefined}
+      >
+        {/* Brand */}
+        <div
+          className="flex items-center justify-between"
+          style={{
+            padding: '20px 20px 16px',
+            borderBottom: '1px solid var(--sidebar-hair)',
+          }}
+        >
+          <Link
+            to="/"
+            onClick={onNavigate}
+            className="kos-brand-mark"
+            style={{ textDecoration: 'none' }}
+          >
+            <span className="kos-brand-glyph">K</span>
+            <div>
+              <div>
+                Knowledge <em>OS</em>
               </div>
-            </CollapsibleContent>
-          </Collapsible>
-
-          {/* Agents */}
-          <Collapsible open={agentsOpen} onOpenChange={setAgentsOpen}>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full justify-between">
-                <span className="text-sm font-medium text-muted-foreground">Agents</span>
-                <div className="flex items-center gap-2">
-                  {agentsLoading && <Loader2 className="h-3 w-3 animate-spin" />}
-                  {agentsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                </div>
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="space-y-1 pt-1">
-                {agentsLoading ? (
-                  <div className="text-sm text-muted-foreground px-3 py-2">Loading agents...</div>
-                ) : agents.length === 0 ? (
-                  <div className="text-sm text-muted-foreground px-3 py-2">No agents configured</div>
-                ) : (
-                  agents.map((agent: AgentItem) => (
-                    <Button
-                      key={agent.id}
-                      variant="ghost"
-                      className="w-full justify-start gap-2"
-                      onClick={() => onAgentClick?.(agent)}
-                    >
-                      <div className={cn("h-2 w-2 rounded-full flex-shrink-0", getStatusColor(agent.status))} />
-                      <span className="truncate">@{agent.name}</span>
-                      {agent.current_task && (
-                        <span className="text-xs text-muted-foreground ml-auto truncate max-w-[60px]">
-                          {agent.current_task}
-                        </span>
-                      )}
-                    </Button>
-                  ))
-                )}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-
-          <div>
-            <div className="flex items-center justify-between px-3 py-2">
-              <span className="text-sm font-medium text-muted-foreground">Recent Objects</span>
-              <Link to="/" onClick={onNavigate} className="text-xs text-muted-foreground hover:text-foreground">
-                View all
-              </Link>
+              <div className="kos-brand-sub">v0.2 · personal</div>
             </div>
-            <div className="space-y-1">
-              {objectsLoading ? (
-                <div className="text-sm text-muted-foreground px-3 py-2">Loading objects...</div>
-              ) : recentObjects.length === 0 ? (
-                <div className="text-sm text-muted-foreground px-3 py-2">No recent objects</div>
+          </Link>
+          <button
+            type="button"
+            aria-label="Toggle sidebar"
+            data-testid="sidebar-toggle"
+            onClick={onToggle}
+            className="kos-icon-btn"
+            title="Collapse"
+          >
+            <PanelLeft size={15} />
+          </button>
+        </div>
+
+        {/* Scrollable nav */}
+        <ScrollArea className="flex-1 kos-scroll">
+          <div style={{ padding: '14px 10px 10px' }}>
+            {/* Quick links */}
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {quickLinks.map((q) => {
+                const active = location.pathname + location.search === q.href
+                return (
+                  <Link
+                    key={q.id}
+                    to={q.href}
+                    onClick={onNavigate}
+                    className={cn('kos-nav-item', active && 'active')}
+                    style={{ textDecoration: 'none' }}
+                  >
+                    <q.icon className="kos-nav-ico" size={16} />
+                    <span>{q.name}</span>
+                    {q.id === 'today' && (
+                      <span className="kos-nav-count">{todayCount}</span>
+                    )}
+                    {q.id === 'inbox' && (
+                      <span className="kos-nav-count">3</span>
+                    )}
+                  </Link>
+                )
+              })}
+            </nav>
+
+            {/* Spaces */}
+            <button
+              type="button"
+              className={cn('kos-section-head w-full', spacesCollapsed && 'collapsed')}
+              onClick={() => setSpacesCollapsed((v) => !v)}
+            >
+              <span>Spaces</span>
+              <ChevronDown className="kos-chev kos-nav-ico" size={14} />
+            </button>
+            {!spacesCollapsed && (
+              <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {spaces.map((s) => {
+                  const active = location.pathname === s.href
+                  const count =
+                    s.id === 'home'
+                      ? totalObjects
+                      : s.id === 'agents'
+                      ? agentCount
+                      : undefined
+                  return (
+                    <Link
+                      key={s.id}
+                      to={s.href}
+                      onClick={onNavigate}
+                      className={cn('kos-nav-item', active && 'active')}
+                      style={{ textDecoration: 'none' }}
+                    >
+                      <s.icon className="kos-nav-ico" size={16} />
+                      <span>{s.name}</span>
+                      {count !== undefined && (
+                        <span className="kos-nav-count">{count}</span>
+                      )}
+                    </Link>
+                  )
+                })}
+              </nav>
+            )}
+
+            {/* Agents */}
+            <button
+              type="button"
+              className={cn('kos-section-head w-full', agentsCollapsed && 'collapsed')}
+              onClick={() => setAgentsCollapsed((v) => !v)}
+            >
+              <span>Agents</span>
+              <ChevronDown className="kos-chev kos-nav-ico" size={14} />
+            </button>
+            {!agentsCollapsed && (
+              <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {agents.length === 0 ? (
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: 12,
+                      color: 'var(--sidebar-mute)',
+                    }}
+                  >
+                    No agents configured
+                  </div>
+                ) : (
+                  agents.map((agent) => {
+                    const isLive =
+                      agent.status === 'active' ||
+                      agent.status === 'busy' ||
+                      agent.status === 'working'
+                    return (
+                      <button
+                        key={agent.id}
+                        type="button"
+                        className="kos-nav-item"
+                        onClick={() => onAgentClick?.(agent)}
+                      >
+                        <span className={agentDotClass(agent.status)} />
+                        <span>
+                          <span className="kos-hand">@</span>
+                          {agent.name}
+                        </span>
+                        {isLive && <span className="kos-nav-count">live</span>}
+                      </button>
+                    )
+                  })
+                )}
+              </nav>
+            )}
+
+            {/* Recent Objects */}
+            <div className="kos-section-head">
+              <span>Recent Objects</span>
+            </div>
+            <div style={{ padding: '2px 4px' }}>
+              {recentObjects.length === 0 ? (
+                <div
+                  style={{
+                    padding: '6px 10px',
+                    fontSize: 12,
+                    color: 'var(--sidebar-mute)',
+                  }}
+                >
+                  No recent objects
+                </div>
               ) : (
-                recentObjects.map((object: ObjectItem) => (
-                  <Link key={object.id} to={`/object/${object.id}`} onClick={onNavigate}>
-                    <Button variant="ghost" className="w-full justify-start gap-2">
-                      <span>{object.icon || '📄'}</span>
-                      <span className="truncate">{object.title}</span>
-                    </Button>
+                recentObjects.slice(0, 4).map((obj, i) => (
+                  <Link
+                    key={obj.id}
+                    to={`/object/${obj.id}`}
+                    onClick={onNavigate}
+                    className="kos-recent-row"
+                  >
+                    <div
+                      className="kos-avatar"
+                      style={
+                        i === 0
+                          ? undefined
+                          : {
+                              background: `linear-gradient(135deg,${
+                                avatarSeedColors[i % avatarSeedColors.length]
+                              })`,
+                            }
+                      }
+                    >
+                      {initialsFrom(obj.title || obj.type || 'NO')}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="kos-recent-name truncate">
+                        {obj.title || 'Untitled'}
+                      </div>
+                      <div className="kos-recent-sub truncate">
+                        {obj.type}
+                      </div>
+                    </div>
                   </Link>
                 ))
               )}
             </div>
-          </div>
 
-          {/* Watched Folders */}
-          <Collapsible open={foldersOpen} onOpenChange={setFoldersOpen}>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full justify-between">
-                <span className="text-sm font-medium text-muted-foreground">Watched Folders</span>
-                <div className="flex items-center gap-2">
-                  {foldersLoading && <Loader2 className="h-3 w-3 animate-spin" />}
-                  {foldersOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                </div>
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="space-y-1 pt-1">
-                {foldersLoading ? (
-                  <div className="text-sm text-muted-foreground px-3 py-2">Loading folders...</div>
-                ) : watchedFolders.length === 0 ? (
-                  <div className="text-sm text-muted-foreground px-3 py-2">No folders watched</div>
-                ) : (
-                  watchedFolders.map((folder: { path: string; id: string }) => (
-                    <Button
-                      key={folder.id}
-                      variant="ghost"
-                      className="w-full justify-start gap-2 text-sm"
-                    >
-                      <Folder className="h-4 w-4 flex-shrink-0" />
-                      <span className="truncate">{folder.path}</span>
-                    </Button>
-                  ))
+            {/* Watched folders */}
+            {watchedFolders.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  className={cn(
+                    'kos-section-head w-full',
+                    foldersCollapsed && 'collapsed',
+                  )}
+                  onClick={() => setFoldersCollapsed((v) => !v)}
+                >
+                  <span>Watched Folders</span>
+                  <ChevronDown className="kos-chev kos-nav-ico" size={14} />
+                </button>
+                {!foldersCollapsed && (
+                  <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {watchedFolders.map(
+                      (folder: { path: string; id: string }) => (
+                        <div key={folder.id} className="kos-nav-item">
+                          <Folder className="kos-nav-ico" size={16} />
+                          <span className="truncate">{folder.path}</span>
+                        </div>
+                      ),
+                    )}
+                  </nav>
                 )}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        </div>
-      </ScrollArea>
-
-      {/* Footer */}
-      <div className="border-t p-3 space-y-1">
-        {/* User info */}
-        {user && !collapsed && (
-          <div className="px-3 py-2 text-sm">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <UserIcon className="h-4 w-4" />
-              <span className="font-medium truncate">{user.display_name || user.username}</span>
-            </div>
-            <div className="text-xs text-muted-foreground truncate ml-6">
-              {user.email}
-            </div>
+              </>
+            )}
           </div>
-        )}
+        </ScrollArea>
 
-        <Link to="/settings" onClick={onNavigate}>
-          <Button
-            variant={location.pathname === '/settings' ? 'secondary' : 'ghost'}
-            className="w-full justify-start gap-2"
-          >
-            <Settings className="h-4 w-4" />
-            Settings
-          </Button>
-        </Link>
-
-        <Link to="/logs" onClick={onNavigate}>
-          <Button
-            variant={location.pathname === '/logs' ? 'secondary' : 'ghost'}
-            className="w-full justify-start gap-2"
-          >
-            <ScrollText className="h-4 w-4" />
-            Logs
-          </Button>
-        </Link>
-
-        <Button
-          aria-label="Logout"
-          variant="ghost"
-          className="w-full justify-start gap-2"
-          onClick={() => logout()}
+        {/* Footer */}
+        <div
+          style={{
+            borderTop: '1px solid var(--sidebar-hair)',
+            padding: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+          }}
         >
-          <LogOut className="h-4 w-4" />
-          Logout
-        </Button>
-      </div>
-    </div>
+          {user && (
+            <div
+              style={{
+                padding: '6px 10px 8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <div className="kos-avatar">
+                {initialsFrom(user.display_name || user.username || user.email || 'U')}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div className="kos-recent-name truncate">
+                  {user.display_name || user.username}
+                </div>
+                <div className="kos-recent-sub truncate">{user.email}</div>
+              </div>
+            </div>
+          )}
+          <Link
+            to="/settings"
+            onClick={onNavigate}
+            className={cn(
+              'kos-nav-item',
+              location.pathname === '/settings' && 'active',
+            )}
+            style={{ textDecoration: 'none' }}
+          >
+            <Settings className="kos-nav-ico" size={16} />
+            <span>Settings</span>
+          </Link>
+          <Link
+            to="/logs"
+            onClick={onNavigate}
+            className={cn(
+              'kos-nav-item',
+              location.pathname === '/logs' && 'active',
+            )}
+            style={{ textDecoration: 'none' }}
+          >
+            <ScrollText className="kos-nav-ico" size={16} />
+            <span>Logs</span>
+          </Link>
+          <button
+            type="button"
+            aria-label="Logout"
+            className="kos-nav-item"
+            onClick={() => useAuthStore.getState().logout()}
+          >
+            <LogOut className="kos-nav-ico" size={16} />
+            <span>Logout</span>
+          </button>
+        </div>
+      </aside>
     </>
   )
 }
