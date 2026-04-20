@@ -35,9 +35,9 @@
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.21.0",
-    "slate": "^0.101.0",
-    "slate-history": "^0.100.0",
-    "slate-react": "^0.101.0",
+    "slate": "^0.124.1",
+    "slate-history": "^0.113.1",
+    "slate-react": "^0.124.0",
     "tailwind-merge": "^2.1.0",
     "uuid": "^9.0.1",
     "zustand": "^4.4.7"
