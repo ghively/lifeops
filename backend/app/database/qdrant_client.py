@@ -143,7 +143,7 @@ class QdrantManager:
                     port=settings.qdrant_port,
                     api_key=settings.qdrant_api_key or None,
                     prefer_grpc=False,
-                    timeout=5.0,
+                    timeout=30.0,
                 )
                 # Verify connection
                 self.client.get_collections()
@@ -171,7 +171,7 @@ class QdrantManager:
                     port=settings.qdrant_port,
                     api_key=settings.qdrant_api_key or None,
                     prefer_grpc=False,
-                    timeout=5.0,
+                    timeout=30.0,
                 )
                 await self.async_client.get_collections()
                 logger.info("Qdrant async client reconnected (attempt %d)", attempt)
@@ -195,14 +195,14 @@ class QdrantManager:
                 port=settings.qdrant_port,
                 api_key=settings.qdrant_api_key or None,
                 prefer_grpc=False,
-                timeout=5.0,
+                timeout=30.0,
             )
             self.async_client = AsyncQdrantClient(
                 host=settings.qdrant_host,
                 port=settings.qdrant_port,
                 api_key=settings.qdrant_api_key or None,
                 prefer_grpc=False,
-                timeout=5.0,
+                timeout=30.0,
             )
         except Exception as exc:
             raise RuntimeError(
