@@ -5,33 +5,10 @@ Tests for Pydantic model validation.
 import pytest
 from pydantic import ValidationError
 
-from app.models.objects import (
-    ObjectProperties,
-    Object,
-    ObjectCreate,
-    ObjectUpdate,
-    ObjectListResponse
-)
-from app.models.blocks import (
-    BlockProperties,
-    Block,
-    BlockCreate,
-    BlockUpdate,
-    BlockListResponse
-)
-from app.models.tasks import (
-    TaskStatus,
-    Priority,
-    Task,
-    TaskCreate,
-    TaskUpdate,
-    TaskListResponse
-)
-from app.models.relations import (
-    RelationCreate,
-    RelationUpdate,
-    RelationListResponse
-)
+from app.models.blocks import Block, BlockCreate, BlockListResponse, BlockProperties, BlockUpdate
+from app.models.objects import Object, ObjectCreate, ObjectListResponse, ObjectProperties, ObjectUpdate
+from app.models.relations import RelationCreate, RelationListResponse, RelationUpdate
+from app.models.tasks import Priority, Task, TaskCreate, TaskListResponse, TaskStatus, TaskUpdate
 
 
 @pytest.mark.asyncio
@@ -379,7 +356,7 @@ class TestModelValidation:
             "properties": {
                 "tags": [],
                 "notes": "some url: https://example.com",
-            }
+            },
         }
 
         obj = ObjectCreate(**data)
@@ -403,7 +380,7 @@ class TestModelValidation:
             "type": "note",
             "properties": {
                 "tags": "not-an-array",
-            }
+            },
         }
 
         # Tags in properties should be a list

@@ -1,4 +1,5 @@
 """Tool sandboxing and approval flow."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +10,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from app.config import BASE_DIR
-
 
 MAX_TOOL_OUTPUT_BYTES = 10 * 1024
 SECRET_ENV_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in ["token", "secret", "password", "key"]]
@@ -88,4 +88,3 @@ class ToolSandbox:
 
 
 tool_approval_manager = ToolApprovalManager()
-

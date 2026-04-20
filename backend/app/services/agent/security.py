@@ -1,4 +1,5 @@
 """Prompt injection defenses for the agent runtime."""
+
 from __future__ import annotations
 
 import logging
@@ -91,4 +92,3 @@ class AgentSecurityManager:
                 details={"source": source, "patterns": findings},
             )
         return findings
-

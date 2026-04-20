@@ -1,4 +1,5 @@
 """LLM provider abstraction for agent runtime."""
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,9 @@ class LLMRouter:
             encoding = tiktoken.encoding_for_model(model or self.default_config.model)
             return len(encoding.encode(text or ""))
         except Exception as exc:
-            logger.warning("tiktoken unavailable for model %s (%s), using len//4 fallback", model or self.default_config.model, exc)
+            logger.warning(
+                "tiktoken unavailable for model %s (%s), using len//4 fallback", model or self.default_config.model, exc
+            )
             return max(1, len(text or "") // 4)
 
     async def complete(
@@ -51,7 +54,7 @@ class LLMRouter:
                 logger.warning("LLM call failed on attempt %s: %s", attempt + 1, exc)
                 if attempt >= self.retries:
                     break
-                await asyncio.sleep(min(2 ** attempt, 3))
+                await asyncio.sleep(min(2**attempt, 3))
         raise RuntimeError(f"LLM request failed: {last_error}") from last_error
 
     async def stream_complete(
@@ -67,7 +70,7 @@ class LLMRouter:
             return
         chunk_size = 120
         for index in range(0, len(text), chunk_size):
-            yield text[index:index + chunk_size]
+            yield text[index : index + chunk_size]
 
     async def _complete_once(
         self,
@@ -86,6 +89,7 @@ class LLMRouter:
         if not base_url:
             if config.provider == "ollama":
                 from app.config import settings
+
                 base_url = settings.llm_base_url or "http://host.docker.internal:11434/v1"
             elif config.provider == "ollama-local":
                 base_url = "http://localhost:11434/v1"
@@ -111,7 +115,12 @@ class LLMRouter:
         response = await client.chat.completions.create(**payload)
         if not response.choices:
             logger.warning("LLM returned empty choices for model %s", config.model)
-            return {"content": "", "tool_calls": [], "finish_reason": "stop", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+            return {
+                "content": "",
+                "tool_calls": [],
+                "finish_reason": "stop",
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            }
         choice = response.choices[0]
         message = choice.message
         tool_calls = []
@@ -132,6 +141,8 @@ class LLMRouter:
             "finish_reason": choice.finish_reason,
             "usage": {
                 "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) if getattr(response, "usage", None) else 0,
-                "completion_tokens": getattr(response.usage, "completion_tokens", 0) if getattr(response, "usage", None) else 0,
+                "completion_tokens": (
+                    getattr(response.usage, "completion_tokens", 0) if getattr(response, "usage", None) else 0
+                ),
             },
         }

@@ -1,4 +1,5 @@
 """Agents Router - Agent management and chat."""
+
 import logging
 import uuid
 from typing import Optional
@@ -7,9 +8,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.database.qdrant_client import qdrant_manager
+from app.database.sqlite import sqlite_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
-from app.database.sqlite import sqlite_manager
 from app.services.embedding import embedding_service
 from app.services.openclaw import openclaw_service
 from app.services.websocket_manager import WebSocketEvents, websocket_manager
@@ -26,7 +27,11 @@ class ChatRequest(BaseModel):
 
 
 DEFAULT_AGENTS = [
-    {"name": "researcher", "description": "Research and information gathering agent", "capabilities": ["search", "summarize", "analyze"]},
+    {
+        "name": "researcher",
+        "description": "Research and information gathering agent",
+        "capabilities": ["search", "summarize", "analyze"],
+    },
     {"name": "writer", "description": "Writing and editing agent", "capabilities": ["write", "edit", "format"]},
 ]
 
@@ -48,24 +53,26 @@ async def _ensure_agent_objects():
         embedding = await embedding_service.embed_text(agent["description"])
         await client.upsert(
             collection_name="objects",
-            points=[{
-                "id": agent_id,
-                "vector": embedding.tolist(),
-                "payload": {
+            points=[
+                {
                     "id": agent_id,
-                    "type": "agent",
-                    "title": agent["name"],
-                    "icon": "🤖",
-                    "content": agent["description"],
-                    "layout": "profile",
-                    "properties": {
-                        "agent_name": agent["name"],
-                        "capabilities": agent["capabilities"],
-                        "agent_status": "idle",
-                        "last_seen": utc_now_iso(),
+                    "vector": embedding.tolist(),
+                    "payload": {
+                        "id": agent_id,
+                        "type": "agent",
+                        "title": agent["name"],
+                        "icon": "🤖",
+                        "content": agent["description"],
+                        "layout": "profile",
+                        "properties": {
+                            "agent_name": agent["name"],
+                            "capabilities": agent["capabilities"],
+                            "agent_status": "idle",
+                            "last_seen": utc_now_iso(),
+                        },
                     },
-                },
-            }],
+                }
+            ],
         )
 
 
@@ -118,7 +125,9 @@ async def get_agent(name: str, request: Request, current_user: dict = Depends(ge
 
 @router.post("/{name}/chat")
 @write_rate_limit
-async def chat_with_agent(name: str, request: Request, data: ChatRequest = Body(...), current_user: dict = Depends(get_current_user)):
+async def chat_with_agent(
+    name: str, request: Request, data: ChatRequest = Body(...), current_user: dict = Depends(get_current_user)
+):
     """Send a message to an agent and store chat logs."""
     client = qdrant_manager.get_async_client()
     content = data.content.strip()
@@ -131,20 +140,22 @@ async def chat_with_agent(name: str, request: Request, data: ChatRequest = Body(
     user_embedding = await embedding_service.embed_text(content)
     await client.upsert(
         collection_name="chat_logs",
-        points=[{
-            "id": user_message_id,
-            "vector": user_embedding.tolist(),
-            "payload": {
+        points=[
+            {
                 "id": user_message_id,
-                "session_id": session_id,
-                "agent_name": name,
-                "message_type": "user",
-                "content": content,
-                "timestamp": utc_now_iso(),
-                "related_task": related_task,
-                "metadata": {},
-            },
-        }],
+                "vector": user_embedding.tolist(),
+                "payload": {
+                    "id": user_message_id,
+                    "session_id": session_id,
+                    "agent_name": name,
+                    "message_type": "user",
+                    "content": content,
+                    "timestamp": utc_now_iso(),
+                    "related_task": related_task,
+                    "metadata": {},
+                },
+            }
+        ],
     )
 
     try:
@@ -162,20 +173,22 @@ async def chat_with_agent(name: str, request: Request, data: ChatRequest = Body(
     agent_embedding = await embedding_service.embed_text(agent_content)
     await client.upsert(
         collection_name="chat_logs",
-        points=[{
-            "id": agent_message_id,
-            "vector": agent_embedding.tolist(),
-            "payload": {
+        points=[
+            {
                 "id": agent_message_id,
-                "session_id": session_id,
-                "agent_name": name,
-                "message_type": "agent",
-                "content": agent_content,
-                "timestamp": utc_now_iso(),
-                "related_task": related_task,
-                "metadata": response.get("metadata", {}),
-            },
-        }],
+                "vector": agent_embedding.tolist(),
+                "payload": {
+                    "id": agent_message_id,
+                    "session_id": session_id,
+                    "agent_name": name,
+                    "message_type": "agent",
+                    "content": agent_content,
+                    "timestamp": utc_now_iso(),
+                    "related_task": related_task,
+                    "metadata": response.get("metadata", {}),
+                },
+            }
+        ],
     )
 
     await sqlite_manager.execute(

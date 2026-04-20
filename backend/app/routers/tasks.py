@@ -1,4 +1,5 @@
 """Tasks Router - Task management and assignment."""
+
 import asyncio
 import logging
 import os
@@ -23,7 +24,9 @@ class UpdateTaskStatusRequest(BaseModel):
     current_action: Optional[str] = None
     notes: Optional[str] = None
     agent_name: Optional[str] = None
-from app.database.qdrant_client import qdrant_manager, QdrantManager
+
+
+from app.database.qdrant_client import QdrantManager, qdrant_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.models.tasks import TaskListResponse
@@ -130,7 +133,8 @@ async def list_tasks(
 async def get_task(task_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get a single task."""
     client = qdrant_manager.get_async_client()
-    result = await QdrantManager.safe_retrieve(client, 
+    result = await QdrantManager.safe_retrieve(
+        client,
         collection_name="objects",
         ids=[task_id],
         with_payload=True,
@@ -161,7 +165,8 @@ async def assign_task(
     if priority not in VALID_PRIORITIES:
         raise HTTPException(status_code=400, detail=f"Invalid priority: {priority}")
 
-    task_result = await QdrantManager.safe_retrieve(client, 
+    task_result = await QdrantManager.safe_retrieve(
+        client,
         collection_name="objects",
         ids=[task_id],
         with_payload=True,
@@ -196,21 +201,23 @@ async def assign_task(
         embedding = await embedding_service.embed_text(heartbeat_content)
         await client.upsert(
             collection_name="agent_memories",
-            points=[{
-                "id": memory_id,
-                "vector": embedding.tolist(),
-                "payload": {
+            points=[
+                {
                     "id": memory_id,
-                    "agent_name": agent_name,
-                    "memory_type": "action",
-                    "content": heartbeat_content,
-                    "importance": 5,
-                    "related_objects": additional_context,
-                    "related_tasks": [task_id],
-                    "session_id": f"heartbeat:{task_id}",
-                    "timestamp": utc_now_iso(),
-                },
-            }],
+                    "vector": embedding.tolist(),
+                    "payload": {
+                        "id": memory_id,
+                        "agent_name": agent_name,
+                        "memory_type": "action",
+                        "content": heartbeat_content,
+                        "importance": 5,
+                        "related_objects": additional_context,
+                        "related_tasks": [task_id],
+                        "session_id": f"heartbeat:{task_id}",
+                        "timestamp": utc_now_iso(),
+                    },
+                }
+            ],
         )
         response = {
             "status": "queued",
@@ -255,7 +262,8 @@ async def update_task_status(
     if status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}")
 
-    task_result = await QdrantManager.safe_retrieve(client, 
+    task_result = await QdrantManager.safe_retrieve(
+        client,
         collection_name="objects",
         ids=[task_id],
         with_payload=True,

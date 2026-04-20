@@ -50,11 +50,14 @@ class TestBlocksRouter:
     async def test_update_block_success(self, test_client):
         """Test updating a block."""
         # Create a block first
-        create_resp = await test_client.post("/api/v1/blocks", json={
-            "object_id": "test-object-1",
-            "content": "Original content",
-            "type": "paragraph",
-        })
+        create_resp = await test_client.post(
+            "/api/v1/blocks",
+            json={
+                "object_id": "test-object-1",
+                "content": "Original content",
+                "type": "paragraph",
+            },
+        )
         assert create_resp.status_code == 200
         block_id = create_resp.json()["id"]
 
@@ -72,11 +75,14 @@ class TestBlocksRouter:
     async def test_delete_block_success(self, test_client):
         """Test deleting a block."""
         # Create a block first
-        create_resp = await test_client.post("/api/v1/blocks", json={
-            "object_id": "test-object-1",
-            "content": "To delete",
-            "type": "paragraph",
-        })
+        create_resp = await test_client.post(
+            "/api/v1/blocks",
+            json={
+                "object_id": "test-object-1",
+                "content": "To delete",
+                "type": "paragraph",
+            },
+        )
         assert create_resp.status_code == 200
         block_id = create_resp.json()["id"]
 
@@ -119,17 +125,18 @@ class TestBlocksRouter:
     async def test_batch_update_blocks(self, test_client):
         """Test batch updating blocks."""
         # Create a block first
-        create_resp = await test_client.post("/api/v1/blocks", json={
-            "object_id": "test-object-1",
-            "content": "Block",
-            "type": "paragraph",
-        })
+        create_resp = await test_client.post(
+            "/api/v1/blocks",
+            json={
+                "object_id": "test-object-1",
+                "content": "Block",
+                "type": "paragraph",
+            },
+        )
         assert create_resp.status_code == 200
         block_id = create_resp.json()["id"]
 
-        response = await test_client.post("/api/v1/blocks/batch-update", json={
-            "blocks": [{"id": block_id, "order": 5}]
-        })
+        response = await test_client.post("/api/v1/blocks/batch-update", json={"blocks": [{"id": block_id, "order": 5}]})
         assert response.status_code == 200
         data = response.json()
         assert "count" in data
@@ -137,11 +144,14 @@ class TestBlocksRouter:
     async def test_list_blocks_for_object(self, test_client):
         """Test listing blocks after creating them."""
         # Create a block
-        await test_client.post("/api/v1/blocks", json={
-            "object_id": "test-obj-list",
-            "content": "Block 1",
-            "type": "paragraph",
-        })
+        await test_client.post(
+            "/api/v1/blocks",
+            json={
+                "object_id": "test-obj-list",
+                "content": "Block 1",
+                "type": "paragraph",
+            },
+        )
 
         response = await test_client.get("/api/v1/blocks/object/test-obj-list")
         assert response.status_code == 200

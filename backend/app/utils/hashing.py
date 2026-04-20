@@ -1,4 +1,5 @@
 """Shared utility functions."""
+
 import hashlib
 import logging
 

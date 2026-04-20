@@ -1,4 +1,5 @@
 """OpenClaw Service - Integration with OpenClaw gateway via /tools/invoke."""
+
 import json
 import logging
 import time
@@ -102,7 +103,8 @@ class OpenClawService:
                     if _auth_retry_cooldown_until > now + _AUTH_RETRY_COOLDOWN_SEC:
                         logger.warning(
                             "OpenClaw cooldown timestamp corrupted (until %.0f, now %.0f), resetting",
-                            _auth_retry_cooldown_until, now,
+                            _auth_retry_cooldown_until,
+                            now,
                         )
                         _auth_retry_cooldown_until = 0.0
 
@@ -167,7 +169,9 @@ class OpenClawService:
             logger.error("OpenClaw send_message failed: %s", exc)
             return {"status": "error", "content": str(exc)}
 
-    async def assign_task(self, agent_name: str, task_id: str, task_content: str, context: Optional[Dict] = None) -> Dict[str, Any]:
+    async def assign_task(
+        self, agent_name: str, task_id: str, task_content: str, context: Optional[Dict] = None
+    ) -> Dict[str, Any]:
         """Assign a task to an agent."""
         ctx_text = "\n".join(f"  - {k}: {v}" for k, v in (context or {}).items()) if context else "None"
         message = (

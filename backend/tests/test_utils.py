@@ -2,8 +2,10 @@
 Tests for utility functions.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
+
 from app.utils.time import utc_now_iso
 
 
@@ -16,7 +18,7 @@ class TestTimeUtilities:
         result = utc_now_iso()
 
         # Should be parseable as ISO datetime
-        parsed = datetime.fromisoformat(result.replace('Z', '+00:00'))
+        parsed = datetime.fromisoformat(result.replace("Z", "+00:00"))
 
         assert parsed is not None
         assert isinstance(parsed, datetime)
@@ -25,7 +27,7 @@ class TestTimeUtilities:
         """Test that utc_now_iso returns UTC timezone."""
         result = utc_now_iso()
 
-        parsed = datetime.fromisoformat(result.replace('Z', '+00:00'))
+        parsed = datetime.fromisoformat(result.replace("Z", "+00:00"))
 
         # Should be UTC (timezone offset should be 0)
         assert parsed.utcoffset() == timedelta(0)
@@ -36,7 +38,7 @@ class TestTimeUtilities:
         result = utc_now_iso()
         after = datetime.now(timezone.utc)
 
-        parsed = datetime.fromisoformat(result.replace('Z', '+00:00'))
+        parsed = datetime.fromisoformat(result.replace("Z", "+00:00"))
 
         # Should be between before and after (with some tolerance)
         assert before <= parsed <= after
@@ -47,20 +49,20 @@ class TestTimeUtilities:
 
         for result in results:
             # Should have UTC timezone info (+00:00 in Python 3.9)
-            assert '+00:00' in result
+            assert "+00:00" in result
 
             # All should have T separator
-            assert 'T' in result
+            assert "T" in result
 
     def test_utc_now_iso_microseconds(self):
         """Test that utc_now_iso includes microseconds."""
         result = utc_now_iso()
 
         # Should include microseconds (after decimal point)
-        assert '.' in result
+        assert "." in result
 
         # Parse and check microsecond precision
-        parsed = datetime.fromisoformat(result.replace('Z', '+00:00'))
+        parsed = datetime.fromisoformat(result.replace("Z", "+00:00"))
         # Microseconds should be present (0-999999)
         assert 0 <= parsed.microsecond < 1000000
 
@@ -88,8 +90,8 @@ class TestTimeEdgeCases:
         assert parsed_python is not None
 
         # The format should be ISO-8601 with timezone
-        assert 'T' in result
-        assert '+00:00' in result
+        assert "T" in result
+        assert "+00:00" in result
 
 
 @pytest.mark.asyncio
@@ -116,8 +118,8 @@ class TestTimeIntegration:
         time2 = utc_now_iso()
 
         # time2 should be >= time1
-        parsed1 = datetime.fromisoformat(time1.replace('Z', '+00:00'))
-        parsed2 = datetime.fromisoformat(time2.replace('Z', '+00:00'))
+        parsed1 = datetime.fromisoformat(time1.replace("Z", "+00:00"))
+        parsed2 = datetime.fromisoformat(time2.replace("Z", "+00:00"))
 
         assert parsed2 >= parsed1
 

@@ -61,10 +61,7 @@ class TestSettingsRouter:
             "exclude_patterns": ["*.tmp", "*.bak"],
         }
 
-        response = await test_client.post(
-            "/api/v1/settings/watched-folders",
-            json=folder_data
-        )
+        response = await test_client.post("/api/v1/settings/watched-folders", json=folder_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -77,10 +74,7 @@ class TestSettingsRouter:
             "recursive": True,
         }
 
-        response = await test_client.post(
-            "/api/v1/settings/watched-folders",
-            json=folder_data
-        )
+        response = await test_client.post("/api/v1/settings/watched-folders", json=folder_data)
 
         assert response.status_code == 400
 

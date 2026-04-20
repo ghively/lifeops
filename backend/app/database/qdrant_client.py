@@ -1,13 +1,12 @@
 """Qdrant Database Manager"""
+
 import asyncio
 import logging
 import time
+from typing import Any, Dict, List, Optional
 
-from qdrant_client import QdrantClient, AsyncQdrantClient
-from qdrant_client.models import (
-    Distance, VectorParams, PayloadSchemaType
-)
-from typing import Optional, Dict, Any, List
+from qdrant_client import AsyncQdrantClient, QdrantClient
+from qdrant_client.models import Distance, PayloadSchemaType, VectorParams
 
 from app.config import settings
 
@@ -85,9 +84,7 @@ class CircuitBreaker:
     @property
     def state(self) -> str:
         if self._state == "OPEN":
-            if self._last_failure_time and (
-                time.monotonic() - self._last_failure_time >= self.recovery_timeout
-            ):
+            if self._last_failure_time and (time.monotonic() - self._last_failure_time >= self.recovery_timeout):
                 self._state = "HALF-OPEN"
                 self._half_open_successes = 0
                 logger.info("Circuit breaker entering HALF-OPEN state")
@@ -106,9 +103,7 @@ class CircuitBreaker:
         self._last_failure_time = time.monotonic()
         if self._failure_count >= self.failure_threshold:
             self._state = "OPEN"
-            logger.warning(
-                "Circuit breaker opened after %d consecutive failures", self._failure_count
-            )
+            logger.warning("Circuit breaker opened after %d consecutive failures", self._failure_count)
 
     @property
     def is_open(self) -> bool:
@@ -154,7 +149,10 @@ class QdrantManager:
                 delay = self._BASE_DELAY * (2 ** (attempt - 1))
                 logger.warning(
                     "Qdrant reconnect attempt %d/%d failed: %s — retrying in %.1fs",
-                    attempt, self._MAX_RETRIES, exc, delay,
+                    attempt,
+                    self._MAX_RETRIES,
+                    exc,
+                    delay,
                 )
                 time.sleep(delay)
         self._circuit_breaker.record_failure()
@@ -181,7 +179,10 @@ class QdrantManager:
                 delay = self._BASE_DELAY * (2 ** (attempt - 1))
                 logger.warning(
                     "Qdrant async reconnect attempt %d/%d failed: %s — retrying in %.1fs",
-                    attempt, self._MAX_RETRIES, exc, delay,
+                    attempt,
+                    self._MAX_RETRIES,
+                    exc,
+                    delay,
                 )
                 await asyncio.sleep(delay)
         self._circuit_breaker.record_failure()
@@ -221,9 +222,7 @@ class QdrantManager:
     async def _ensure_collection(self, name: str, config: Dict[str, Any]):
         """Ensure a collection exists"""
         try:
-            collections = await asyncio.to_thread(
-                lambda: self.client.get_collections().collections
-            )
+            collections = await asyncio.to_thread(lambda: self.client.get_collections().collections)
             exists = any(c.name == name for c in collections)
 
             if not exists:
@@ -350,9 +349,7 @@ class QdrantManager:
             logger.warning("Could not fetch vector size for %s: %s", collection_name, exc)
             return None
 
-    def validate_vector(
-        self, collection_name: str, vector: List[float], context: str = ""
-    ) -> bool:
+    def validate_vector(self, collection_name: str, vector: List[float], context: str = "") -> bool:
         """Validate that a vector's dimensions match the collection's config (H21).
 
         Returns True if valid or if validation cannot be performed (graceful).
@@ -389,9 +386,7 @@ class QdrantManager:
             if self.async_client:
                 await self.async_client.upsert(collection_name=collection_name, points=points)
             else:
-                await asyncio.to_thread(
-                    self.client.upsert, collection_name=collection_name, points=points
-                )
+                await asyncio.to_thread(self.client.upsert, collection_name=collection_name, points=points)
             self._circuit_breaker.record_success()
             return True
         except Exception as exc:

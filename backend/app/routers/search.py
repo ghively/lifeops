@@ -1,10 +1,11 @@
 """Search Router - Semantic and exact search."""
+
 import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.database.qdrant_client import qdrant_manager, QdrantManager
+from app.database.qdrant_client import QdrantManager, qdrant_manager
 from app.middleware.auth import get_optional_user
 from app.middleware.rate_limit import read_rate_limit
 from app.services.embedding import embedding_service
@@ -96,7 +97,8 @@ async def find_similar(
     """Find similar entries for a given object."""
     client = qdrant_manager.get_async_client()
     source_collection = collection or "objects"
-    source = await QdrantManager.safe_retrieve(client, 
+    source = await QdrantManager.safe_retrieve(
+        client,
         collection_name=source_collection,
         ids=[object_id],
         with_payload=True,

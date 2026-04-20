@@ -1,4 +1,5 @@
 """Autonomous background task scheduler for runtime agents."""
+
 from __future__ import annotations
 
 import asyncio
@@ -190,7 +191,9 @@ class AgentScheduler:
         task.last_run = last_run
         task.next_run = next_run
         await sqlite_manager.update_agent_scheduled_task_run(task.id, last_run=last_run, next_run=next_run)
-        self._states[task.id] = ScheduledTaskState(task=task, job=self._states.get(task.id).job if self._states.get(task.id) else None)
+        self._states[task.id] = ScheduledTaskState(
+            task=task, job=self._states.get(task.id).job if self._states.get(task.id) else None
+        )
         return {"task": task.model_dump(), "result": result}
 
     def _compute_next_run(self, expression: str) -> Optional[str]:

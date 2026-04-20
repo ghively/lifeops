@@ -1,4 +1,5 @@
 """Background memory curation for runtime agents."""
+
 from __future__ import annotations
 
 import logging

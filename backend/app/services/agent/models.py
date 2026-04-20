@@ -1,10 +1,10 @@
 """Pydantic models for the agent runtime."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
-
 
 SafetyLevel = Literal["safe", "internal", "external", "destructive"]
 ProviderName = Literal["openai", "anthropic", "ollama", "google"]

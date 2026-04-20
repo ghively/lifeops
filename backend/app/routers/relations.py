@@ -1,4 +1,5 @@
 """Relations Router - CRUD operations for relations and backlinks."""
+
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request

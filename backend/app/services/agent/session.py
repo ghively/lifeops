@@ -1,4 +1,5 @@
 """SQLite-backed session persistence for agent runtime."""
+
 from __future__ import annotations
 
 import json
@@ -17,7 +18,9 @@ class SessionManager:
     def __init__(self, window_size: int = 20):
         self.window_size = window_size
 
-    async def create_session(self, agent_id: str, title: Optional[str] = None, metadata: Optional[Dict] = None) -> AgentSession:
+    async def create_session(
+        self, agent_id: str, title: Optional[str] = None, metadata: Optional[Dict] = None
+    ) -> AgentSession:
         session = AgentSession(
             id=str(uuid.uuid4()),
             agent_id=agent_id,
@@ -170,7 +173,9 @@ class SessionManager:
                 title = (response.get("content") or title).strip()[:80]
             except Exception:
                 logger.debug("Title generation fallback for session %s", session_id, exc_info=True)
-        await sqlite_manager.execute("UPDATE agent_sessions SET title = ?, updated_at = ? WHERE id = ?", (title, utc_now_iso(), session_id))
+        await sqlite_manager.execute(
+            "UPDATE agent_sessions SET title = ?, updated_at = ? WHERE id = ?", (title, utc_now_iso(), session_id)
+        )
         return title
 
     def _json_loads(self, value):

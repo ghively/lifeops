@@ -42,10 +42,7 @@ class TestAgentsRouter:
             "session_id": "test-session-1",
         }
 
-        response = await test_client.post(
-            "/api/v1/agents/test-agent/chat",
-            json=chat_data
-        )
+        response = await test_client.post("/api/v1/agents/test-agent/chat", json=chat_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -57,10 +54,7 @@ class TestAgentsRouter:
             "content": "Hello, agent!",
         }
 
-        response = await test_client.post(
-            "/api/v1/agents/test-agent/chat",
-            json=chat_data
-        )
+        response = await test_client.post("/api/v1/agents/test-agent/chat", json=chat_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -72,19 +66,13 @@ class TestAgentsRouter:
             "content": "",
         }
 
-        response = await test_client.post(
-            "/api/v1/agents/test-agent/chat",
-            json=chat_data
-        )
+        response = await test_client.post("/api/v1/agents/test-agent/chat", json=chat_data)
 
         assert response.status_code in [422, 400]
 
     async def test_get_chat_history_empty(self, test_client):
         """Test getting chat history for a new session."""
-        response = await test_client.get(
-            "/api/v1/agents/test-agent/chat",
-            params={"session_id": "new-session"}
-        )
+        response = await test_client.get("/api/v1/agents/test-agent/chat", params={"session_id": "new-session"})
 
         assert response.status_code == 200
         data = response.json()
@@ -92,10 +80,7 @@ class TestAgentsRouter:
 
     async def test_get_chat_history_with_data(self, test_client):
         """Test getting chat history with existing messages."""
-        response = await test_client.get(
-            "/api/v1/agents/test-agent/chat",
-            params={"session_id": "test-session", "limit": 10}
-        )
+        response = await test_client.get("/api/v1/agents/test-agent/chat", params={"session_id": "test-session", "limit": 10})
 
         assert response.status_code == 200
         data = response.json()
@@ -104,8 +89,7 @@ class TestAgentsRouter:
     async def test_get_chat_history_pagination(self, test_client):
         """Test getting chat history with pagination."""
         response = await test_client.get(
-            "/api/v1/agents/test-agent/chat",
-            params={"session_id": "test-session", "limit": 5, "offset": 0}
+            "/api/v1/agents/test-agent/chat", params={"session_id": "test-session", "limit": 5, "offset": 0}
         )
 
         assert response.status_code == 200
@@ -114,10 +98,7 @@ class TestAgentsRouter:
 
     async def test_get_agent_tasks(self, test_client):
         """Test getting tasks assigned to an agent."""
-        response = await test_client.get(
-            "/api/v1/agents/test-agent/tasks",
-            params={"status": "in-progress"}
-        )
+        response = await test_client.get("/api/v1/agents/test-agent/tasks", params={"status": "in-progress"})
 
         assert response.status_code == 200
         data = response.json()
@@ -152,11 +133,7 @@ class TestOpenClawService:
 
     async def test_send_message_to_service(self, mock_openclaw_service):
         """Test sending message through OpenClaw service."""
-        response = await mock_openclaw_service.send_message(
-            "test-agent",
-            "Test message",
-            "test-session"
-        )
+        response = await mock_openclaw_service.send_message("test-agent", "Test message", "test-session")
 
         assert response is not None
         assert "response" in response
@@ -164,11 +141,7 @@ class TestOpenClawService:
 
     async def test_assign_task_to_agent(self, mock_openclaw_service):
         """Test assigning task to agent through OpenClaw service."""
-        response = await mock_openclaw_service.assign_task(
-            "test-agent",
-            "task-123",
-            {"context": "test"}
-        )
+        response = await mock_openclaw_service.assign_task("test-agent", "task-123", {"context": "test"})
 
         assert response is not None
         assert response["status"] == "assigned"

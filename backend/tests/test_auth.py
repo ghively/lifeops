@@ -53,12 +53,15 @@ class TestAuthRouter:
             "password": "Password123!",
         }
 
-        with patch(
-            "app.routers.auth.auth_service.create_user",
-            AsyncMock(return_value=user),
-        ), patch(
-            "app.routers.auth.auth_service.store_refresh_token",
-            AsyncMock(return_value="refresh-token-id"),
+        with (
+            patch(
+                "app.routers.auth.auth_service.create_user",
+                AsyncMock(return_value=user),
+            ),
+            patch(
+                "app.routers.auth.auth_service.store_refresh_token",
+                AsyncMock(return_value="refresh-token-id"),
+            ),
         ):
             response = await test_client.post("/api/v1/auth/register", json=register_data)
 
@@ -79,12 +82,15 @@ class TestAuthRouter:
             "password": "Password123!",
         }
 
-        with patch(
-            "app.routers.auth.auth_service.create_user",
-            AsyncMock(side_effect=[user, ValueError("Email already registered")]),
-        ), patch(
-            "app.routers.auth.auth_service.store_refresh_token",
-            AsyncMock(return_value="refresh-token-id"),
+        with (
+            patch(
+                "app.routers.auth.auth_service.create_user",
+                AsyncMock(side_effect=[user, ValueError("Email already registered")]),
+            ),
+            patch(
+                "app.routers.auth.auth_service.store_refresh_token",
+                AsyncMock(return_value="refresh-token-id"),
+            ),
         ):
             first_response = await test_client.post("/api/v1/auth/register", json=register_data)
             second_response = await test_client.post("/api/v1/auth/register", json=register_data)
@@ -97,12 +103,15 @@ class TestAuthRouter:
     async def test_login_success(self, test_client):
         user = _user_payload(email="login@example.com", username="login-user")
 
-        with patch(
-            "app.routers.auth.auth_service.authenticate_user",
-            AsyncMock(return_value=user),
-        ), patch(
-            "app.routers.auth.auth_service.store_refresh_token",
-            AsyncMock(return_value="refresh-token-id"),
+        with (
+            patch(
+                "app.routers.auth.auth_service.authenticate_user",
+                AsyncMock(return_value=user),
+            ),
+            patch(
+                "app.routers.auth.auth_service.store_refresh_token",
+                AsyncMock(return_value="refresh-token-id"),
+            ),
         ):
             response = await test_client.post(
                 "/api/v1/auth/login",
@@ -172,12 +181,15 @@ class TestAuthRouter:
         user = _user_payload(user_id="refresh-user", email="refresh@example.com", username="refresh-user")
         refresh_token = auth_service.create_refresh_token(user["id"])
 
-        with patch(
-            "app.routers.auth.auth_service.validate_refresh_token",
-            AsyncMock(return_value=True),
-        ), patch(
-            "app.routers.auth.auth_service.get_user_by_id",
-            AsyncMock(return_value=user),
+        with (
+            patch(
+                "app.routers.auth.auth_service.validate_refresh_token",
+                AsyncMock(return_value=True),
+            ),
+            patch(
+                "app.routers.auth.auth_service.get_user_by_id",
+                AsyncMock(return_value=user),
+            ),
         ):
             response = await test_client.post(
                 "/api/v1/auth/refresh",

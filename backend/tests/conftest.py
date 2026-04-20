@@ -2,8 +2,13 @@
 Shared pytest fixtures for Knowledge OS backend tests.
 """
 
-import asyncio
 import os
+
+# Must be set before any app.* imports so AuthService's startup guard passes.
+os.environ.setdefault("DEBUG", "true")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-ci-only")
+
+import asyncio
 import sys
 from contextlib import ExitStack
 from typing import AsyncGenerator, Generator
@@ -100,19 +105,12 @@ def mock_qdrant_client():
                         qdrant_models.Record(
                             id=point.id,
                             payload=point.payload,
-                            
                         )
                     )
         return results
 
     def mock_count(collection_name, **kwargs):
-        count = len(
-            [
-                p
-                for p in mock_storage["points"].values()
-                if isinstance(p, qdrant_models.PointStruct)
-            ]
-        )
+        count = len([p for p in mock_storage["points"].values() if isinstance(p, qdrant_models.PointStruct)])
         return MagicMock(count=count)
 
     def mock_scroll(collection_name, limit=10, **kwargs):
@@ -120,11 +118,7 @@ def mock_qdrant_client():
         records = []
         for point in points:
             if isinstance(point, qdrant_models.PointStruct):
-                records.append(
-                    qdrant_models.Record(
-                        id=point.id, payload=point.payload, vector=point.vector
-                    )
-                )
+                records.append(qdrant_models.Record(id=point.id, payload=point.payload, vector=point.vector))
         return records, None
 
     # Assign mock methods
@@ -150,6 +144,7 @@ def mock_qdrant_client():
 def mock_async_qdrant_client():
     """Mock async Qdrant client."""
     from unittest.mock import MagicMock
+
     import numpy as np
 
     mock_client = AsyncMock()
@@ -167,7 +162,9 @@ def mock_async_qdrant_client():
             "chat_logs": {},
         },
         "points": {},
-        "counters": {coll: 0 for coll in ["objects", "blocks", "relations", "files", "images", "code", "agent_memories", "chat_logs"]},
+        "counters": {
+            coll: 0 for coll in ["objects", "blocks", "relations", "files", "images", "code", "agent_memories", "chat_logs"]
+        },
     }
 
     # Mock point operations
@@ -235,7 +232,6 @@ def mock_async_qdrant_client():
                         qdrant_models.Record(
                             id=point.id,
                             payload=point.payload,
-                            
                         )
                     )
         return results
@@ -256,11 +252,7 @@ def mock_async_qdrant_client():
         records = []
         for point in points:
             if isinstance(point, qdrant_models.PointStruct):
-                records.append(
-                    qdrant_models.Record(
-                        id=point.id, payload=point.payload, vector=point.vector
-                    )
-                )
+                records.append(qdrant_models.Record(id=point.id, payload=point.payload, vector=point.vector))
         return records, None
 
     async def mock_set_payload(collection_name, payload, points):
@@ -473,7 +465,7 @@ def mock_sqlite_manager():
     async def mock_list_agent_scheduled_tasks(agent_id=None):
         rows = list(storage["agent_scheduled_tasks"].values())
         if agent_id:
-          rows = [row for row in rows if row["agent_id"] == agent_id]
+            rows = [row for row in rows if row["agent_id"] == agent_id]
         return rows
 
     async def mock_get_agent_scheduled_task(task_id):
@@ -535,8 +527,9 @@ def mock_sqlite_manager():
 @pytest.fixture
 def mock_embedding_service():
     """Mock embedding service with deterministic vectors."""
-    import numpy as np
     from unittest.mock import AsyncMock
+
+    import numpy as np
 
     mock_service = MagicMock()
 
@@ -635,15 +628,15 @@ def mock_openclaw_service():
 @pytest.fixture
 async def test_client_with_store(mock_async_qdrant_client, mock_embedding_service, mock_sqlite_manager):
     """Create test HTTP client with mocked dependencies, exposing the mock store for pre-population."""
-    from app.main import app
     from app.database.qdrant_client import qdrant_manager
     from app.database.sqlite import sqlite_manager
+    from app.main import app
+    from app.middleware.auth import get_current_user, get_optional_user
     from app.services.backup import backup_service
+    from app.services.context_builder import context_builder
     from app.services.embedding import embedding_service as emb_svc
     from app.services.file_watcher import file_watcher_service
     from app.services.openclaw import openclaw_service
-    from app.services.context_builder import context_builder
-    from app.middleware.auth import get_current_user, get_optional_user
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client))
@@ -654,23 +647,47 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
         stack.enter_context(patch.object(emb_svc, "embed_image", mock_embedding_service.embed_image))
         stack.enter_context(patch.object(sqlite_manager, "get_setting", mock_sqlite_manager.get_setting))
         stack.enter_context(patch.object(sqlite_manager, "upsert_setting", mock_sqlite_manager.upsert_setting))
-        stack.enter_context(patch.object(sqlite_manager, "list_mcp_server_configs", mock_sqlite_manager.list_mcp_server_configs))
-        stack.enter_context(patch.object(sqlite_manager, "upsert_mcp_server_config", mock_sqlite_manager.upsert_mcp_server_config))
-        stack.enter_context(patch.object(sqlite_manager, "delete_mcp_server_config", mock_sqlite_manager.delete_mcp_server_config))
+        stack.enter_context(
+            patch.object(sqlite_manager, "list_mcp_server_configs", mock_sqlite_manager.list_mcp_server_configs)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "upsert_mcp_server_config", mock_sqlite_manager.upsert_mcp_server_config)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "delete_mcp_server_config", mock_sqlite_manager.delete_mcp_server_config)
+        )
         stack.enter_context(patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone))
         stack.enter_context(patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall))
         stack.enter_context(patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute))
-        stack.enter_context(patch.object(sqlite_manager, "create_agent_scheduled_task", mock_sqlite_manager.create_agent_scheduled_task))
-        stack.enter_context(patch.object(sqlite_manager, "list_agent_scheduled_tasks", mock_sqlite_manager.list_agent_scheduled_tasks))
-        stack.enter_context(patch.object(sqlite_manager, "get_agent_scheduled_task", mock_sqlite_manager.get_agent_scheduled_task))
-        stack.enter_context(patch.object(sqlite_manager, "update_agent_scheduled_task_run", mock_sqlite_manager.update_agent_scheduled_task_run))
-        stack.enter_context(patch.object(sqlite_manager, "delete_agent_scheduled_task", mock_sqlite_manager.delete_agent_scheduled_task))
+        stack.enter_context(
+            patch.object(sqlite_manager, "create_agent_scheduled_task", mock_sqlite_manager.create_agent_scheduled_task)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "list_agent_scheduled_tasks", mock_sqlite_manager.list_agent_scheduled_tasks)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "get_agent_scheduled_task", mock_sqlite_manager.get_agent_scheduled_task)
+        )
+        stack.enter_context(
+            patch.object(
+                sqlite_manager, "update_agent_scheduled_task_run", mock_sqlite_manager.update_agent_scheduled_task_run
+            )
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "delete_agent_scheduled_task", mock_sqlite_manager.delete_agent_scheduled_task)
+        )
         stack.enter_context(patch.object(sqlite_manager, "create_agent_webhook", mock_sqlite_manager.create_agent_webhook))
         stack.enter_context(patch.object(sqlite_manager, "list_agent_webhooks", mock_sqlite_manager.list_agent_webhooks))
         stack.enter_context(patch.object(sqlite_manager, "get_agent_webhook", mock_sqlite_manager.get_agent_webhook))
-        stack.enter_context(patch.object(sqlite_manager, "get_agent_webhook_by_path", mock_sqlite_manager.get_agent_webhook_by_path))
+        stack.enter_context(
+            patch.object(sqlite_manager, "get_agent_webhook_by_path", mock_sqlite_manager.get_agent_webhook_by_path)
+        )
         stack.enter_context(patch.object(sqlite_manager, "delete_agent_webhook", mock_sqlite_manager.delete_agent_webhook))
-        stack.enter_context(patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})))
+        stack.enter_context(
+            patch.object(
+                openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})
+            )
+        )
         stack.enter_context(patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})))
         stack.enter_context(patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})))
         stack.enter_context(patch.object(context_builder, "build_task_context", AsyncMock(return_value={})))
@@ -678,8 +695,15 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
         stack.enter_context(patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(backup_service, "run_backup", AsyncMock(return_value=None)))
+
         async def fake_current_user():
-            return {"id": "test-user-id", "email": "test@example.com", "username": "test-user", "display_name": "Test User", "is_active": True}
+            return {
+                "id": "test-user-id",
+                "email": "test@example.com",
+                "username": "test-user",
+                "display_name": "Test User",
+                "is_active": True,
+            }
 
         limiter_enabled = getattr(app.state.limiter, "enabled", True)
         app.state.limiter.enabled = False
@@ -698,15 +722,15 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
 @pytest.fixture
 async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sqlite_manager):
     """Create test HTTP client with mocked dependencies."""
-    from app.main import app
     from app.database.qdrant_client import qdrant_manager
     from app.database.sqlite import sqlite_manager
+    from app.main import app
+    from app.middleware.auth import get_current_user, get_optional_user
     from app.services.backup import backup_service
+    from app.services.context_builder import context_builder
     from app.services.embedding import embedding_service as emb_svc
     from app.services.file_watcher import file_watcher_service
     from app.services.openclaw import openclaw_service
-    from app.services.context_builder import context_builder
-    from app.middleware.auth import get_current_user, get_optional_user
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(qdrant_manager, "get_async_client", return_value=mock_async_qdrant_client))
@@ -717,23 +741,47 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
         stack.enter_context(patch.object(emb_svc, "embed_image", mock_embedding_service.embed_image))
         stack.enter_context(patch.object(sqlite_manager, "get_setting", mock_sqlite_manager.get_setting))
         stack.enter_context(patch.object(sqlite_manager, "upsert_setting", mock_sqlite_manager.upsert_setting))
-        stack.enter_context(patch.object(sqlite_manager, "list_mcp_server_configs", mock_sqlite_manager.list_mcp_server_configs))
-        stack.enter_context(patch.object(sqlite_manager, "upsert_mcp_server_config", mock_sqlite_manager.upsert_mcp_server_config))
-        stack.enter_context(patch.object(sqlite_manager, "delete_mcp_server_config", mock_sqlite_manager.delete_mcp_server_config))
+        stack.enter_context(
+            patch.object(sqlite_manager, "list_mcp_server_configs", mock_sqlite_manager.list_mcp_server_configs)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "upsert_mcp_server_config", mock_sqlite_manager.upsert_mcp_server_config)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "delete_mcp_server_config", mock_sqlite_manager.delete_mcp_server_config)
+        )
         stack.enter_context(patch.object(sqlite_manager, "fetchone", mock_sqlite_manager.fetchone))
         stack.enter_context(patch.object(sqlite_manager, "fetchall", mock_sqlite_manager.fetchall))
         stack.enter_context(patch.object(sqlite_manager, "execute", mock_sqlite_manager.execute))
-        stack.enter_context(patch.object(sqlite_manager, "create_agent_scheduled_task", mock_sqlite_manager.create_agent_scheduled_task))
-        stack.enter_context(patch.object(sqlite_manager, "list_agent_scheduled_tasks", mock_sqlite_manager.list_agent_scheduled_tasks))
-        stack.enter_context(patch.object(sqlite_manager, "get_agent_scheduled_task", mock_sqlite_manager.get_agent_scheduled_task))
-        stack.enter_context(patch.object(sqlite_manager, "update_agent_scheduled_task_run", mock_sqlite_manager.update_agent_scheduled_task_run))
-        stack.enter_context(patch.object(sqlite_manager, "delete_agent_scheduled_task", mock_sqlite_manager.delete_agent_scheduled_task))
+        stack.enter_context(
+            patch.object(sqlite_manager, "create_agent_scheduled_task", mock_sqlite_manager.create_agent_scheduled_task)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "list_agent_scheduled_tasks", mock_sqlite_manager.list_agent_scheduled_tasks)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "get_agent_scheduled_task", mock_sqlite_manager.get_agent_scheduled_task)
+        )
+        stack.enter_context(
+            patch.object(
+                sqlite_manager, "update_agent_scheduled_task_run", mock_sqlite_manager.update_agent_scheduled_task_run
+            )
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "delete_agent_scheduled_task", mock_sqlite_manager.delete_agent_scheduled_task)
+        )
         stack.enter_context(patch.object(sqlite_manager, "create_agent_webhook", mock_sqlite_manager.create_agent_webhook))
         stack.enter_context(patch.object(sqlite_manager, "list_agent_webhooks", mock_sqlite_manager.list_agent_webhooks))
         stack.enter_context(patch.object(sqlite_manager, "get_agent_webhook", mock_sqlite_manager.get_agent_webhook))
-        stack.enter_context(patch.object(sqlite_manager, "get_agent_webhook_by_path", mock_sqlite_manager.get_agent_webhook_by_path))
+        stack.enter_context(
+            patch.object(sqlite_manager, "get_agent_webhook_by_path", mock_sqlite_manager.get_agent_webhook_by_path)
+        )
         stack.enter_context(patch.object(sqlite_manager, "delete_agent_webhook", mock_sqlite_manager.delete_agent_webhook))
-        stack.enter_context(patch.object(openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})))
+        stack.enter_context(
+            patch.object(
+                openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})
+            )
+        )
         stack.enter_context(patch.object(openclaw_service, "assign_task", AsyncMock(return_value={"status": "assigned"})))
         stack.enter_context(patch.object(openclaw_service, "get_agent_status", AsyncMock(return_value={"status": "idle"})))
         stack.enter_context(patch.object(context_builder, "build_task_context", AsyncMock(return_value={})))
@@ -741,8 +789,15 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
         stack.enter_context(patch.object(file_watcher_service, "add_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(backup_service, "run_backup", AsyncMock(return_value=None)))
+
         async def fake_current_user():
-            return {"id": "test-user-id", "email": "test@example.com", "username": "test-user", "display_name": "Test User", "is_active": True}
+            return {
+                "id": "test-user-id",
+                "email": "test@example.com",
+                "username": "test-user",
+                "display_name": "Test User",
+                "is_active": True,
+            }
 
         limiter_enabled = getattr(app.state.limiter, "enabled", True)
         app.state.limiter.enabled = False

@@ -1,27 +1,28 @@
 """Tests for the collaboration service and WebSocket protocol."""
+
 import asyncio
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.services.collaboration import (
-    CollaborationManager,
-    CollaborationRoom,
-    PresenceUser,
-    CROperation,
-    user_color,
+    MSG_ACK,
+    MSG_CURSOR,
+    MSG_CURSOR_BROADCAST,
     MSG_JOIN,
     MSG_LEAVE,
     MSG_OP,
-    MSG_CURSOR,
-    MSG_WELCOME,
+    MSG_OP_BROADCAST,
     MSG_USER_JOINED,
     MSG_USER_LEFT,
-    MSG_OP_BROADCAST,
-    MSG_ACK,
-    MSG_CURSOR_BROADCAST,
+    MSG_WELCOME,
+    CollaborationManager,
+    CollaborationRoom,
+    CROperation,
+    PresenceUser,
+    user_color,
 )
-
 
 # ---------------------------------------------------------------------------
 # Unit tests — pure logic

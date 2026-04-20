@@ -1,12 +1,12 @@
 """Settings Router - Application settings and configuration."""
-import uuid
+
 import json
 import logging
-from typing import Any, Dict
+import uuid
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
-from typing import Any, Dict, Optional
 
 from app.config import settings as app_settings
 from app.database.sqlite import sqlite_manager
@@ -54,6 +54,7 @@ async def get_settings(request: Request, current_user: dict = Depends(get_curren
 
 class SettingsUpdate(BaseModel):
     """Settings update request body."""
+
     openclaw_url: Optional[str] = None
     openclaw_token: Optional[str] = None
     openclaw_enabled: Optional[bool] = None
@@ -89,13 +90,11 @@ async def update_settings(data: SettingsUpdate, request: Request, current_user: 
 @read_rate_limit
 async def get_watched_folders(request: Request, current_user: dict = Depends(get_current_user)):
     """Get list of watched folders."""
-    folders = await sqlite_manager.fetchall(
-        """
+    folders = await sqlite_manager.fetchall("""
         SELECT id, path, recursive, include_patterns, exclude_patterns, enabled, file_count, created_at
         FROM watched_folders
         ORDER BY created_at DESC
-        """
-    )
+        """)
     for folder in folders:
         folder["recursive"] = bool(folder["recursive"])
         folder["enabled"] = bool(folder["enabled"])
@@ -142,6 +141,7 @@ async def add_watched_folder(data: dict, request: Request, current_user: dict = 
 
     try:
         from app.services.file_watcher import file_watcher_service
+
         await file_watcher_service.add_folder(folder)
     except Exception as exc:
         logger.warning("Could not start watcher for %s: %s", path, exc)
@@ -168,6 +168,7 @@ async def remove_watched_folder(
 
     try:
         from app.services.file_watcher import file_watcher_service
+
         await file_watcher_service.remove_folder(folder_id)
     except Exception as exc:
         logger.warning("Could not stop watcher for %s: %s", folder_id, exc)
@@ -180,6 +181,7 @@ async def remove_watched_folder(
 async def openclaw_health(request: Request, current_user: dict = Depends(get_current_user)):
     """Check OpenClaw gateway connectivity."""
     from app.services.openclaw import openclaw_service
+
     return await openclaw_service.health_check()
 
 

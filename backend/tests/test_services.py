@@ -2,8 +2,9 @@
 Tests for backend services (context_builder, backup, etc.).
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from qdrant_client import models as qdrant_models
 
 
@@ -23,28 +24,34 @@ class TestContextBuilder:
     async def test_context_includes_task_details(self):
         """Test that context includes task details."""
         from app.services.context_builder import context_builder
+
         # Context should include title, description, status
         assert hasattr(context_builder, "build_task_context")
 
     async def test_context_includes_related_objects(self):
         """Test that context includes related objects."""
         from app.services.context_builder import context_builder
+
         # Should fetch objects referenced by task
         assert hasattr(context_builder, "build_task_context")
 
     async def test_context_includes_related_blocks(self):
         """Test that context includes related blocks."""
         from app.services.context_builder import context_builder
+
         # Should fetch blocks referenced by task
         assert hasattr(context_builder, "build_task_context")
 
     async def test_context_limits(self):
         """Test context size limits."""
         from app.services.context_builder import context_builder
+
         # Should limit context to avoid overflow
         assert hasattr(context_builder, "build_task_context")
 
-    async def test_build_task_context_truncates_to_max_tokens(self, mock_async_qdrant_client, mock_sqlite_manager, mock_embedding_service):
+    async def test_build_task_context_truncates_to_max_tokens(
+        self, mock_async_qdrant_client, mock_sqlite_manager, mock_embedding_service
+    ):
         """Test context builder truncates context lists when over the token budget."""
         from app.database.qdrant_client import qdrant_manager
         from app.database.sqlite import sqlite_manager

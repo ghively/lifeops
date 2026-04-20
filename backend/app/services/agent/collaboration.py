@@ -1,4 +1,5 @@
 """Multi-agent collaboration helpers."""
+
 from __future__ import annotations
 
 import re
@@ -6,7 +7,6 @@ from typing import Any, Dict, List, Optional
 
 from app.services.agent.identity import IdentityLoader
 from app.services.agent.models import AgentMention
-
 
 MENTION_PATTERN = re.compile(r"@([a-zA-Z0-9][a-zA-Z0-9._-]*)")
 

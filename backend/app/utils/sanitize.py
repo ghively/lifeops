@@ -1,4 +1,5 @@
 """Input sanitization utilities (H52: XSS mitigation for stored content)."""
+
 from __future__ import annotations
 
 import html
@@ -15,12 +16,46 @@ def sanitize_content(text: str | None) -> str:
     if text is None:
         return ""
     # Allow common safe tags that users might intentionally include
-    allowed_tags = frozenset({
-        "b", "i", "em", "strong", "u", "s", "code", "pre", "blockquote",
-        "p", "br", "ul", "ol", "li", "a", "h1", "h2", "h3", "h4", "h5", "h6",
-        "table", "thead", "tbody", "tr", "th", "td", "hr", "img", "span", "div",
-        "sup", "sub", "del", "ins", "mark",
-    })
+    allowed_tags = frozenset(
+        {
+            "b",
+            "i",
+            "em",
+            "strong",
+            "u",
+            "s",
+            "code",
+            "pre",
+            "blockquote",
+            "p",
+            "br",
+            "ul",
+            "ol",
+            "li",
+            "a",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "table",
+            "thead",
+            "tbody",
+            "tr",
+            "th",
+            "td",
+            "hr",
+            "img",
+            "span",
+            "div",
+            "sup",
+            "sub",
+            "del",
+            "ins",
+            "mark",
+        }
+    )
     allowed_attrs = {
         "*": ["class", "id", "style"],
         "a": ["href", "title"],

@@ -1,4 +1,5 @@
 """Main orchestrator for the Phase 1 agent runtime."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,13 +15,13 @@ from app.services.agent.identity import DEFAULT_AGENT_FILES, IdentityLoader
 from app.services.agent.llm_router import LLMRouter
 from app.services.agent.memory import MemoryManager
 from app.services.agent.memory_curation import MemoryCurationService
-from app.services.agent.rate_limiter import agent_rate_limiter
-from app.services.agent.security import AgentSecurityManager
 from app.services.agent.models import AgentMessage, StreamingEvent, SubAgentResult, SubAgentTask, ToolResult
+from app.services.agent.rate_limiter import agent_rate_limiter
+from app.services.agent.sandbox import ToolSandbox
 from app.services.agent.scheduler import AgentScheduler
+from app.services.agent.security import AgentSecurityManager
 from app.services.agent.session import SessionManager
 from app.services.agent.streaming import stream_sse
-from app.services.agent.sandbox import ToolSandbox
 from app.services.agent.templates import AgentTemplateService
 from app.services.agent.tool_registry import ToolRegistry
 from app.services.agent.webhooks import AgentWebhookService
@@ -64,7 +65,7 @@ class AgentRuntime:
     async def stop(self) -> None:
         await self.scheduler.stop()
         await self.tool_registry.mcp_manager.shutdown()
-        if hasattr(self, '_active_tasks'):
+        if hasattr(self, "_active_tasks"):
             for task in list(self._active_tasks.values()):
                 if not task.done():
                     task.cancel()
@@ -248,7 +249,9 @@ class AgentRuntime:
     async def delete_webhook(self, webhook_id: str) -> None:
         await self.webhooks.delete_webhook(webhook_id)
 
-    async def handle_incoming_webhook(self, *, hook_id: str, body: bytes, signature: str, event_type: Optional[str] = None) -> Dict[str, Any]:
+    async def handle_incoming_webhook(
+        self, *, hook_id: str, body: bytes, signature: str, event_type: Optional[str] = None
+    ) -> Dict[str, Any]:
         return await self.webhooks.verify_and_handle(hook_id=hook_id, body=body, signature=signature, event_type=event_type)
 
     async def get_usage(self, agent_id: str, user_id: str) -> Dict[str, Any]:
@@ -280,10 +283,14 @@ class AgentRuntime:
                 success=True,
                 content=result["content"],
                 session_id=result["session_id"],
-                tool_results=[ToolResult(**item) if not isinstance(item, ToolResult) else item for item in result["tool_results"]],
+                tool_results=[
+                    ToolResult(**item) if not isinstance(item, ToolResult) else item for item in result["tool_results"]
+                ],
             )
         except asyncio.TimeoutError:
-            return SubAgentResult(agent_id=task.agent_id, success=False, error=f"Sub-agent timed out after {task.timeout_seconds}s")
+            return SubAgentResult(
+                agent_id=task.agent_id, success=False, error=f"Sub-agent timed out after {task.timeout_seconds}s"
+            )
         except Exception as exc:
             logger.exception("Sub-agent execution failed for %s", task.agent_id)
             return SubAgentResult(agent_id=task.agent_id, success=False, error=str(exc))
@@ -346,7 +353,9 @@ class AgentRuntime:
             "tool_results": [result.model_dump() for result in tool_results],
         }
 
-    async def _get_or_create_session(self, agent_id: str, session_id: Optional[str], metadata: Optional[Dict[str, Any]] = None):
+    async def _get_or_create_session(
+        self, agent_id: str, session_id: Optional[str], metadata: Optional[Dict[str, Any]] = None
+    ):
         session = await self.session_manager.get_session(session_id) if session_id else None
         if not session:
             session = await self.session_manager.create_session(agent_id=agent_id, metadata=metadata)
@@ -367,7 +376,9 @@ class AgentRuntime:
     ) -> AsyncGenerator[StreamingEvent, None]:
         identity = identity or self.identity_loader.load(agent_id)
         if identity.mcp_servers:
-            import hashlib, json
+            import hashlib
+            import json
+
             config_hash = hashlib.md5(json.dumps(identity.mcp_servers, sort_keys=True, default=str).encode()).hexdigest()
             if config_hash != self._last_mcp_configs_hash:
                 for server_config in identity.mcp_servers:
@@ -399,6 +410,7 @@ class AgentRuntime:
 
 
 _agent_runtime: Optional[AgentRuntime] = None
+
 
 def get_agent_runtime() -> AgentRuntime:
     global _agent_runtime

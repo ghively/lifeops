@@ -1,5 +1,7 @@
 """WebSocket Manager - Handles real-time communication."""
+
 from __future__ import annotations
+
 import json
 import logging
 from collections import defaultdict
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class WebSocketMessage(BaseModel):
     """WebSocket message validation model."""
+
     type: str
     data: dict = {}
 
@@ -50,15 +53,27 @@ class WebSocketEvents:
 
     @staticmethod
     def task_assigned(task_id: str, agent_name: str, priority: str, route: str):
-        return {"type": "task.assigned", "channel": "tasks", "data": {"id": task_id, "agent": agent_name, "priority": priority, "route": route}}
+        return {
+            "type": "task.assigned",
+            "channel": "tasks",
+            "data": {"id": task_id, "agent": agent_name, "priority": priority, "route": route},
+        }
 
     @staticmethod
     def task_status_changed(task_id: str, status: str, agent_name: str):
-        return {"type": "task.status_changed", "channel": "tasks", "data": {"id": task_id, "status": status, "agent": agent_name}}
+        return {
+            "type": "task.status_changed",
+            "channel": "tasks",
+            "data": {"id": task_id, "status": status, "agent": agent_name},
+        }
 
     @staticmethod
     def task_progress_update(task_id: str, current_action: str, agent_name: str):
-        return {"type": "task.progress_update", "channel": "tasks", "data": {"id": task_id, "current_action": current_action, "agent": agent_name}}
+        return {
+            "type": "task.progress_update",
+            "channel": "tasks",
+            "data": {"id": task_id, "current_action": current_action, "agent": agent_name},
+        }
 
     @staticmethod
     def task_completed(task_id: str, agent_name: str):
@@ -70,11 +85,19 @@ class WebSocketEvents:
 
     @staticmethod
     def agent_current_action(agent_name: str, current_action: str, task_id: str | None = None):
-        return {"type": "agent.current_action", "channel": "agents", "data": {"agent": agent_name, "current_action": current_action, "task_id": task_id}}
+        return {
+            "type": "agent.current_action",
+            "channel": "agents",
+            "data": {"agent": agent_name, "current_action": current_action, "task_id": task_id},
+        }
 
     @staticmethod
     def chat_message(agent_name: str, content: str, session_id: str | None = None):
-        return {"type": "chat.message", "channel": f"agent:{agent_name}", "data": {"agent": agent_name, "content": content, "session_id": session_id}}
+        return {
+            "type": "chat.message",
+            "channel": f"agent:{agent_name}",
+            "data": {"agent": agent_name, "content": content, "session_id": session_id},
+        }
 
     @staticmethod
     def file_indexed(file_id: str, path: str):
@@ -86,19 +109,35 @@ class WebSocketEvents:
 
     @staticmethod
     def collab_user_joined(object_id: str, user_id: str, display_name: str, color: str):
-        return {"type": "collab.user_joined", "channel": f"collab:{object_id}", "data": {"object_id": object_id, "user_id": user_id, "display_name": display_name, "color": color}}
+        return {
+            "type": "collab.user_joined",
+            "channel": f"collab:{object_id}",
+            "data": {"object_id": object_id, "user_id": user_id, "display_name": display_name, "color": color},
+        }
 
     @staticmethod
     def collab_user_left(object_id: str, user_id: str):
-        return {"type": "collab.user_left", "channel": f"collab:{object_id}", "data": {"object_id": object_id, "user_id": user_id}}
+        return {
+            "type": "collab.user_left",
+            "channel": f"collab:{object_id}",
+            "data": {"object_id": object_id, "user_id": user_id},
+        }
 
     @staticmethod
     def user_joined(object_id: str, user_id: str, user_name: str):
-        return {"type": "user.joined", "channel": f"object:{object_id}", "data": {"object_id": object_id, "user_id": user_id, "user_name": user_name}}
+        return {
+            "type": "user.joined",
+            "channel": f"object:{object_id}",
+            "data": {"object_id": object_id, "user_id": user_id, "user_name": user_name},
+        }
 
     @staticmethod
     def user_left(object_id: str, user_id: str, user_name: str):
-        return {"type": "user.left", "channel": f"object:{object_id}", "data": {"object_id": object_id, "user_id": user_id, "user_name": user_name}}
+        return {
+            "type": "user.left",
+            "channel": f"object:{object_id}",
+            "data": {"object_id": object_id, "user_id": user_id, "user_name": user_name},
+        }
 
     @staticmethod
     def presence_update(object_id: str, users: list):
@@ -176,6 +215,7 @@ class WebSocketManager:
             request_id = str(message.data.get("request_id") or "")
             approved = bool(message.data.get("approved"))
             from app.services.agent.sandbox import tool_approval_manager
+
             if not request_id or tool_approval_manager.get_payload(request_id) is None:
                 await websocket.send_json({"type": "error", "data": {"message": "Unknown approval request"}})
                 return

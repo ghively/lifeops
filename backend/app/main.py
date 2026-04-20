@@ -1,35 +1,53 @@
 """Knowledge OS Backend - FastAPI Application"""
+
 import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
-from app.vendor.slowapi_compat import (
-    RateLimitExceeded,
-    SlowAPIMiddleware,
-    _rate_limit_exceeded_handler,
-)
 
 from app.config import settings
 from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
 from app.logging_config import AppMetrics, bind_request_context, clear_request_context, configure_logging
-from app.middleware.rate_limit import limiter, read_rate_limit
 from app.middleware.auth import authenticate_websocket
-from app.services.embedding import embedding_service
-from app.services.backup import backup_service
-from app.services.auth import auth_service
-from app.services.file_watcher import file_watcher_service
-from app.services.websocket_manager import websocket_manager
-from app.services.collaboration import collaboration_manager
-from app.services.agent.runtime import get_agent_runtime
+from app.middleware.rate_limit import limiter, read_rate_limit
 
 # Import routers
-from app.routers import objects, blocks, tasks, search, agents, files, relations, settings as settings_router, auth as auth_router, collaboration, system, agent_chat, agent_webhooks
+from app.routers import (
+    agent_chat,
+    agent_webhooks,
+    agents,
+)
+from app.routers import auth as auth_router
+from app.routers import (
+    blocks,
+    collaboration,
+    files,
+    objects,
+    relations,
+    search,
+)
+from app.routers import settings as settings_router
+from app.routers import (
+    system,
+    tasks,
+)
+from app.services.agent.runtime import get_agent_runtime
+from app.services.auth import auth_service
+from app.services.backup import backup_service
+from app.services.collaboration import collaboration_manager
+from app.services.embedding import embedding_service
+from app.services.file_watcher import file_watcher_service
+from app.services.websocket_manager import websocket_manager
+from app.vendor.slowapi_compat import (
+    RateLimitExceeded,
+    SlowAPIMiddleware,
+    _rate_limit_exceeded_handler,
+)
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -42,22 +60,22 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Knowledge OS Backend...")
     auth_service.log_secret_configuration_warning()
     app.state._trusted_proxies = getattr(settings, "trusted_proxies", "")
-    
+
     # Initialize databases first
     logger.info("📦 Initializing Qdrant...")
     await qdrant_manager.initialize()
-    
+
     logger.info("📦 Initializing SQLite...")
     await sqlite_manager.initialize()
-    
+
     # Initialize embedding service (needed by other services)
     logger.info("📦 Initializing embedding service...")
     await embedding_service.initialize()
-    
+
     # Initialize other services
     logger.info("📦 Initializing backup service...")
     await backup_service.start()
-    
+
     logger.info("📦 Initializing file watcher service...")
     await file_watcher_service.start()
 
@@ -68,12 +86,12 @@ async def lifespan(app: FastAPI):
     await get_agent_runtime().start()
 
     logger.info("✅ Knowledge OS Backend started successfully!")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("🛑 Shutting down Knowledge OS Backend...")
-    
+
     await file_watcher_service.stop()
     await backup_service.stop()
     await collaboration_manager.stop()
@@ -81,7 +99,7 @@ async def lifespan(app: FastAPI):
     await embedding_service.close()
     await sqlite_manager.close()
     await qdrant_manager.close()
-    
+
     logger.info("✅ Knowledge OS Backend stopped")
 
 
@@ -90,7 +108,7 @@ app = FastAPI(
     title="Knowledge OS API",
     description="API for Knowledge OS - A knowledge management system with AI agent integration",
     version="0.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 app.state.limiter = limiter
 app.state.metrics = AppMetrics.create()
@@ -118,6 +136,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "request_id": request_id,
         },
     )
+
 
 # Configure CORS with configurable origins
 app.add_middleware(
@@ -184,6 +203,7 @@ async def request_context_middleware(request: Request, call_next):
             )
         clear_request_context()
 
+
 # H46: Global auth enforcement for /api/v1/* routes
 AUTH_WHITELIST = {
     "/api/v1/auth/login",
@@ -235,21 +255,14 @@ app.include_router(system.router, prefix="/api/v1/system", tags=["System"])
 @read_rate_limit
 async def health_check(request: Request):
     """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "version": "0.1.0"
-    }
+    return {"status": "healthy", "version": "0.1.0"}
 
 
 @app.get("/")
 @read_rate_limit
 async def root(request: Request):
     """Root endpoint"""
-    return {
-        "message": "Knowledge OS API",
-        "version": "0.1.0",
-        "docs": "/docs"
-    }
+    return {"message": "Knowledge OS API", "version": "0.1.0", "docs": "/docs"}
 
 
 @app.websocket("/ws")
@@ -284,6 +297,7 @@ async def websocket_endpoint(websocket: WebSocket, agent_name: str = "system"):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         app,
         host=getattr(settings, "host", "0.0.0.0"),

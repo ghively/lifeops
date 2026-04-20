@@ -1,11 +1,12 @@
 """Authentication Service - JWT tokens and password management"""
-import uuid
+
 import logging
 import os
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 import jwt
 from passlib.context import CryptContext
@@ -23,7 +24,7 @@ class AuthService:
     """Service for authentication operations"""
 
     def __init__(self):
-        self.secret_key = getattr(settings, 'secret_key', None)
+        self.secret_key = getattr(settings, "secret_key", None)
         self.secret_source = "environment"
         self.secret_file_path: Path | None = None
         self._secret_warning_logged = False
@@ -36,9 +37,9 @@ class AuthService:
                 "Set JWT_SECRET_KEY in your environment or set DEBUG=true for development."
             )
 
-        self.access_token_expire_minutes = getattr(settings, 'access_token_expire_minutes', 1440)  # 24h default
-        self.refresh_token_expire_days = getattr(settings, 'refresh_token_expire_days', 7)  # 7 days default
-        self.reset_token_expire_hours = getattr(settings, 'reset_token_expire_hours', 1)  # 1 hour default
+        self.access_token_expire_minutes = getattr(settings, "access_token_expire_minutes", 1440)  # 24h default
+        self.refresh_token_expire_days = getattr(settings, "refresh_token_expire_days", 7)  # 7 days default
+        self.reset_token_expire_hours = getattr(settings, "reset_token_expire_hours", 1)  # 1 hour default
 
     def _resolve_secret_file_path(self) -> Path:
         configured_path = os.getenv("JWT_SECRET_FILE")
@@ -79,9 +80,13 @@ class AuthService:
 
         location = str(self.secret_file_path) if self.secret_file_path else "<unavailable>"
         logger.warning("JWT_SECRET_KEY is not set. Backend is using a persisted fallback secret from %s", location)
-        logger.warning("Production warning: configure JWT_SECRET_KEY from your environment or secret manager before deployment")
+        logger.warning(
+            "Production warning: configure JWT_SECRET_KEY from your environment or secret manager before deployment"
+        )
         if self.secret_source == "ephemeral-fallback":
-            logger.error("JWT secret persistence failed. Existing sessions will be invalidated on restart until secret storage works")
+            logger.error(
+                "JWT secret persistence failed. Existing sessions will be invalidated on restart until secret storage works"
+            )
         self._secret_warning_logged = True
 
     def hash_password(self, password: str) -> str:
@@ -127,12 +132,13 @@ class AuthService:
             logger.warning(f"Invalid token: {e}")
             return None
 
-    async def create_user(self, email: str, username: str, password: str, display_name: Optional[str] = None) -> Dict[str, Any]:
+    async def create_user(
+        self, email: str, username: str, password: str, display_name: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Create a new user"""
         # Check if user already exists
         existing = await sqlite_manager.fetchone(
-            "SELECT id, email, username FROM users WHERE email = ? OR username = ?",
-            (email, username)
+            "SELECT id, email, username FROM users WHERE email = ? OR username = ?", (email, username)
         )
         if existing:
             if existing["email"] == email:
@@ -150,7 +156,7 @@ class AuthService:
             INSERT INTO users (id, email, username, display_name, hashed_password, is_active, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, 1, ?, ?)
             """,
-            (user_id, email, username, display_name, hashed_password, now, now)
+            (user_id, email, username, display_name, hashed_password, now, now),
         )
 
         return {
@@ -164,10 +170,7 @@ class AuthService:
 
     async def authenticate_user(self, email: str, password: str) -> Optional[Dict[str, Any]]:
         """Authenticate a user with email and password"""
-        user = await sqlite_manager.fetchone(
-            "SELECT * FROM users WHERE email = ? AND is_active = 1",
-            (email,)
-        )
+        user = await sqlite_manager.fetchone("SELECT * FROM users WHERE email = ? AND is_active = 1", (email,))
 
         if not user:
             return None
@@ -180,8 +183,7 @@ class AuthService:
     async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get a user by ID"""
         return await sqlite_manager.fetchone(
-            "SELECT id, email, username, display_name, is_active, created_at, updated_at FROM users WHERE id = ?",
-            (user_id,)
+            "SELECT id, email, username, display_name, is_active, created_at, updated_at FROM users WHERE id = ?", (user_id,)
         )
 
     async def store_refresh_token(self, user_id: str, token: str) -> str:
@@ -195,7 +197,7 @@ class AuthService:
             INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (token_id, user_id, token_hash, expires_at, datetime.utcnow())
+            (token_id, user_id, token_hash, expires_at, datetime.utcnow()),
         )
 
         return token_id
@@ -213,7 +215,7 @@ class AuthService:
             WHERE user_id = ? AND expires_at > ?
             ORDER BY created_at DESC
             """,
-            (user_id, datetime.utcnow())
+            (user_id, datetime.utcnow()),
         )
 
         for stored_token in tokens:
@@ -229,17 +231,11 @@ class AuthService:
             return False
 
         # Find and delete the token
-        tokens = await sqlite_manager.fetchall(
-            "SELECT * FROM refresh_tokens WHERE user_id = ?",
-            (user_id,)
-        )
+        tokens = await sqlite_manager.fetchall("SELECT * FROM refresh_tokens WHERE user_id = ?", (user_id,))
 
         for stored_token in tokens:
             if self.verify_password(token, stored_token["token_hash"]):
-                await sqlite_manager.execute(
-                    "DELETE FROM refresh_tokens WHERE id = ?",
-                    (stored_token["id"],)
-                )
+                await sqlite_manager.execute("DELETE FROM refresh_tokens WHERE id = ?", (stored_token["id"],))
                 return True
 
         return False
@@ -247,19 +243,13 @@ class AuthService:
     async def revoke_all_refresh_tokens(self, user_id: str) -> int:
         """Revoke all refresh tokens for a user"""
         # execute() returns an async context manager cursor, so we do it directly
-        async with sqlite_manager.connection.execute(
-            "DELETE FROM refresh_tokens WHERE user_id = ?",
-            (user_id,)
-        ) as cursor:
+        async with sqlite_manager.connection.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,)) as cursor:
             await sqlite_manager.connection.commit()
             return cursor.rowcount
 
     async def create_password_reset_token(self, email: str) -> Optional[str]:
         """Create a password reset token for a user"""
-        user = await sqlite_manager.fetchone(
-            "SELECT id FROM users WHERE email = ? AND is_active = 1",
-            (email,)
-        )
+        user = await sqlite_manager.fetchone("SELECT id FROM users WHERE email = ? AND is_active = 1", (email,))
 
         if not user:
             # Don't reveal if email exists or not
@@ -276,7 +266,7 @@ class AuthService:
             INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (token_id, user["id"], token_hash, expires_at, datetime.utcnow())
+            (token_id, user["id"], token_hash, expires_at, datetime.utcnow()),
         )
 
         # In production, you would send an email here
@@ -295,7 +285,7 @@ class AuthService:
             JOIN users u ON u.id = prt.user_id
             WHERE prt.used = 0 AND prt.expires_at > ?
             """,
-            (datetime.utcnow(),)
+            (datetime.utcnow(),),
         )
 
         for reset_token in tokens:
@@ -320,7 +310,7 @@ class AuthService:
             SET hashed_password = ?, updated_at = ?
             WHERE id = ?
             """,
-            (hashed_password, datetime.utcnow(), user_id)
+            (hashed_password, datetime.utcnow(), user_id),
         )
 
         # Mark token as used
@@ -330,7 +320,7 @@ class AuthService:
             SET used = 1
             WHERE id = ?
             """,
-            (token_data["id"],)
+            (token_data["id"],),
         )
 
         # Revoke all refresh tokens for security

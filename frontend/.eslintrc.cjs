@@ -1,0 +1,31 @@
+module.exports = {
+  root: true,
+  env: { browser: true, es2020: true, node: true },
+  extends: [
+    'eslint:recommended',
+    'plugin:@typescript-eslint/recommended',
+    'plugin:react-hooks/recommended',
+  ],
+  ignorePatterns: [
+    'dist',
+    'build',
+    'node_modules',
+    '.eslintrc.cjs',
+    'e2e',
+    'tests',
+    'playwright.config.ts',
+    '**/__tests__/**',
+    '**/*.test.ts',
+    '**/*.test.tsx',
+  ],
+  parser: '@typescript-eslint/parser',
+  plugins: ['react-refresh'],
+  rules: {
+    'react-refresh/only-export-components': 'off',
+    'react-hooks/exhaustive-deps': 'off',
+    '@typescript-eslint/no-unused-vars': 'off',
+    '@typescript-eslint/no-explicit-any': 'off',
+    'no-empty': ['warn', { allowEmptyCatch: true }],
+    'no-constant-condition': ['error', { checkLoops: false }],
+  },
+};

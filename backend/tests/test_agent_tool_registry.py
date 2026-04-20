@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.agent.models import ToolDefinition, ToolResult
 from app.services.agent.sandbox import ToolSandbox
 from app.services.agent.tool_registry import ToolRegistry
-from app.services.agent.models import ToolDefinition, ToolResult
 
 
 @pytest.mark.asyncio
