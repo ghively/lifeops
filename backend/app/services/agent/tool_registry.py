@@ -1,4 +1,5 @@
 """Unified tool registry for the agent runtime."""
+
 from __future__ import annotations
 
 import json
@@ -11,9 +12,9 @@ from app.database.qdrant_client import qdrant_manager
 from app.services.agent.audit import AgentAuditLogger
 from app.services.agent.cli_agent import CLIAgentTool
 from app.services.agent.mcp_client import MCPClientManager
+from app.services.agent.models import ToolDefinition, ToolResult
 from app.services.agent.sandbox import ToolApprovalRequired, ToolSandbox, tool_approval_manager
 from app.services.agent.security import AgentSecurityManager
-from app.services.agent.models import ToolDefinition, ToolResult
 from app.services.embedding import embedding_service
 from app.utils.time import utc_now_iso
 
@@ -144,7 +145,9 @@ class ToolRegistry:
 
         try:
             if runtime_tool:
-                result = await runtime_tool.execute(arguments, context=execution_context, identity=identity, definition=definition)
+                result = await runtime_tool.execute(
+                    arguments, context=execution_context, identity=identity, definition=definition
+                )
             else:
                 result = await self.mcp_manager.execute_tool(name, arguments)
         except ToolApprovalRequired:
@@ -291,7 +294,12 @@ class ToolRegistry:
         content = arguments.get("content", "").strip()
         object_type = arguments.get("object_type", "note")
         if not title and not content and not object_type:
-            return ToolResult(tool_name="create_object", success=False, error="At least one of title, content, or object_type must be non-empty", content="")
+            return ToolResult(
+                tool_name="create_object",
+                success=False,
+                error="At least one of title, content, or object_type must be non-empty",
+                content="",
+            )
         client = qdrant_manager.get_async_client()
         object_id = str(uuid.uuid4())
         payload = {
@@ -353,7 +361,9 @@ class ToolRegistry:
             task_id = arguments.get("task_id")
             status = arguments.get("status")
             if not task_id:
-                return ToolResult(tool_name="manage_tasks", success=False, error="task_id is required for update_status action", content="")
+                return ToolResult(
+                    tool_name="manage_tasks", success=False, error="task_id is required for update_status action", content=""
+                )
             record = await client.retrieve(collection_name="objects", ids=[task_id], with_payload=True, with_vectors=False)
             if not record:
                 return ToolResult(tool_name="manage_tasks", success=False, error="Task not found", content="")
@@ -362,7 +372,9 @@ class ToolRegistry:
             payload["properties"]["status"] = status
             payload["properties"]["updated_at"] = utc_now_iso()
             await client.set_payload(collection_name="objects", payload=payload, points=[task_id])
-            return ToolResult(tool_name="manage_tasks", content=json.dumps({"task_id": task_id, "status": status}), data=payload)
+            return ToolResult(
+                tool_name="manage_tasks", content=json.dumps({"task_id": task_id, "status": status}), data=payload
+            )
 
         return ToolResult(tool_name="manage_tasks", success=False, error=f"Unsupported action: {action}", content="")
 

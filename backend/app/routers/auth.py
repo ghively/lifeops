@@ -1,4 +1,5 @@
 """Authentication Router - User registration, login, logout, password reset"""
+
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -6,13 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from app.middleware.auth import get_current_user as require_current_user
 from app.middleware.rate_limit import auth_rate_limit, read_rate_limit
 from app.models.user import (
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    TokenRefreshRequest,
+    TokenResponse,
     UserCreate,
     UserLogin,
     UserResponse,
-    TokenResponse,
-    TokenRefreshRequest,
-    PasswordResetRequest,
-    PasswordResetConfirm,
 )
 from app.services.auth import auth_service
 
@@ -39,10 +40,7 @@ async def register(request: Request, data: UserCreate):
             display_name=data.display_name,
         )
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     # Create tokens
     access_token = auth_service.create_access_token(user["id"])

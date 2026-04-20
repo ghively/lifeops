@@ -1,6 +1,7 @@
 import asyncio
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from app.services.agent.agent_loop import AgentLoop
 from app.services.agent.models import AgentIdentity, AgentMessage, LLMProviderConfig, SubAgentResult, ToolResult
@@ -18,10 +19,12 @@ class FakeLLMRouter:
         if self.calls == 1:
             return {
                 "content": "",
-                "tool_calls": [{
-                    "id": "call-1",
-                    "function": {"name": "search_knowledge", "arguments": "{\"query\": \"phase 1\"}"},
-                }],
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "function": {"name": "search_knowledge", "arguments": '{"query": "phase 1"}'},
+                    }
+                ],
             }
         return {"content": "Final answer", "tool_calls": []}
 
@@ -72,7 +75,7 @@ class FakeParallelLLMRouter(FakeLLMRouter):
             return {
                 "content": "",
                 "tool_calls": [
-                    {"id": "call-1", "function": {"name": "search_knowledge", "arguments": "{\"query\": \"phase 1\"}"}},
+                    {"id": "call-1", "function": {"name": "search_knowledge", "arguments": '{"query": "phase 1"}'}},
                     {"id": "call-2", "function": {"name": "explode", "arguments": "{}"}},
                 ],
             }
@@ -88,16 +91,18 @@ async def test_agent_loop_converts_parallel_tool_exceptions_to_tool_results():
         system_prompt="You are a tester.",
         llm=LLMProviderConfig(),
     )
-    loop._execute_tool_call = AsyncMock(side_effect=[
-        (
-            {"id": "call-1"},
-            "search_knowledge",
-            {"query": "phase 1"},
-            ToolResult(tool_name="search_knowledge", content="[]", data={"results": []}),
-            [],
-        ),
-        RuntimeError("tool crashed"),
-    ])
+    loop._execute_tool_call = AsyncMock(
+        side_effect=[
+            (
+                {"id": "call-1"},
+                "search_knowledge",
+                {"query": "phase 1"},
+                ToolResult(tool_name="search_knowledge", content="[]", data={"results": []}),
+                [],
+            ),
+            RuntimeError("tool crashed"),
+        ]
+    )
 
     events = []
     async for event in loop.run(
@@ -154,10 +159,15 @@ async def test_agent_loop_streams_subagent_events_before_tool_completion():
             if self.calls == 1:
                 return {
                     "content": "",
-                    "tool_calls": [{
-                        "id": "call-1",
-                        "function": {"name": "spawn_subagents", "arguments": "{\"tasks\": [{\"agent_id\": \"worker-1\", \"prompt\": \"ok\"}]}"},
-                    }],
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "function": {
+                                "name": "spawn_subagents",
+                                "arguments": '{"tasks": [{"agent_id": "worker-1", "prompt": "ok"}]}',
+                            },
+                        }
+                    ],
                 }
             return {"content": "Final answer", "tool_calls": []}
 

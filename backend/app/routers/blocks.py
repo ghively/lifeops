@@ -1,15 +1,15 @@
 """Blocks Router - CRUD operations for blocks."""
+
 import asyncio
 import logging
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-import re
-
 from app.constants import COLLECTION_BLOCKS
 
-_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
 def _normalize_block_id(raw_id: str) -> tuple[str, bool]:
@@ -18,13 +18,18 @@ def _normalize_block_id(raw_id: str) -> tuple[str, bool]:
         return raw_id, False
     # Deterministic UUID5 from the legacy ID so the same legacy ID always maps to the same UUID
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"block://{raw_id}")), True
-from app.database.qdrant_client import qdrant_manager, QdrantManager
+
+
+from app.database.qdrant_client import QdrantManager, qdrant_manager
 from app.database.sqlite import sqlite_manager
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import read_rate_limit, write_rate_limit
 from app.models.blocks import (
-    BlockCreate, BlockListResponse, BlockUpdate,
-    BatchBlockUpdateRequest, SyncBlocksRequest,
+    BatchBlockUpdateRequest,
+    BlockCreate,
+    BlockListResponse,
+    BlockUpdate,
+    SyncBlocksRequest,
 )
 from app.services.embedding import embedding_service
 from app.services.relations import relation_service
@@ -55,7 +60,9 @@ async def _rollback_sqlite(operation: str) -> None:
         logger.error("SQLite rollback failed during %s: %s", operation, exc)
 
 
-async def _restore_blocks_snapshot(client, snapshot_points: list[dict], operation: str, delete_ids: list[str] | None = None) -> None:
+async def _restore_blocks_snapshot(
+    client, snapshot_points: list[dict], operation: str, delete_ids: list[str] | None = None
+) -> None:
     """Best-effort Qdrant rollback for block mutations."""
     try:
         if snapshot_points:
@@ -152,7 +159,8 @@ async def update_block(
 ):
     """Update a block."""
     client = qdrant_manager.get_async_client()
-    existing = await QdrantManager.safe_retrieve(client, 
+    existing = await QdrantManager.safe_retrieve(
+        client,
         collection_name=COLLECTION_BLOCKS,
         ids=[block_id],
         with_payload=True,
@@ -213,7 +221,8 @@ async def batch_update_blocks(data: BatchBlockUpdateRequest, request: Request, c
     if not requested_updates:
         return {"message": "Updated 0 blocks", "count": 0}
 
-    existing_points = await QdrantManager.safe_retrieve(client, 
+    existing_points = await QdrantManager.safe_retrieve(
+        client,
         collection_name=COLLECTION_BLOCKS,
         ids=[block_data.id for block_data in requested_updates],
         with_payload=True,
@@ -343,7 +352,8 @@ async def sync_blocks_for_object(
 async def delete_block(block_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Delete a block."""
     client = qdrant_manager.get_async_client()
-    existing = await QdrantManager.safe_retrieve(client, 
+    existing = await QdrantManager.safe_retrieve(
+        client,
         collection_name=COLLECTION_BLOCKS,
         ids=[block_id],
         with_payload=True,

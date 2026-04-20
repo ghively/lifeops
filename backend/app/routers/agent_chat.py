@@ -138,7 +138,7 @@ async def create_mcp_server(
 
     # Validate command to prevent arbitrary command execution
     command = config.command.strip()
-    dangerous_chars = re.compile(r'[|&;$`]')
+    dangerous_chars = re.compile(r"[|&;$`]")
     if dangerous_chars.search(command):
         raise HTTPException(status_code=400, detail="Command contains forbidden shell metacharacters")
 

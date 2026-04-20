@@ -1,4 +1,5 @@
 """Built-in templates for runtime agents."""
+
 from __future__ import annotations
 
 from typing import Dict, List

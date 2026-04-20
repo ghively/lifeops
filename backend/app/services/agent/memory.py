@@ -1,4 +1,5 @@
 """Memory management for runtime agents."""
+
 from __future__ import annotations
 
 import logging
@@ -27,9 +28,12 @@ class MemoryManager:
             return 0
         count = len(text) // 4
         if count > 500:
-            logger.debug("Token estimation using len//4 heuristic (%d tokens for %d chars); consider tiktoken for accuracy", count, len(text))
+            logger.debug(
+                "Token estimation using len//4 heuristic (%d tokens for %d chars); consider tiktoken for accuracy",
+                count,
+                len(text),
+            )
         return max(1, count)
-
 
 
 class MemoryManager:
@@ -125,17 +129,19 @@ class MemoryManager:
                 embedding = await embedding_service.embed_text(entry.content)
                 await client.upsert(
                     collection_name="agent_memories",
-                    points=[{
-                        "id": entry.id,
-                        "vector": embedding.tolist(),
-                        "payload": {
+                    points=[
+                        {
                             "id": entry.id,
-                            "agent_name": agent_id,
-                            "memory_type": entry.source,
-                            "content": entry.content,
-                            "timestamp": entry.timestamp or utc_now_iso(),
-                        },
-                    }],
+                            "vector": embedding.tolist(),
+                            "payload": {
+                                "id": entry.id,
+                                "agent_name": agent_id,
+                                "memory_type": entry.source,
+                                "content": entry.content,
+                                "timestamp": entry.timestamp or utc_now_iso(),
+                            },
+                        }
+                    ],
                 )
             except Exception as exc:
                 logger.warning("Skipping qdrant memory flush for %s: %s", agent_id, exc)

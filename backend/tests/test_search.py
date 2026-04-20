@@ -23,9 +23,7 @@ class TestSearchRouter:
 
     async def test_search_with_type_filter(self, test_client):
         """Test search with collection filter."""
-        response = await test_client.get("/api/v1/search", params={
-            "q": "test", "collection": "objects"
-        })
+        response = await test_client.get("/api/v1/search", params={"q": "test", "collection": "objects"})
         assert response.status_code == 200
         data = response.json()
         assert "results" in data
@@ -38,11 +36,14 @@ class TestSearchRouter:
     async def test_search_exact_mode(self, test_client):
         """Test exact search mode."""
         # Create an object with known content
-        await test_client.post("/api/v1/objects", json={
-            "title": "Searchable Note",
-            "content": "This is a test note about python programming",
-            "type": "note",
-        })
+        await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Searchable Note",
+                "content": "This is a test note about python programming",
+                "type": "note",
+            },
+        )
 
         response = await test_client.get("/api/v1/search", params={"q": "python", "exact": True})
         assert response.status_code == 200
@@ -59,11 +60,14 @@ class TestSearchRouter:
     async def test_find_similar_success(self, test_client):
         """Test finding similar objects."""
         # Create an object first
-        create_resp = await test_client.post("/api/v1/objects", json={
-            "title": "Test Object",
-            "content": "Test content for similarity",
-            "type": "note",
-        })
+        create_resp = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Test Object",
+                "content": "Test content for similarity",
+                "type": "note",
+            },
+        )
         assert create_resp.status_code == 201
         obj_id = create_resp.json()["id"]
 

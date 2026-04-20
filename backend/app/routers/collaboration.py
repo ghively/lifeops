@@ -1,4 +1,5 @@
 """Collaboration Router — REST + WebSocket endpoints for collaboration features."""
+
 import json
 import logging
 
@@ -7,15 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSo
 from app.middleware.auth import authenticate_websocket, get_current_user
 from app.middleware.rate_limit import read_rate_limit
 from app.services.collaboration import (
-    collaboration_manager,
-    CROperation,
+    MSG_AWARENESS,
+    MSG_CURSOR,
+    MSG_ERROR,
     MSG_JOIN,
     MSG_LEAVE,
     MSG_OP,
-    MSG_CURSOR,
-    MSG_AWARENESS,
     MSG_SNAPSHOT_REQ,
-    MSG_ERROR,
+    CROperation,
+    collaboration_manager,
 )
 
 router = APIRouter()
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # WebSocket endpoint for real-time collaboration
 # ---------------------------------------------------------------------------
+
 
 @router.websocket("/ws/{object_id}")
 async def collaboration_ws(websocket: WebSocket, object_id: str):
@@ -137,10 +139,12 @@ async def collaboration_ws(websocket: WebSocket, object_id: str):
             elif msg_type == MSG_SNAPSHOT_REQ:
                 room = collaboration_manager.get_room(object_id)
                 if room:
-                    await websocket.send_json({
-                        "type": "collab.snapshot",
-                        "data": room.get_snapshot(),
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "collab.snapshot",
+                            "data": room.get_snapshot(),
+                        }
+                    )
 
             else:
                 await websocket.send_json({"type": MSG_ERROR, "data": {"message": f"Unknown message type: {msg_type}"}})
@@ -157,6 +161,7 @@ async def collaboration_ws(websocket: WebSocket, object_id: str):
 # ---------------------------------------------------------------------------
 # REST endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/{object_id}/presence")
 @read_rate_limit

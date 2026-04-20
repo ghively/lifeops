@@ -1,4 +1,5 @@
 """ReAct-style agent loop."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,10 +9,10 @@ from math import floor
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Union
 
 from app.services.agent.audit import AgentAuditLogger
+from app.services.agent.models import AgentIdentity, AgentMessage, StreamingEvent, SubAgentResult, SubAgentTask, ToolResult
 from app.services.agent.sandbox import ToolApprovalRequired, tool_approval_manager
 from app.services.agent.security import AgentSecurityManager
 from app.services.websocket_manager import WebSocketEvents, websocket_manager
-from app.services.agent.models import AgentIdentity, AgentMessage, StreamingEvent, SubAgentResult, SubAgentTask, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,9 @@ class AgentLoop:
         except asyncio.TimeoutError:
             logger.error(
                 "Agent loop exceeded max execution time (%.1fs) for agent %s session %s",
-                max_execution_time, agent_id, session_id,
+                max_execution_time,
+                agent_id,
+                session_id,
             )
             yield StreamingEvent(
                 type="error",
@@ -118,11 +121,15 @@ class AgentLoop:
             text=user_message,
         )
         if findings:
-            yield StreamingEvent(type="security_warning", session_id=session_id, agent_id=agent_id, data={"patterns": findings})
+            yield StreamingEvent(
+                type="security_warning", session_id=session_id, agent_id=agent_id, data={"patterns": findings}
+            )
 
         hardened_identity = identity.model_copy(deep=True)
         hardened_identity.system_prompt = self.security_manager.harden_system_prompt(identity.system_prompt)
-        messages = self._build_messages(hardened_identity, memory_entries, history, sanitized_user_message, shared_context=shared_context)
+        messages = self._build_messages(
+            hardened_identity, memory_entries, history, sanitized_user_message, shared_context=shared_context
+        )
         token_budget = self._estimate_messages_tokens(messages)
         token_usage = {"prompt_tokens": token_budget, "completion_tokens": 0, "total_tokens": token_budget}
         model_context_window = self._context_window_for_model(identity.model)
@@ -148,7 +155,12 @@ class AgentLoop:
             tool_calls = response.get("tool_calls") or []
             if not isinstance(tool_calls, list):
                 logger.warning("tool_calls is not a list (got %s), ignoring", type(tool_calls).__name__)
-                yield StreamingEvent(type="error", session_id=session_id, agent_id=agent_id, data={"error": f"Invalid tool_calls format: {type(tool_calls).__name__}"})
+                yield StreamingEvent(
+                    type="error",
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    data={"error": f"Invalid tool_calls format: {type(tool_calls).__name__}"},
+                )
                 tool_calls = []
             if tool_calls:
                 assistant_message = {"role": "assistant", "content": response.get("content", ""), "tool_calls": tool_calls}
@@ -161,7 +173,13 @@ class AgentLoop:
                         arguments = json.loads(function.get("arguments") or "{}")
                     except json.JSONDecodeError as e:
                         logger.warning("Malformed tool_call JSON for %s: %s", tool_name, e)
-                        yield StreamingEvent(type="error", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data={"error": f"Malformed tool_call arguments: {e}"})
+                        yield StreamingEvent(
+                            type="error",
+                            session_id=session_id,
+                            agent_id=agent_id,
+                            tool_name=tool_name,
+                            data={"error": f"Malformed tool_call arguments: {e}"},
+                        )
                         arguments = {}
                     parsed_calls.append((tool_call, tool_name, arguments))
                     yield StreamingEvent(
@@ -229,12 +247,14 @@ class AgentLoop:
                 for tool_call, tool_name, _arguments, result, emitted_events in normalized_results:
                     for event in emitted_events:
                         yield event
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.get("id"),
-                        "name": tool_name,
-                        "content": result.content or result.error or "",
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.get("id"),
+                            "name": tool_name,
+                            "content": result.content or result.error or "",
+                        }
+                    )
                     yield StreamingEvent(
                         type="tool_result",
                         session_id=session_id,
@@ -250,7 +270,13 @@ class AgentLoop:
             content = response.get("content", "")
             for chunk in self._collect_stream(content):
                 yield StreamingEvent(type="text_delta", session_id=session_id, agent_id=agent_id, delta=chunk)
-            yield StreamingEvent(type="done", session_id=session_id, agent_id=agent_id, message=content, data={"token_usage": token_usage, "budget": allocation})
+            yield StreamingEvent(
+                type="done",
+                session_id=session_id,
+                agent_id=agent_id,
+                message=content,
+                data={"token_usage": token_usage, "budget": allocation},
+            )
             return
 
         raise RuntimeError("Max agent iterations exceeded")
@@ -259,7 +285,7 @@ class AgentLoop:
         if not content:
             return []
         chunk_size = 120
-        return [content[index:index + chunk_size] for index in range(0, len(content), chunk_size)]
+        return [content[index : index + chunk_size] for index in range(0, len(content), chunk_size)]
 
     def _build_messages(
         self,
@@ -314,7 +340,9 @@ class AgentLoop:
             tool_results=[self._tool_result_from_exception("spawn_subagents", exc)],
         )
 
-    def _list_tools(self, identity: AgentIdentity, *, execution_depth: int, allowed_tools: Optional[List[str]]) -> List[Dict[str, Any]]:
+    def _list_tools(
+        self, identity: AgentIdentity, *, execution_depth: int, allowed_tools: Optional[List[str]]
+    ) -> List[Dict[str, Any]]:
         tools = self.tool_registry.list_openai_tools(allowed_tools=allowed_tools)
         if not allowed_tools or "message_agent" in set(allowed_tools):
             tools.append(
@@ -385,7 +413,9 @@ class AgentLoop:
         emitted_events: List[StreamingEvent] = []
         try:
             if tool_name == "message_agent":
-                result = await self._execute_agent_message(agent_id=agent_id, arguments=arguments, execution_depth=execution_depth)
+                result = await self._execute_agent_message(
+                    agent_id=agent_id, arguments=arguments, execution_depth=execution_depth
+                )
             elif tool_name == "spawn_subagents":
                 result = await self._execute_sub_agents(
                     agent_id=agent_id,
@@ -403,10 +433,20 @@ class AgentLoop:
                     identity=identity,
                 )
         except ToolApprovalRequired as approval:
-            emitted_events.append(StreamingEvent(type="approval_required", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data=approval.request))
+            emitted_events.append(
+                StreamingEvent(
+                    type="approval_required",
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    tool_name=tool_name,
+                    data=approval.request,
+                )
+            )
             if user_id:
                 await websocket_manager.broadcast(WebSocketEvents.agent_approval_required(user_id, approval.request))
-            approved = await tool_approval_manager.wait_for_decision(approval.request["request_id"], timeout_seconds=approval.request.get("timeout_seconds", 60))
+            approved = await tool_approval_manager.wait_for_decision(
+                approval.request["request_id"], timeout_seconds=approval.request.get("timeout_seconds", 60)
+            )
             if not approved:
                 result = ToolResult(tool_name=tool_name, success=False, error="Tool execution rejected by user", content="")
             else:
@@ -425,7 +465,15 @@ class AgentLoop:
             text=result.content or result.error or "",
         )
         if findings:
-            emitted_events.append(StreamingEvent(type="security_warning", session_id=session_id, agent_id=agent_id, tool_name=tool_name, data={"patterns": findings}))
+            emitted_events.append(
+                StreamingEvent(
+                    type="security_warning",
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    tool_name=tool_name,
+                    data={"patterns": findings},
+                )
+            )
         return tool_call, tool_name, arguments, result, emitted_events
 
     async def _execute_agent_message(self, *, agent_id: str, arguments: Dict[str, Any], execution_depth: int) -> ToolResult:

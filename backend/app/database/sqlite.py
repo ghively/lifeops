@@ -1,9 +1,11 @@
 """SQLite Database Manager"""
-import os
+
 import json
 import logging
+import os
 import threading
 from typing import Any, Iterable, Optional
+
 import aiosqlite
 
 from app.config import settings
@@ -13,36 +15,33 @@ logger = logging.getLogger(__name__)
 
 class SQLiteManager:
     """Manages SQLite database connection"""
-    
+
     def __init__(self):
         self.db_path: str = settings.database_url.replace("sqlite:///", "")
         self.connection: Optional[aiosqlite.Connection] = None
         self._write_lock = threading.Lock()  # H14: Thread safety for writes
-    
+
     async def initialize(self):
         """Initialize SQLite database"""
         # Ensure directory exists
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
+
         # Open connection with proper settings
-        self.connection = await aiosqlite.connect(
-            self.db_path,
-            check_same_thread=False  # Allow use across threads
-        )
-        
+        self.connection = await aiosqlite.connect(self.db_path, check_same_thread=False)  # Allow use across threads
+
         # Enable foreign keys
         await self.connection.execute("PRAGMA foreign_keys = ON")
-        
+
         # H12: Enable WAL mode for better concurrency and crash recovery
         await self.connection.execute("PRAGMA journal_mode=WAL")
 
         self.connection.row_factory = aiosqlite.Row
-        
+
         # Create tables
         await self._create_tables()
-        
+
         logger.info(f"SQLite initialized: {self.db_path}")
-    
+
     async def _create_tables(self):
         """Create database tables within a single transaction (H15)"""
         await self.connection.execute("BEGIN")
@@ -55,7 +54,7 @@ class SQLiteManager:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Watched folders table
             await self.connection.execute("""
                 CREATE TABLE IF NOT EXISTS watched_folders (
@@ -302,10 +301,8 @@ class SQLiteManager:
         for column_name, column_type in columns.items():
             if column_name in existing:
                 continue
-            await self.connection.execute(
-                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
-            )
-    
+            await self.connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
     async def _get_connection(self):
         """Create a fresh connection for each request (H13)."""
         conn = await aiosqlite.connect(self.db_path)
@@ -318,7 +315,7 @@ class SQLiteManager:
         """Execute a write query with thread safety (H14)."""
         if not self.connection:
             raise RuntimeError("Database not initialized")
-        
+
         with self._write_lock:
             async with self.connection.execute(query, parameters) as cursor:
                 await self.connection.commit()
@@ -332,21 +329,21 @@ class SQLiteManager:
         with self._write_lock:
             await self.connection.executemany(query, parameters)
             await self.connection.commit()
-    
+
     async def fetchone(self, query: str, parameters: tuple = ()):
         """Fetch a single row"""
         if not self.connection:
             raise RuntimeError("Database not initialized")
-        
+
         async with self.connection.execute(query, parameters) as cursor:
             row = await cursor.fetchone()
             return dict(row) if row is not None else None
-    
+
     async def fetchall(self, query: str, parameters: tuple = ()):
         """Fetch all rows"""
         if not self.connection:
             raise RuntimeError("Database not initialized")
-        
+
         async with self.connection.execute(query, parameters) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
@@ -376,13 +373,11 @@ class SQLiteManager:
 
     async def list_mcp_server_configs(self):
         """Fetch all persisted MCP server configs."""
-        rows = await self.fetchall(
-            """
+        rows = await self.fetchall("""
             SELECT name, transport, command, args, env, url, headers, timeout_seconds, enabled, auto_connect
             FROM mcp_server_configs
             ORDER BY name
-            """
-        )
+            """)
         configs = []
         for row in rows:
             configs.append(
@@ -641,7 +636,7 @@ class SQLiteManager:
             "enabled": bool(row.get("enabled", 1)),
             "created_at": row.get("created_at"),
         }
-    
+
     async def close(self):
         """Close database connection"""
         if self.connection:

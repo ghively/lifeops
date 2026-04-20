@@ -1,10 +1,12 @@
 """Authentication Middleware - FastAPI dependencies for protected routes"""
+
 from __future__ import annotations
+
 import logging
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, WebSocket, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.services.auth import auth_service
 
@@ -103,7 +105,9 @@ async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, 
     return await _resolve_user_from_token(credentials.credentials)
 
 
-async def get_optional_user(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)] | None = None) -> dict | None:
+async def get_optional_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)] | None = None,
+) -> dict | None:
     """
     FastAPI dependency to get the current user if authenticated, None otherwise.
 

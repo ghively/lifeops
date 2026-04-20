@@ -22,8 +22,16 @@ async def initialized_sqlite(tmp_path):
 @pytest.mark.asyncio
 async def test_audit_logger_creates_and_queries_events(initialized_sqlite):
     logger = AgentAuditLogger(retention_days=90)
-    await logger.log_event(agent_id="agent-a", session_id="session-1", user_id="user-1", event_type="tool.call", details={"tool_name": "write_file"})
-    await logger.log_event(agent_id="agent-a", session_id="session-1", user_id="user-1", event_type="tool.result", details={"success": True})
+    await logger.log_event(
+        agent_id="agent-a",
+        session_id="session-1",
+        user_id="user-1",
+        event_type="tool.call",
+        details={"tool_name": "write_file"},
+    )
+    await logger.log_event(
+        agent_id="agent-a", session_id="session-1", user_id="user-1", event_type="tool.result", details={"success": True}
+    )
 
     payload = await logger.list_events("agent-a", page=1, page_size=10)
     assert payload["total"] == 2

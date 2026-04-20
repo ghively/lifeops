@@ -1,11 +1,14 @@
 """Task Models"""
+
 from enum import Enum
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel
 
 
 class TaskStatus(str, Enum):
     """Task status enum"""
+
     TODO = "todo"
     IN_PROGRESS = "in-progress"
     BLOCKED = "blocked"
@@ -15,6 +18,7 @@ class TaskStatus(str, Enum):
 
 class Priority(str, Enum):
     """Task priority enum"""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -23,6 +27,7 @@ class Priority(str, Enum):
 
 class Task(BaseModel):
     """Task model"""
+
     id: str
     type: str = "task"
     title: str
@@ -32,6 +37,7 @@ class Task(BaseModel):
 
 class TaskCreate(BaseModel):
     """Task creation model"""
+
     title: str
     content: Optional[str] = None
     priority: Priority = Priority.MEDIUM
@@ -41,6 +47,7 @@ class TaskCreate(BaseModel):
 
 class TaskUpdate(BaseModel):
     """Task update model"""
+
     title: Optional[str] = None
     content: Optional[str] = None
     priority: Optional[Priority] = None
@@ -51,4 +58,5 @@ class TaskUpdate(BaseModel):
 
 class TaskListResponse(BaseModel):
     """Task list response"""
+
     tasks: List[Dict[str, Any]]

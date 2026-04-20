@@ -1,4 +1,5 @@
 """Async MCP client manager for runtime tool integration."""
+
 from __future__ import annotations
 
 import asyncio
@@ -62,7 +63,9 @@ class MCPClientManager:
         for name in list(self._connections.keys()):
             await self.disconnect_server(name)
 
-    async def ensure_servers(self, server_configs: List[Dict[str, Any]] | List[MCPServerConfig], persist: bool = False) -> None:
+    async def ensure_servers(
+        self, server_configs: List[Dict[str, Any]] | List[MCPServerConfig], persist: bool = False
+    ) -> None:
         for item in server_configs:
             config = item if isinstance(item, MCPServerConfig) else MCPServerConfig(**item)
             await self.configure_server(config, persist=persist)
@@ -157,7 +160,9 @@ class MCPClientManager:
             self._reconnect_backoff.pop(name, None)
             self._reconnect_cooldowns.pop(name, None)
             await self.refresh_tools(name)
-            logger.info("Connected MCP server %s", name, extra={"duration_ms": round((time.perf_counter() - started_at) * 1000, 2)})
+            logger.info(
+                "Connected MCP server %s", name, extra={"duration_ms": round((time.perf_counter() - started_at) * 1000, 2)}
+            )
             return self._status_for(name)
         except Exception as exc:
             await exit_stack.aclose()
@@ -199,10 +204,7 @@ class MCPClientManager:
             tools = getattr(result, "tools", []) or []
             for runtime_name in list(connection.tools.keys()):
                 self._tool_routes.pop(runtime_name, None)
-            connection.tools = {
-                _runtime_tool_name(name, tool.name): self._tool_to_dict(name, tool)
-                for tool in tools
-            }
+            connection.tools = {_runtime_tool_name(name, tool.name): self._tool_to_dict(name, tool) for tool in tools}
             connection.state = "connected"
             connection.error = None
             connection.last_checked_at = utc_now_iso()
@@ -228,6 +230,7 @@ class MCPClientManager:
                 if last:
                     try:
                         from datetime import datetime, timezone
+
                         elapsed = now - datetime.fromisoformat(last.replace("Z", "+00:00")).timestamp()
                         if elapsed > 300:
                             await self.disconnect_server(server_name)
@@ -370,14 +373,18 @@ class MCPClientManager:
     def _http_client_context(self, config: MCPServerConfig):
         streamable_http_client = self._load_streamable_http_client()
         if config.headers:
-            http_client = httpx.AsyncClient(headers=config.headers, timeout=config.timeout_seconds or self.default_timeout_seconds)
+            http_client = httpx.AsyncClient(
+                headers=config.headers, timeout=config.timeout_seconds or self.default_timeout_seconds
+            )
             return _streamable_http_with_client(streamable_http_client, config.url, http_client)
         return streamable_http_client(config.url)
 
     def _tool_to_dict(self, server_name: str, tool: Any) -> Dict[str, Any]:
         original_name = getattr(tool, "name", "")
         description = getattr(tool, "description", "") or f"MCP tool {original_name} from {server_name}"
-        input_schema = getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None) or {"type": "object", "properties": {}}
+        input_schema = (
+            getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None) or {"type": "object", "properties": {}}
+        )
         runtime_name = _runtime_tool_name(server_name, original_name)
         return {
             "name": original_name,
@@ -468,7 +475,6 @@ class MCPClientManager:
 
 import re
 
-
 _SENSITIVE_ENV_PATTERNS = re.compile(
     r"(SECRET|TOKEN|KEY|PASSWORD|API_KEY|OPENCLAW)",
     re.IGNORECASE,
@@ -498,9 +504,7 @@ class _streamable_http_with_client:
 
     async def __aenter__(self):
         await self._stack.enter_async_context(self._http_client)
-        return await self._stack.enter_async_context(
-            self._streamable_http_client(self._url, http_client=self._http_client)
-        )
+        return await self._stack.enter_async_context(self._streamable_http_client(self._url, http_client=self._http_client))
 
     async def __aexit__(self, exc_type, exc, tb):
         return await self._stack.__aexit__(exc_type, exc, tb)

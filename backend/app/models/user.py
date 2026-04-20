@@ -1,11 +1,14 @@
 """User Authentication Models"""
+
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class UserCreate(BaseModel):
     """User registration model"""
+
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
     display_name: Optional[str] = Field(None, max_length=100)
@@ -14,12 +17,14 @@ class UserCreate(BaseModel):
 
 class UserLogin(BaseModel):
     """User login model"""
+
     email: EmailStr
     password: str
 
 
 class UserResponse(BaseModel):
     """User response model (without sensitive data)"""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -33,6 +38,7 @@ class UserResponse(BaseModel):
 
 class TokenResponse(BaseModel):
     """Token response model"""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -42,21 +48,25 @@ class TokenResponse(BaseModel):
 
 class TokenRefreshRequest(BaseModel):
     """Token refresh request model"""
+
     refresh_token: str
 
 
 class PasswordResetRequest(BaseModel):
     """Password reset request model"""
+
     email: EmailStr
 
 
 class PasswordResetConfirm(BaseModel):
     """Password reset confirmation model"""
+
     token: str
     new_password: str = Field(..., min_length=8)
 
 
 class PasswordChange(BaseModel):
     """Password change model (for authenticated users)"""
+
     old_password: str
     new_password: str = Field(..., min_length=8)

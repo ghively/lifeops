@@ -1,4 +1,5 @@
 """Per-agent usage and rate limiting."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,12 +7,11 @@ import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Deque, DefaultDict, Dict
+from typing import DefaultDict, Deque, Dict
 
 from app.database.sqlite import sqlite_manager
 from app.services.agent.models import AgentIdentity, AgentUsageSnapshot
 from app.utils.time import utc_now_iso
-
 
 DEFAULT_REQUESTS_PER_MINUTE = 30
 DEFAULT_TOKENS_PER_DAY = 200_000
@@ -88,7 +88,9 @@ class AgentRateLimiter:
             date=self._today(),
         )
 
-    async def record_usage(self, *, agent_id: str, user_id: str, tokens: int, request_increment: int = 1) -> AgentUsageSnapshot:
+    async def record_usage(
+        self, *, agent_id: str, user_id: str, tokens: int, request_increment: int = 1
+    ) -> AgentUsageSnapshot:
         date = self._today()
         row = await sqlite_manager.get_agent_token_usage(agent_id, user_id, date)
         total_tokens = int((row or {}).get("total_tokens") or 0) + max(tokens, 0)
@@ -115,7 +117,9 @@ class AgentRateLimiter:
             date=date,
         )
 
-    async def enforce_daily_token_limit(self, *, agent_id: str, user_id: str, identity: AgentIdentity, projected_tokens: int) -> AgentUsageSnapshot:
+    async def enforce_daily_token_limit(
+        self, *, agent_id: str, user_id: str, identity: AgentIdentity, projected_tokens: int
+    ) -> AgentUsageSnapshot:
         row = await sqlite_manager.get_agent_token_usage(agent_id, user_id, self._today())
         current_tokens = int((row or {}).get("total_tokens") or 0)
         limit = self._day_limit(identity)

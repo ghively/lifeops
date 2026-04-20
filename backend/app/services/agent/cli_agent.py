@@ -1,4 +1,5 @@
 """CLI agent delegation tools."""
+
 from __future__ import annotations
 
 import asyncio

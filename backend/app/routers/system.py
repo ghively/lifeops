@@ -1,28 +1,28 @@
 """System observability endpoints."""
+
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.config import settings
-from app.middleware.auth import get_current_user, get_optional_user
-from app.middleware.rate_limit import read_rate_limit, write_rate_limit
-from app.services.collaboration import collaboration_manager
-from app.services.websocket_manager import websocket_manager
 
 # Smoke test imports (lazy to avoid circular)
 from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
-
-import re
-from datetime import datetime
+from app.middleware.auth import get_current_user, get_optional_user
+from app.middleware.rate_limit import read_rate_limit, write_rate_limit
+from app.services.collaboration import collaboration_manager
+from app.services.websocket_manager import websocket_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ ALLOWED_LOG_LEVELS = {"debug", "info", "warning", "error", "critical"}
 
 # Nginx combined log format regex
 _NGINX_RE = re.compile(
-    r'(?P<remote>[\w./:]+) - (?P<remote_user>\S+) '
+    r"(?P<remote>[\w./:]+) - (?P<remote_user>\S+) "
     r'\[(?P<time>[^\]]+)\] "(?P<method>\w+) (?P<path>\S+) (?P<protocol>[^"]+)" '
     r'(?P<status>\d{3}) (?P<body_bytes>\d+) "(?P<referer>[^"]*)" "(?P<ua>[^"]*)"'
 )
@@ -184,15 +184,17 @@ async def get_unified_logs(
             continue
         if search_filter and search_filter not in json.dumps(entry, sort_keys=True).lower():
             continue
-        entries.append({
-            "timestamp": entry.get("timestamp"),
-            "level": e_level,
-            "source": e_source or "backend",
-            "message": entry.get("message", ""),
-            "logger": entry.get("logger"),
-            "request_id": entry.get("request_id"),
-            "data": entry,
-        })
+        entries.append(
+            {
+                "timestamp": entry.get("timestamp"),
+                "level": e_level,
+                "source": e_source or "backend",
+                "message": entry.get("message", ""),
+                "logger": entry.get("logger"),
+                "request_id": entry.get("request_id"),
+                "data": entry,
+            }
+        )
 
     # 2. Nginx access logs (4xx/5xx)
     for parsed in _read_nginx_error_lines(limit=limit):
@@ -203,14 +205,16 @@ async def get_unified_logs(
             continue
         if search_filter and search_filter not in json.dumps(parsed, sort_keys=True).lower():
             continue
-        entries.append({
-            "timestamp": parsed["timestamp"],
-            "level": e_level,
-            "source": "nginx",
-            "message": f'{parsed["method"]} {parsed["path"]} → {parsed["status"]}',
-            "logger": "access",
-            "data": parsed,
-        })
+        entries.append(
+            {
+                "timestamp": parsed["timestamp"],
+                "level": e_level,
+                "source": "nginx",
+                "message": f'{parsed["method"]} {parsed["path"]} → {parsed["status"]}',
+                "logger": "access",
+                "data": parsed,
+            }
+        )
 
     entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
     return {"logs": entries[:limit], "count": min(len(entries), limit)}
@@ -256,7 +260,6 @@ def _ingest_single_log(payload: dict[str, Any], current_user: dict | None = None
     if current_user:
         extra["user_id"] = current_user.get("id")
 
-    ALLOWED_LOG_LEVELS = {"debug", "info", "warning", "error", "critical"}
     safe_level = level if level in ALLOWED_LOG_LEVELS else "error"
     frontend_logger = logging.getLogger(f"frontend.{component}")
     log_method = getattr(frontend_logger, safe_level, frontend_logger.error)
@@ -311,13 +314,12 @@ async def smoke_test(
     # 1. SQLite — write + read a test row
     try:
         import sqlite3
+
         db_path = settings.data_dir + "/knowledge_os.db"
         conn = sqlite3.connect(db_path, timeout=3)
         cur = conn.cursor()
         test_id = str(uuid.uuid4())[:8]
-        cur.execute(
-            "CREATE TABLE IF NOT EXISTS _smoke_test (id TEXT PRIMARY KEY, ts TEXT)"
-        )
+        cur.execute("CREATE TABLE IF NOT EXISTS _smoke_test (id TEXT PRIMARY KEY, ts TEXT)")
         cur.execute(
             "INSERT OR REPLACE INTO _smoke_test (id, ts) VALUES (?, datetime('now'))",
             (test_id,),
@@ -363,6 +365,7 @@ async def smoke_test(
     # 3. File system permissions on /agents and /data
     try:
         from app.config import AGENTS_ROOT
+
         agents_ok = Path(AGENTS_ROOT).is_dir() and os.access(AGENTS_ROOT, os.R_OK | os.W_OK)
         data_ok = Path(settings.data_dir).is_dir() and os.access(settings.data_dir, os.R_OK | os.W_OK)
         issues = []
@@ -380,6 +383,7 @@ async def smoke_test(
     # 4. LLM/Ollama connectivity (lightweight — just check if port is reachable)
     try:
         import urllib.request
+
         ollama_url = settings.llm_base_url or "http://localhost:11434"
         # Hit /api/tags with a short timeout — doesn't run any model
         req = urllib.request.Request(
@@ -404,6 +408,7 @@ async def smoke_test(
     try:
         if settings.openclaw_url and settings.openclaw_url != "http://localhost:18789":
             import urllib.request
+
             req = urllib.request.Request(settings.openclaw_url.rstrip("/") + "/health")
             headers = {}
             if settings.openclaw_token:

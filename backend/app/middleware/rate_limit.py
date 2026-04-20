@@ -12,7 +12,6 @@ from fastapi import Request
 
 from app.vendor.slowapi_compat import Limiter, get_remote_address
 
-
 # NOTE (H48): Per-IP limiter for unauthenticated / public endpoints.
 limiter = Limiter(
     key_func=get_remote_address,

@@ -1,4 +1,5 @@
 """Structured logging and lightweight observability helpers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,7 +15,6 @@ from typing import Any
 import structlog
 
 from app.config import settings
-
 
 COMPONENT_LOG_LEVELS = {
     "app.routers": logging.INFO,

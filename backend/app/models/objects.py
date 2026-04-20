@@ -1,12 +1,15 @@
 """Object Models"""
+
 import uuid
-from typing import Optional, Dict, Any, List
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 
 class ObjectProperties(BaseModel):
     """Object properties"""
+
     tags: List[str] = Field(default_factory=list)
     mentions: List[str] = Field(default_factory=list)
     status: Optional[str] = None
@@ -41,6 +44,7 @@ class ObjectProperties(BaseModel):
 
 class Object(BaseModel):
     """Object model"""
+
     id: str
     type: str
     title: str
@@ -52,6 +56,7 @@ class Object(BaseModel):
 
 class ObjectCreate(BaseModel):
     """Object creation model"""
+
     type: str
     title: str
     icon: Optional[str] = None
@@ -62,6 +67,7 @@ class ObjectCreate(BaseModel):
 
 class ObjectUpdate(BaseModel):
     """Object update model"""
+
     title: Optional[str] = None
     icon: Optional[str] = None
     content: Optional[str] = None
@@ -71,6 +77,7 @@ class ObjectUpdate(BaseModel):
 
 class ObjectListResponse(BaseModel):
     """Object list response"""
+
     objects: List[Dict[str, Any]]
     total: int
     next_offset: Optional[str] = None

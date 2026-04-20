@@ -4,6 +4,7 @@ Uses a simplified CRDT approach with operation-based sync over WebSockets.
 Each document (object_id) has a room that tracks connected users,
 broadcasts edits, and persists to the existing Qdrant blocks store.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,8 +47,8 @@ def user_color(user_id: str) -> str:
 # Client -> Server
 MSG_JOIN = "collab.join"
 MSG_LEAVE = "collab.leave"
-MSG_OP = "collab.op"            # CRDT operation
-MSG_CURSOR = "collab.cursor"    # cursor/selection update
+MSG_OP = "collab.op"  # CRDT operation
+MSG_CURSOR = "collab.cursor"  # cursor/selection update
 MSG_AWARENESS = "collab.awareness"  # generic awareness state
 MSG_SNAPSHOT_REQ = "collab.snapshot_req"
 MSG_ACK = "collab.ack"
@@ -81,11 +82,13 @@ async def ws_reconnect_with_backoff(
         except Exception:
             if attempt == max_retries - 1:
                 raise
-            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay = min(base_delay * (2**attempt), max_delay)
             jitter = random.uniform(0, delay * 0.25)
             logger.warning(
                 "WS reconnect attempt %d/%d, retrying in %.2fs",
-                attempt + 1, max_retries, delay + jitter,
+                attempt + 1,
+                max_retries,
+                delay + jitter,
             )
             await asyncio.sleep(delay + jitter)
 
@@ -135,6 +138,7 @@ missed_message_queue = MissedMessageQueue()
 @dataclass
 class PresenceUser:
     """Represents a user connected to a collaboration room."""
+
     user_id: str
     display_name: str
     color: str
@@ -162,11 +166,12 @@ class CROperation:
     Uses a simple last-writer-wins register per block with
     lamport timestamps for ordering.
     """
+
     op_id: str
     object_id: str
     block_id: str
     type: str  # "insert" | "delete" | "replace" | "update_props"
-    path: List[int]       # Slate path (e.g. [2, 0] = block index 2, child 0)
+    path: List[int]  # Slate path (e.g. [2, 0] = block index 2, child 0)
     offset: int = 0
     content: str = ""
     length: int = 0
@@ -218,22 +223,28 @@ class CollaborationRoom:
         self.last_activity = time.time()
 
         # Send welcome to joining user with current presence list
-        await self._send(ws, {
-            "type": MSG_WELCOME,
-            "data": {
-                "object_id": self.object_id,
-                "user_id": user_id,
-                "color": color,
-                "users": [u.to_dict() for u in self.presence.values() if u.user_id != user_id],
-                "pending_ops": [op.to_dict() for op in self.operation_log[-50:]],
+        await self._send(
+            ws,
+            {
+                "type": MSG_WELCOME,
+                "data": {
+                    "object_id": self.object_id,
+                    "user_id": user_id,
+                    "color": color,
+                    "users": [u.to_dict() for u in self.presence.values() if u.user_id != user_id],
+                    "pending_ops": [op.to_dict() for op in self.operation_log[-50:]],
+                },
             },
-        })
+        )
 
         # Notify others
-        await self._broadcastExclude(user_id, {
-            "type": MSG_USER_JOINED,
-            "data": presence.to_dict(),
-        })
+        await self._broadcastExclude(
+            user_id,
+            {
+                "type": MSG_USER_JOINED,
+                "data": presence.to_dict(),
+            },
+        )
 
         logger.info("User %s joined room %s (%d users)", user_id, self.object_id, self.user_count)
 
@@ -243,10 +254,12 @@ class CollaborationRoom:
         self.last_activity = time.time()
 
         # Notify remaining users
-        await self._broadcastAll({
-            "type": MSG_USER_LEFT,
-            "data": {"user_id": user_id, "object_id": self.object_id},
-        })
+        await self._broadcastAll(
+            {
+                "type": MSG_USER_LEFT,
+                "data": {"user_id": user_id, "object_id": self.object_id},
+            }
+        )
 
         logger.info("User %s left room %s (%d users)", user_id, self.object_id, self.user_count)
 
@@ -260,21 +273,27 @@ class CollaborationRoom:
 
         # Trim log
         if len(self.operation_log) > self._max_log_size:
-            self.operation_log = self.operation_log[-self._max_log_size:]
+            self.operation_log = self.operation_log[-self._max_log_size :]
 
         # Broadcast to all OTHER users
-        await self._broadcastExclude(op.user_id, {
-            "type": MSG_OP_BROADCAST,
-            "data": op.to_dict(),
-        })
+        await self._broadcastExclude(
+            op.user_id,
+            {
+                "type": MSG_OP_BROADCAST,
+                "data": op.to_dict(),
+            },
+        )
 
         # Ack to sender
         ws = self.connections.get(op.user_id)
         if ws:
-            await self._send(ws, {
-                "type": MSG_ACK,
-                "data": {"op_id": op.op_id, "lamport_ts": op.lamport_ts},
-            })
+            await self._send(
+                ws,
+                {
+                    "type": MSG_ACK,
+                    "data": {"op_id": op.op_id, "lamport_ts": op.lamport_ts},
+                },
+            )
 
     async def handle_cursor(self, user_id: str, cursor: Optional[dict], selection: Optional[dict]):
         """Update cursor/selection for a user and broadcast."""
@@ -285,14 +304,17 @@ class CollaborationRoom:
         presence.selection = selection
         presence.last_seen = time.time()
 
-        await self._broadcastExclude(user_id, {
-            "type": MSG_CURSOR_BROADCAST,
-            "data": {
-                "user_id": user_id,
-                "cursor": cursor,
-                "selection": selection,
+        await self._broadcastExclude(
+            user_id,
+            {
+                "type": MSG_CURSOR_BROADCAST,
+                "data": {
+                    "user_id": user_id,
+                    "cursor": cursor,
+                    "selection": selection,
+                },
             },
-        })
+        )
 
     async def handle_awareness(self, user_id: str, state: dict):
         """Handle generic awareness state update."""
@@ -301,10 +323,13 @@ class CollaborationRoom:
             return
         presence.last_seen = time.time()
 
-        await self._broadcastExclude(user_id, {
-            "type": MSG_AWARENESS_BROADCAST,
-            "data": {"user_id": user_id, "state": state},
-        })
+        await self._broadcastExclude(
+            user_id,
+            {
+                "type": MSG_AWARENESS_BROADCAST,
+                "data": {"user_id": user_id, "state": state},
+            },
+        )
 
     def get_snapshot(self) -> dict:
         """Get current room state snapshot."""
@@ -412,7 +437,8 @@ class CollaborationManager:
                 await asyncio.sleep(300)  # Check every 5 minutes
                 now = time.time()
                 to_remove = [
-                    oid for oid, room in self.rooms.items()
+                    oid
+                    for oid, room in self.rooms.items()
                     if room.user_count == 0 and (now - room.last_activity) > self._idle_timeout
                 ]
                 for oid in to_remove:

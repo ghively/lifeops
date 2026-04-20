@@ -1,4 +1,5 @@
 """Minimal SlowAPI-compatible fallback for offline environments."""
+
 from __future__ import annotations
 
 import time

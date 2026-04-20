@@ -1,7 +1,9 @@
 """File Watcher Service - Watches folders for changes and indexes files."""
+
 from __future__ import annotations
-import asyncio
+
 import ast
+import asyncio
 import json
 import logging
 import mimetypes
@@ -64,12 +66,10 @@ class FileWatcherService:
 
     async def start(self):
         self.loop = __import__("asyncio").get_running_loop()
-        folders = await sqlite_manager.fetchall(
-            """
+        folders = await sqlite_manager.fetchall("""
             SELECT id, path, recursive, include_patterns, exclude_patterns, enabled, file_count
             FROM watched_folders WHERE enabled = 1
-            """
-        )
+            """)
         for folder in folders:
             folder["recursive"] = bool(folder["recursive"])
             folder["enabled"] = bool(folder["enabled"])
@@ -179,7 +179,14 @@ class FileWatcherService:
                 object_id = excluded.object_id,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (file_path, checksum, datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(), index_status, error_message, object_id),
+            (
+                file_path,
+                checksum,
+                datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                index_status,
+                error_message,
+                object_id,
+            ),
         )
 
         if folder_id:
@@ -208,7 +215,9 @@ class FileWatcherService:
     async def _extract_content(self, file_path: str, extension: str) -> str:
         return await asyncio.to_thread(self._extract_content_sync, file_path, extension)
 
-    async def _upsert_file_record(self, file_path: str, checksum: str, mime_type: str, content_text: str, object_id: str) -> str:
+    async def _upsert_file_record(
+        self, file_path: str, checksum: str, mime_type: str, content_text: str, object_id: str
+    ) -> str:
         client = qdrant_manager.get_async_client()
         existing = await client.scroll(
             collection_name="files",
@@ -238,31 +247,35 @@ class FileWatcherService:
             "error_message": None,
             "metadata": {"title": Path(file_path).stem, "word_count": len(content_text.split()) if content_text else 0},
         }
-        await client.upsert(collection_name="files", points=[{"id": file_id, "vector": embedding.tolist(), "payload": payload}])
+        await client.upsert(
+            collection_name="files", points=[{"id": file_id, "vector": embedding.tolist(), "payload": payload}]
+        )
         object_embedding = await embedding_service.embed_text(content_text[:10000] or Path(file_path).name)
         await client.upsert(
             collection_name="objects",
-            points=[{
-                "id": object_id,
-                "vector": object_embedding.tolist(),
-                "payload": {
+            points=[
+                {
                     "id": object_id,
-                    "type": "file",
-                    "title": Path(file_path).name,
-                    "icon": "📎",
-                    "content": content_text[:10000],
-                    "layout": "default",
-                    "properties": {
-                        "file_path": file_path,
-                        "file_size": stat.st_size,
-                        "file_type": mime_type,
-                        "checksum": checksum,
-                        "is_watched": True,
-                        "created_at": utc_now_iso(),
-                        "updated_at": utc_now_iso(),
+                    "vector": object_embedding.tolist(),
+                    "payload": {
+                        "id": object_id,
+                        "type": "file",
+                        "title": Path(file_path).name,
+                        "icon": "📎",
+                        "content": content_text[:10000],
+                        "layout": "default",
+                        "properties": {
+                            "file_path": file_path,
+                            "file_size": stat.st_size,
+                            "file_type": mime_type,
+                            "checksum": checksum,
+                            "is_watched": True,
+                            "created_at": utc_now_iso(),
+                            "updated_at": utc_now_iso(),
+                        },
                     },
-                },
-            }],
+                }
+            ],
         )
         return file_id
 
@@ -272,20 +285,22 @@ class FileWatcherService:
         image_id = str(uuid.uuid4())
         await client.upsert(
             collection_name="images",
-            points=[{
-                "id": image_id,
-                "vector": embedding.tolist(),
-                "payload": {
+            points=[
+                {
                     "id": image_id,
-                    "object_id": object_id,
-                    "path": file_path,
-                    "filename": Path(file_path).name,
-                    "description": Path(file_path).stem,
-                    "tags": [],
-                    "source_object": object_id,
-                    "source_file": file_id,
-                },
-            }],
+                    "vector": embedding.tolist(),
+                    "payload": {
+                        "id": image_id,
+                        "object_id": object_id,
+                        "path": file_path,
+                        "filename": Path(file_path).name,
+                        "description": Path(file_path).stem,
+                        "tags": [],
+                        "source_object": object_id,
+                        "source_file": file_id,
+                    },
+                }
+            ],
         )
 
     async def _upsert_code_records(self, file_path: str, object_id: str, file_id: str, content: str):
@@ -307,13 +322,19 @@ class FileWatcherService:
                     "line_start": getattr(node, "lineno", 1),
                     "line_end": getattr(node, "end_lineno", getattr(node, "lineno", 1)),
                     "content": snippet,
-                    "docstring": ast.get_docstring(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None,
+                    "docstring": (
+                        ast.get_docstring(node)
+                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                        else None
+                    ),
                     "signature": getattr(node, "name", ""),
                     "type": "class" if isinstance(node, ast.ClassDef) else "function",
                     "name": getattr(node, "name", ""),
                     "class_name": None,
                 }
-                await client.upsert(collection_name="code", points=[{"id": code_id, "vector": embedding.tolist(), "payload": payload}])
+                await client.upsert(
+                    collection_name="code", points=[{"id": code_id, "vector": embedding.tolist(), "payload": payload}]
+                )
 
     async def _remove_file_from_index(self, file_path: str):
         client = qdrant_manager.get_async_client()

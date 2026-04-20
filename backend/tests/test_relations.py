@@ -20,12 +20,22 @@ class TestRelationsRouter:
     async def test_get_relations_for_object_with_data(self, test_client):
         """Test getting relations for an object."""
         # Create two objects and a relation between them
-        obj1 = await test_client.post("/api/v1/objects", json={
-            "title": "Object 1", "content": "Content 1", "type": "note",
-        })
-        obj2 = await test_client.post("/api/v1/objects", json={
-            "title": "Object 2", "content": "Content 2", "type": "note",
-        })
+        obj1 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Object 1",
+                "content": "Content 1",
+                "type": "note",
+            },
+        )
+        obj2 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Object 2",
+                "content": "Content 2",
+                "type": "note",
+            },
+        )
         assert obj1.status_code == 201
         assert obj2.status_code == 201
 
@@ -49,12 +59,22 @@ class TestRelationsRouter:
     async def test_create_relation_success(self, test_client):
         """Test creating a relation."""
         # Create two objects first
-        obj1 = await test_client.post("/api/v1/objects", json={
-            "title": "Source", "content": "Source content", "type": "note",
-        })
-        obj2 = await test_client.post("/api/v1/objects", json={
-            "title": "Target", "content": "Target content", "type": "note",
-        })
+        obj1 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Source",
+                "content": "Source content",
+                "type": "note",
+            },
+        )
+        obj2 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Target",
+                "content": "Target content",
+                "type": "note",
+            },
+        )
 
         relation_data = {
             "source_id": obj1.json()["id"],
@@ -68,30 +88,53 @@ class TestRelationsRouter:
 
     async def test_create_relation_invalid_type(self, test_client):
         """Test creating a relation with invalid type."""
-        obj1 = await test_client.post("/api/v1/objects", json={
-            "title": "Source", "content": "Source", "type": "note",
-        })
-        obj2 = await test_client.post("/api/v1/objects", json={
-            "title": "Target", "content": "Target", "type": "note",
-        })
+        obj1 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Source",
+                "content": "Source",
+                "type": "note",
+            },
+        )
+        obj2 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Target",
+                "content": "Target",
+                "type": "note",
+            },
+        )
 
         # Missing required fields should give 422
-        response = await test_client.post("/api/v1/relations", json={
-            "source_id": obj1.json()["id"],
-            "source_type": "object",
-            "target_id": obj2.json()["id"],
-            # missing target_type
-        })
+        response = await test_client.post(
+            "/api/v1/relations",
+            json={
+                "source_id": obj1.json()["id"],
+                "source_type": "object",
+                "target_id": obj2.json()["id"],
+                # missing target_type
+            },
+        )
         assert response.status_code in [422, 400]
 
     async def test_create_bidirectional_relation(self, test_client):
         """Test creating a bidirectional relation."""
-        obj1 = await test_client.post("/api/v1/objects", json={
-            "title": "A", "content": "A content", "type": "note",
-        })
-        obj2 = await test_client.post("/api/v1/objects", json={
-            "title": "B", "content": "B content", "type": "note",
-        })
+        obj1 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "A",
+                "content": "A content",
+                "type": "note",
+            },
+        )
+        obj2 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "B",
+                "content": "B content",
+                "type": "note",
+            },
+        )
 
         relation_data = {
             "source_id": obj1.json()["id"],
@@ -105,12 +148,22 @@ class TestRelationsRouter:
 
     async def test_delete_relation_success(self, test_client):
         """Test deleting a relation."""
-        obj1 = await test_client.post("/api/v1/objects", json={
-            "title": "A", "content": "A", "type": "note",
-        })
-        obj2 = await test_client.post("/api/v1/objects", json={
-            "title": "B", "content": "B", "type": "note",
-        })
+        obj1 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "A",
+                "content": "A",
+                "type": "note",
+            },
+        )
+        obj2 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "B",
+                "content": "B",
+                "type": "note",
+            },
+        )
 
         relation_data = {
             "source_id": obj1.json()["id"],
@@ -128,12 +181,22 @@ class TestRelationsRouter:
 
     async def test_update_relation_success(self, test_client):
         """Test updating a relation."""
-        obj1 = await test_client.post("/api/v1/objects", json={
-            "title": "A", "content": "A", "type": "note",
-        })
-        obj2 = await test_client.post("/api/v1/objects", json={
-            "title": "B", "content": "B", "type": "note",
-        })
+        obj1 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "A",
+                "content": "A",
+                "type": "note",
+            },
+        )
+        obj2 = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "B",
+                "content": "B",
+                "type": "note",
+            },
+        )
 
         relation_data = {
             "source_id": obj1.json()["id"],

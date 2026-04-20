@@ -1,4 +1,5 @@
 """Time utilities."""
+
 from datetime import datetime, timezone
 
 

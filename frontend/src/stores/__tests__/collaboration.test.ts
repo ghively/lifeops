@@ -5,12 +5,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useCollaborationStore } from '../collaboration'
 import type { PresenceUser } from '@/services/collaboration'
 
-// Mock the collaboration service
-const mockConnect = vi.fn()
-const mockDisconnect = vi.fn()
-const mockSendOp = vi.fn()
-const mockSendCursor = vi.fn()
-const mockSendAwareness = vi.fn()
+// Mock the collaboration service. Hoisted so mocks exist before vi.mock is applied.
+const { mockConnect, mockDisconnect, mockSendOp, mockSendCursor, mockSendAwareness } = vi.hoisted(() => ({
+  mockConnect: vi.fn(),
+  mockDisconnect: vi.fn(),
+  mockSendOp: vi.fn(),
+  mockSendCursor: vi.fn(),
+  mockSendAwareness: vi.fn(),
+}))
 
 vi.mock('@/services/collaboration', () => ({
   collaborationService: {

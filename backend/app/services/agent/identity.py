@@ -1,4 +1,5 @@
 """Agent identity loading from markdown files."""
+
 from __future__ import annotations
 
 import logging
@@ -238,14 +239,24 @@ class IdentityLoader:
         provider_blob = tool_sections.get("llm provider", "")
         parsed = self._parse_frontmatter(provider_blob.replace("\n", "\n"))
         from app.config import settings
-        model = tools_meta.get("model") or parsed.get("model") or agent_meta.get("model") or getattr(settings, 'llm_model', 'qwen2.5-coder:7b')
+
+        model = (
+            tools_meta.get("model")
+            or parsed.get("model")
+            or agent_meta.get("model")
+            or getattr(settings, "llm_model", "qwen2.5-coder:7b")
+        )
         return LLMProviderConfig(
-            provider=str(tools_meta.get("provider") or parsed.get("provider") or getattr(settings, 'llm_provider', 'ollama')),
+            provider=str(tools_meta.get("provider") or parsed.get("provider") or getattr(settings, "llm_provider", "ollama")),
             base_url=tools_meta.get("base_url") or parsed.get("base_url"),
             api_key=tools_meta.get("api_key") or parsed.get("api_key"),
             model=str(model),
-            temperature=float(tools_meta.get("temperature") or parsed.get("temperature") or getattr(settings, 'llm_temperature', 0.2)),
-            max_tokens=int(tools_meta.get("max_tokens") or parsed.get("max_tokens") or getattr(settings, 'llm_max_tokens', 2048)),
+            temperature=float(
+                tools_meta.get("temperature") or parsed.get("temperature") or getattr(settings, "llm_temperature", 0.2)
+            ),
+            max_tokens=int(
+                tools_meta.get("max_tokens") or parsed.get("max_tokens") or getattr(settings, "llm_max_tokens", 2048)
+            ),
             fallback_model=tools_meta.get("fallback") or parsed.get("fallback"),
         )
 
@@ -363,7 +374,8 @@ class IdentityLoader:
         if identity.long_term_memory:
             parts.append("Long-term memory:\n" + identity.long_term_memory)
         if identity.cli_agents:
-            parts.append("CLI agents:\n- " + "\n- ".join(
-                f"{agent.name}: {agent.description or 'available'}" for agent in identity.cli_agents
-            ))
+            parts.append(
+                "CLI agents:\n- "
+                + "\n- ".join(f"{agent.name}: {agent.description or 'available'}" for agent in identity.cli_agents)
+            )
         return "\n\n".join(part for part in parts if part.strip())

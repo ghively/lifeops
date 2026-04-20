@@ -1,4 +1,5 @@
 """Structured audit logging for the agent runtime."""
+
 from __future__ import annotations
 
 import uuid
@@ -41,4 +42,3 @@ class AgentAuditLogger:
     async def purge_expired(self) -> None:
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.retention_days)
         await sqlite_manager.purge_agent_audit_events(cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
-

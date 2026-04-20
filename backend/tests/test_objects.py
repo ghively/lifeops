@@ -22,11 +22,14 @@ class TestObjectsRouter:
     async def test_list_objects_with_data(self, test_client):
         """Test listing objects with existing data."""
         # Create an object first
-        create_resp = await test_client.post("/api/v1/objects", json={
-            "title": "Test Object",
-            "content": "Test content",
-            "type": "note",
-        })
+        create_resp = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Test Object",
+                "content": "Test content",
+                "type": "note",
+            },
+        )
         assert create_resp.status_code == 201
 
         response = await test_client.get("/api/v1/objects")
@@ -37,10 +40,7 @@ class TestObjectsRouter:
 
     async def test_list_objects_with_filters(self, test_client):
         """Test listing objects with query filters."""
-        response = await test_client.get(
-            "/api/v1/objects",
-            params={"type": "note", "limit": 10}
-        )
+        response = await test_client.get("/api/v1/objects", params={"type": "note", "limit": 10})
         assert response.status_code == 200
         data = response.json()
         assert "objects" in data
@@ -48,11 +48,14 @@ class TestObjectsRouter:
     async def test_get_object_success(self, test_client):
         """Test getting a specific object by ID."""
         # Create an object first
-        create_resp = await test_client.post("/api/v1/objects", json={
-            "title": "Test Object",
-            "content": "Test content",
-            "type": "note",
-        })
+        create_resp = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Test Object",
+                "content": "Test content",
+                "type": "note",
+            },
+        )
         assert create_resp.status_code == 201
         obj_id = create_resp.json()["id"]
 
@@ -92,11 +95,14 @@ class TestObjectsRouter:
     async def test_update_object_success(self, test_client):
         """Test updating an existing object."""
         # Create an object first
-        create_resp = await test_client.post("/api/v1/objects", json={
-            "title": "Original Title",
-            "content": "Original content",
-            "type": "note",
-        })
+        create_resp = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Original Title",
+                "content": "Original content",
+                "type": "note",
+            },
+        )
         assert create_resp.status_code == 201
         obj_id = create_resp.json()["id"]
 
@@ -115,11 +121,14 @@ class TestObjectsRouter:
     async def test_delete_object_success(self, test_client):
         """Test deleting an object."""
         # Create an object first
-        create_resp = await test_client.post("/api/v1/objects", json={
-            "title": "To Delete",
-            "content": "Will be deleted",
-            "type": "note",
-        })
+        create_resp = await test_client.post(
+            "/api/v1/objects",
+            json={
+                "title": "To Delete",
+                "content": "Will be deleted",
+                "type": "note",
+            },
+        )
         assert create_resp.status_code == 201
         obj_id = create_resp.json()["id"]
 
@@ -146,10 +155,7 @@ class TestObjectsRouter:
             "title": "Tagged Object",
             "content": "Content",
             "type": "note",
-            "properties": {
-                "tags": ["tag1", "tag2", "tag3"],
-                "status": "active"
-            },
+            "properties": {"tags": ["tag1", "tag2", "tag3"], "status": "active"},
         }
         response = await test_client.post("/api/v1/objects", json=object_data)
         assert response.status_code == 201
@@ -194,12 +200,15 @@ class TestObjectsRouter:
         )
         store["counters"]["objects"] += 1
 
-        response = await client.post("/api/v1/objects", json={
-            "title": "Mentioned Object",
-            "content": "Working with #alpha #beta and @researcher plus @unknown and #alpha",
-            "type": "note",
-            "properties": {"tags": ["seed"]},
-        })
+        response = await client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Mentioned Object",
+                "content": "Working with #alpha #beta and @researcher plus @unknown and #alpha",
+                "type": "note",
+                "properties": {"tags": ["seed"]},
+            },
+        )
 
         assert response.status_code == 201
         data = response.json()
@@ -222,17 +231,23 @@ class TestObjectsRouter:
         )
         store["counters"]["objects"] += 1
 
-        create_resp = await client.post("/api/v1/objects", json={
-            "title": "Original",
-            "content": "Nothing parsed here",
-            "type": "note",
-        })
+        create_resp = await client.post(
+            "/api/v1/objects",
+            json={
+                "title": "Original",
+                "content": "Nothing parsed here",
+                "type": "note",
+            },
+        )
         object_id = create_resp.json()["id"]
 
-        response = await client.put(f"/api/v1/objects/{object_id}", json={
-            "content": "Updated with #release @writer @missing",
-            "properties": {"tags": ["manual"]},
-        })
+        response = await client.put(
+            f"/api/v1/objects/{object_id}",
+            json={
+                "content": "Updated with #release @writer @missing",
+                "properties": {"tags": ["manual"]},
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()

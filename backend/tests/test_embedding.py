@@ -5,8 +5,8 @@ Tests for the embedding service.
 import asyncio
 import time
 
-import pytest
 import numpy as np
+import pytest
 
 
 class TestEmbeddingService:
@@ -144,12 +144,14 @@ class TestEmbeddingModelLoading:
     async def test_initialize_service(self):
         """Test initializing embedding service."""
         from app.services.embedding import embedding_service
+
         await embedding_service.initialize()
 
     @pytest.mark.asyncio
     async def test_close_service(self):
         """Test closing embedding service."""
         from app.services.embedding import embedding_service
+
         await embedding_service.close()
 
     @pytest.mark.asyncio
@@ -157,6 +159,7 @@ class TestEmbeddingModelLoading:
         """Test that embedding service is a singleton."""
         from app.services.embedding import embedding_service
         from app.services.embedding import embedding_service as es2
+
         assert embedding_service is es2
 
 

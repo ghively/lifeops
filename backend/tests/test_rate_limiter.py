@@ -23,7 +23,12 @@ async def initialized_sqlite(tmp_path):
 @pytest.mark.asyncio
 async def test_rate_limiter_tracks_requests_and_tokens(initialized_sqlite):
     limiter = AgentRateLimiter()
-    identity = AgentIdentity(agent_id="agent-a", name="Agent A", system_prompt="You are A.", rate_limits={"requests_per_minute": 2, "tokens_per_day": 100})
+    identity = AgentIdentity(
+        agent_id="agent-a",
+        name="Agent A",
+        system_prompt="You are A.",
+        rate_limits={"requests_per_minute": 2, "tokens_per_day": 100},
+    )
 
     first = await limiter.check_request_limit(agent_id="agent-a", user_id="user-1", identity=identity)
     assert first.minute_requests == 1
@@ -37,7 +42,9 @@ async def test_rate_limiter_tracks_requests_and_tokens(initialized_sqlite):
 @pytest.mark.asyncio
 async def test_rate_limiter_rejects_excess_requests(initialized_sqlite):
     limiter = AgentRateLimiter()
-    identity = AgentIdentity(agent_id="agent-a", name="Agent A", system_prompt="You are A.", rate_limits={"requests_per_minute": 1})
+    identity = AgentIdentity(
+        agent_id="agent-a", name="Agent A", system_prompt="You are A.", rate_limits={"requests_per_minute": 1}
+    )
 
     await limiter.check_request_limit(agent_id="agent-a", user_id="user-1", identity=identity)
     with pytest.raises(AgentRateLimitExceeded) as exc:
@@ -51,7 +58,9 @@ async def test_rate_limiter_rejects_excess_requests(initialized_sqlite):
 @pytest.mark.asyncio
 async def test_rate_limiter_enforces_daily_token_budget(initialized_sqlite):
     limiter = AgentRateLimiter()
-    identity = AgentIdentity(agent_id="agent-a", name="Agent A", system_prompt="You are A.", rate_limits={"tokens_per_day": 50})
+    identity = AgentIdentity(
+        agent_id="agent-a", name="Agent A", system_prompt="You are A.", rate_limits={"tokens_per_day": 50}
+    )
 
     await limiter.record_usage(agent_id="agent-a", user_id="user-1", tokens=40)
     with pytest.raises(AgentRateLimitExceeded) as exc:

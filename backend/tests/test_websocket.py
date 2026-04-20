@@ -2,8 +2,9 @@
 Tests for the WebSocket manager.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -36,10 +37,7 @@ class TestWebSocketManager:
 
         await mock_websocket_manager.connect(mock_websocket, client_id, "system")
 
-        message = {
-            "type": "object_created",
-            "data": {"id": "test-obj-1"}
-        }
+        message = {"type": "object_created", "data": {"id": "test-obj-1"}}
 
         await mock_websocket_manager.broadcast(message, "system")
 
@@ -53,10 +51,7 @@ class TestWebSocketManager:
 
         await mock_websocket_manager.connect(mock_websocket, client_id, "agents")
 
-        message = {
-            "type": "agent_status",
-            "data": {"agent": "test-agent", "status": "idle"}
-        }
+        message = {"type": "agent_status", "data": {"agent": "test-agent", "status": "idle"}}
 
         await mock_websocket_manager.broadcast(message, "agents")
 
@@ -66,6 +61,7 @@ class TestWebSocketManager:
 
         # Create simple manager
         from app.services.websocket_manager import websocket_manager as manager
+
         await manager.connect(mock_websocket)
 
         message = {"type": "test", "data": "hello"}
@@ -125,62 +121,31 @@ class TestWebSocketEvents:
 
     async def test_object_created_event(self, mock_websocket_manager):
         """Test object created event."""
-        event = {
-            "type": "object_created",
-            "data": {
-                "id": "obj-1",
-                "title": "Test Object",
-                "object_type": "note"
-            }
-        }
+        event = {"type": "object_created", "data": {"id": "obj-1", "title": "Test Object", "object_type": "note"}}
 
         await mock_websocket_manager.broadcast(event, "system")
 
     async def test_object_updated_event(self, mock_websocket_manager):
         """Test object updated event."""
-        event = {
-            "type": "object_updated",
-            "data": {
-                "id": "obj-1",
-                "title": "Updated Title"
-            }
-        }
+        event = {"type": "object_updated", "data": {"id": "obj-1", "title": "Updated Title"}}
 
         await mock_websocket_manager.broadcast(event, "system")
 
     async def test_object_deleted_event(self, mock_websocket_manager):
         """Test object deleted event."""
-        event = {
-            "type": "object_deleted",
-            "data": {
-                "id": "obj-1"
-            }
-        }
+        event = {"type": "object_deleted", "data": {"id": "obj-1"}}
 
         await mock_websocket_manager.broadcast(event, "system")
 
     async def test_block_created_event(self, mock_websocket_manager):
         """Test block created event."""
-        event = {
-            "type": "block_created",
-            "data": {
-                "id": "block-1",
-                "object_id": "obj-1",
-                "content": "New block"
-            }
-        }
+        event = {"type": "block_created", "data": {"id": "block-1", "object_id": "obj-1", "content": "New block"}}
 
         await mock_websocket_manager.broadcast(event, "system")
 
     async def test_task_assigned_event(self, mock_websocket_manager):
         """Test task assigned event."""
-        event = {
-            "type": "task_assigned",
-            "data": {
-                "task_id": "task-1",
-                "agent": "test-agent"
-            }
-        }
+        event = {"type": "task_assigned", "data": {"task_id": "task-1", "agent": "test-agent"}}
 
         await mock_websocket_manager.broadcast(event, "agents")
 
@@ -188,11 +153,7 @@ class TestWebSocketEvents:
         """Test task status changed event."""
         event = {
             "type": "task_status_changed",
-            "data": {
-                "task_id": "task-1",
-                "old_status": "todo",
-                "new_status": "in-progress"
-            }
+            "data": {"task_id": "task-1", "old_status": "todo", "new_status": "in-progress"},
         }
 
         await mock_websocket_manager.broadcast(event, "agents")
@@ -201,11 +162,7 @@ class TestWebSocketEvents:
         """Test agent status changed event."""
         event = {
             "type": "agent_status_changed",
-            "data": {
-                "agent": "test-agent",
-                "status": "working",
-                "current_task": "task-1"
-            }
+            "data": {"agent": "test-agent", "status": "working", "current_task": "task-1"},
         }
 
         await mock_websocket_manager.broadcast(event, "agents")
@@ -214,25 +171,14 @@ class TestWebSocketEvents:
         """Test chat message event."""
         event = {
             "type": "message",
-            "data": {
-                "agent": "test-agent",
-                "session_id": "session-1",
-                "content": "Hello!",
-                "role": "assistant"
-            }
+            "data": {"agent": "test-agent", "session_id": "session-1", "content": "Hello!", "role": "assistant"},
         }
 
         await mock_websocket_manager.broadcast(event, "agents")
 
     async def test_file_indexed_event(self, mock_websocket_manager):
         """Test file indexed event."""
-        event = {
-            "type": "file_indexed",
-            "data": {
-                "file_id": "file-1",
-                "filename": "test.pdf"
-            }
-        }
+        event = {"type": "file_indexed", "data": {"file_id": "file-1", "filename": "test.pdf"}}
 
         await mock_websocket_manager.broadcast(event, "system")
 

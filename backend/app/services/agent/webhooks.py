@@ -1,4 +1,5 @@
 """Webhook registration and trigger handling for runtime agents."""
+
 from __future__ import annotations
 
 import hashlib

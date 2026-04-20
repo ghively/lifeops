@@ -9,9 +9,7 @@ from app.services.agent.runtime import AgentRuntime
 @pytest.mark.asyncio
 async def test_run_sub_agent_task_passes_timeout_to_background_runner(tmp_path):
     runtime = AgentRuntime(tmp_path)
-    runtime.run_background_task = AsyncMock(
-        return_value={"content": "done", "session_id": "session-1", "tool_results": []}
-    )
+    runtime.run_background_task = AsyncMock(return_value={"content": "done", "session_id": "session-1", "tool_results": []})
     task = SubAgentTask(agent_id="worker", prompt="Handle this", timeout_seconds=45)
 
     result = await runtime.run_sub_agent_task(
