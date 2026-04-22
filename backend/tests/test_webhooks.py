@@ -67,3 +67,179 @@ async def test_incoming_webhook_returns_400_for_invalid_json(test_client, mock_s
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid JSON payload"
+
+
+@pytest.mark.asyncio
+async def test_incoming_webhook_404_for_unknown_hook(test_client, mock_sqlite_manager):
+    body = b'{"message": "test"}'
+    signature = AgentWebhookService().build_signature("secret", body)
+
+    response = await test_client.post(
+        "/api/v1/webhooks/incoming/nonexistent-hook",
+        content=body,
+        headers={
+            "X-KnowledgeOS-Signature": signature,
+        },
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_incoming_webhook_401_for_bad_signature(test_client, mock_sqlite_manager):
+    row = {
+        "id": "hook-1",
+        "agent_id": "analyst",
+        "name": "Inbound",
+        "url_path": "hook-path",
+        "secret": "topsecret",
+        "event_type": "build.finished",
+        "enabled": True,
+    }
+    mock_sqlite_manager._storage["agent_webhooks"][row["id"]] = row
+
+    body = b'{"message": "test"}'
+
+    response = await test_client.post(
+        "/api/v1/webhooks/incoming/hook-path",
+        content=body,
+        headers={
+            "X-KnowledgeOS-Signature": "sha256=invalidsignature",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_incoming_webhook_success_with_valid_signature(test_client, mock_sqlite_manager):
+    row = {
+        "id": "hook-1",
+        "agent_id": "analyst",
+        "name": "Inbound",
+        "url_path": "hook-path",
+        "secret": "topsecret",
+        "event_type": "build.finished",
+        "enabled": True,
+    }
+    mock_sqlite_manager._storage["agent_webhooks"][row["id"]] = row
+
+    body = b'{"message": "Process build event"}'
+    signature = AgentWebhookService().build_signature(row["secret"], body)
+
+    with patch(
+        "app.routers.agent_webhooks.get_agent_runtime",
+        return_value=AsyncMock(
+            handle_incoming_webhook=AsyncMock(
+                return_value={
+                    "webhook": row,
+                    "result": {"content": "webhook handled", "session_id": "session-1", "tool_results": []},
+                }
+            )
+        ),
+    ):
+        response = await test_client.post(
+            "/api/v1/webhooks/incoming/hook-path",
+            content=body,
+            headers={
+                "X-KnowledgeOS-Signature": signature,
+                "X-KnowledgeOS-Event": "build.finished",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["result"]["content"] == "webhook handled"
+
+
+@pytest.mark.asyncio
+async def test_incoming_webhook_400_on_event_type_mismatch(test_client, mock_sqlite_manager):
+    row = {
+        "id": "hook-1",
+        "agent_id": "analyst",
+        "name": "Inbound",
+        "url_path": "hook-path",
+        "secret": "topsecret",
+        "event_type": "build.finished",
+        "enabled": True,
+    }
+    mock_sqlite_manager._storage["agent_webhooks"][row["id"]] = row
+
+    body = b'{"message": "test"}'
+    signature = AgentWebhookService().build_signature(row["secret"], body)
+
+    response = await test_client.post(
+        "/api/v1/webhooks/incoming/hook-path",
+        content=body,
+        headers={
+            "X-KnowledgeOS-Signature": signature,
+            "X-KnowledgeOS-Event": "deploy.started",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_incoming_webhook_missing_event_header(test_client, mock_sqlite_manager):
+    row = {
+        "id": "hook-1",
+        "agent_id": "analyst",
+        "name": "Inbound",
+        "url_path": "hook-path",
+        "secret": "topsecret",
+        "event_type": "build.finished",
+        "enabled": True,
+    }
+    mock_sqlite_manager._storage["agent_webhooks"][row["id"]] = row
+
+    body = b'{"message": "Process build event"}'
+    signature = AgentWebhookService().build_signature(row["secret"], body)
+
+    with patch(
+        "app.routers.agent_webhooks.get_agent_runtime",
+        return_value=AsyncMock(
+            handle_incoming_webhook=AsyncMock(
+                return_value={
+                    "webhook": row,
+                    "result": {"content": "webhook handled", "session_id": "session-1", "tool_results": []},
+                }
+            )
+        ),
+    ):
+        response = await test_client.post(
+            "/api/v1/webhooks/incoming/hook-path",
+            content=body,
+            headers={
+                "X-KnowledgeOS-Signature": signature,
+            },
+        )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_incoming_webhook_disabled_returns_401(test_client, mock_sqlite_manager):
+    row = {
+        "id": "hook-1",
+        "agent_id": "analyst",
+        "name": "Inbound",
+        "url_path": "hook-path",
+        "secret": "topsecret",
+        "event_type": "build.finished",
+        "enabled": False,
+    }
+    mock_sqlite_manager._storage["agent_webhooks"][row["id"]] = row
+
+    body = b'{"message": "test"}'
+    signature = AgentWebhookService().build_signature(row["secret"], body)
+
+    response = await test_client.post(
+        "/api/v1/webhooks/incoming/hook-path",
+        content=body,
+        headers={
+            "X-KnowledgeOS-Signature": signature,
+        },
+    )
+
+    assert response.status_code == 401
