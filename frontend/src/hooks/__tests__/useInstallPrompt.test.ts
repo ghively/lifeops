@@ -1,172 +1,162 @@
 /**
  * Tests for useInstallPrompt hook.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useInstallPrompt } from '../useInstallPrompt'
 
 describe('useInstallPrompt Hook', () => {
   let beforeInstallPromptEvent: any
+  let originalMatchMedia: typeof window.matchMedia
 
   beforeEach(() => {
     vi.clearAllMocks()
 
-    // Create mock event
-    beforeInstallPromptEvent = {
-      prompt: vi.fn(),
-      userChoice: Promise.resolve({ outcome: 'accepted' }),
-    }
+    // Make sure matchMedia reports not-standalone so isInstalled is false.
+    originalMatchMedia = window.matchMedia
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as any
 
-    // Reset event listeners
-    const listeners: Record<string, Function[]> = {}
-
-    global.addEventListener = vi.fn((event: string, listener: any) => {
-      if (!listeners[event]) {
-        listeners[event] = []
-      }
-      listeners[event].push(listener)
-    })
-
-    global.removeEventListener = vi.fn((event: string, listener: any) => {
-      if (listeners[event]) {
-        listeners[event] = listeners[event].filter((l) => l !== listener)
-      }
-    })
-
-    // Store dispatch capability
-    ;(global as any).__dispatchBeforeInstallPrompt = () => {
-      if (listeners['beforeinstallprompt']) {
-        listeners['beforeinstallprompt'].forEach((listener) => {
-          listener(beforeInstallPromptEvent)
-        })
-      }
-    }
+    // Build a minimal BeforeInstallPromptEvent-like object
+    beforeInstallPromptEvent = new Event('beforeinstallprompt') as any
+    beforeInstallPromptEvent.prompt = vi.fn().mockResolvedValue(undefined)
+    beforeInstallPromptEvent.userChoice = Promise.resolve({ outcome: 'accepted', platform: '' })
   })
 
-  it('initializes with null deferredPrompt', () => {
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+  })
+
+  it('initializes with canInstall=false and isInstalled=false', () => {
     const { result } = renderHook(() => useInstallPrompt())
 
-    expect(result.current.deferredPrompt).toBeNull()
     expect(result.current.canInstall).toBe(false)
+    expect(result.current.isInstalled).toBe(false)
   })
 
-  it('captures beforeinstallprompt event', async () => {
+  it('captures beforeinstallprompt event and sets canInstall=true', async () => {
     const { result } = renderHook(() => useInstallPrompt())
 
     act(() => {
-      ;(global as any).__dispatchBeforeInstallPrompt()
-    })
-
-    await waitFor(() => {
-      expect(result.current.deferredPrompt).toBe(beforeInstallPromptEvent)
-      expect(result.current.canInstall).toBe(true)
-    })
-  })
-
-  it('calls prompt() on stashed event when promptInstall() invoked', async () => {
-    const { result } = renderHook(() => useInstallPrompt())
-
-    act(() => {
-      ;(global as any).__dispatchBeforeInstallPrompt()
+      window.dispatchEvent(beforeInstallPromptEvent)
     })
 
     await waitFor(() => {
       expect(result.current.canInstall).toBe(true)
     })
+  })
+
+  it('calls prompt() on stashed event when install() invoked', async () => {
+    const { result } = renderHook(() => useInstallPrompt())
 
     act(() => {
-      result.current.promptInstall()
+      window.dispatchEvent(beforeInstallPromptEvent)
+    })
+
+    await waitFor(() => {
+      expect(result.current.canInstall).toBe(true)
+    })
+
+    await act(async () => {
+      await result.current.install()
     })
 
     expect(beforeInstallPromptEvent.prompt).toHaveBeenCalled()
   })
 
-  it('clears state after user choice', async () => {
+  it('clears canInstall after user accepts', async () => {
     const { result } = renderHook(() => useInstallPrompt())
 
     act(() => {
-      ;(global as any).__dispatchBeforeInstallPrompt()
+      window.dispatchEvent(beforeInstallPromptEvent)
     })
 
     await waitFor(() => {
       expect(result.current.canInstall).toBe(true)
     })
 
+    await act(async () => {
+      await result.current.install()
+    })
+
+    await waitFor(() => {
+      expect(result.current.canInstall).toBe(false)
+      expect(result.current.isInstalled).toBe(true)
+    })
+  })
+
+  it('returns false from install() when user dismisses', async () => {
+    beforeInstallPromptEvent.userChoice = Promise.resolve({ outcome: 'dismissed', platform: '' })
+
+    const { result } = renderHook(() => useInstallPrompt())
+
     act(() => {
-      result.current.promptInstall()
+      window.dispatchEvent(beforeInstallPromptEvent)
     })
 
-    // Wait for user choice
     await waitFor(() => {
-      expect(beforeInstallPromptEvent.prompt).toHaveBeenCalled()
+      expect(result.current.canInstall).toBe(true)
     })
 
-    // After user choice, deferredPrompt should be cleared
-    await waitFor(() => {
-      expect(result.current.deferredPrompt).toBeNull()
+    let outcome: boolean | undefined
+    await act(async () => {
+      outcome = await result.current.install()
     })
+
+    expect(outcome).toBe(false)
   })
 
   it('handles appinstalled event', async () => {
     const { result } = renderHook(() => useInstallPrompt())
 
-    // Dispatch beforeinstallprompt
     act(() => {
-      ;(global as any).__dispatchBeforeInstallPrompt()
+      window.dispatchEvent(beforeInstallPromptEvent)
     })
 
     await waitFor(() => {
       expect(result.current.canInstall).toBe(true)
     })
 
-    // Simulate app installed event
     act(() => {
-      const event = new Event('appinstalled')
-      window.dispatchEvent(event)
+      window.dispatchEvent(new Event('appinstalled'))
     })
 
-    // canInstall should become false after installation
     await waitFor(() => {
       expect(result.current.canInstall).toBe(false)
+      expect(result.current.isInstalled).toBe(true)
     })
   })
 
   it('cleans up event listeners on unmount', () => {
+    const removeSpy = vi.spyOn(window, 'removeEventListener')
     const { unmount } = renderHook(() => useInstallPrompt())
 
     unmount()
 
-    // removeEventListener should have been called
-    expect(global.removeEventListener).toHaveBeenCalledWith(
-      'beforeinstallprompt',
-      expect.any(Function)
-    )
+    expect(removeSpy).toHaveBeenCalledWith('beforeinstallprompt', expect.any(Function))
+    expect(removeSpy).toHaveBeenCalledWith('appinstalled', expect.any(Function))
+
+    removeSpy.mockRestore()
   })
 
-  it('handles promptInstall when deferredPrompt is null', () => {
+  it('install() returns false when no prompt event is available', async () => {
     const { result } = renderHook(() => useInstallPrompt())
 
-    expect(result.current.deferredPrompt).toBeNull()
-
-    // Should not throw
-    act(() => {
-      result.current.promptInstall()
-    })
-
     expect(result.current.canInstall).toBe(false)
-  })
 
-  it('subscription pattern works correctly', async () => {
-    const { result: result1 } = renderHook(() => useInstallPrompt())
-    const { result: result2 } = renderHook(() => useInstallPrompt())
-
-    act(() => {
-      ;(global as any).__dispatchBeforeInstallPrompt()
+    let outcome: boolean | undefined
+    await act(async () => {
+      outcome = await result.current.install()
     })
 
-    await waitFor(() => {
-      expect(result1.current.canInstall).toBe(true)
-      expect(result2.current.canInstall).toBe(true)
-    })
+    expect(outcome).toBe(false)
   })
 })

@@ -72,7 +72,7 @@ describe('PresenceIndicator', () => {
 
     const { container } = render(<PresenceIndicator />)
 
-    const avatars = container.querySelectorAll('div[style*="backgroundColor"]')
+    const avatars = container.querySelectorAll('div[style*="background-color"]')
     expect(avatars.length).toBeGreaterThan(0)
   })
 
@@ -165,8 +165,8 @@ describe('PresenceIndicator', () => {
 
     const { container } = render(<PresenceIndicator maxVisible={5} />)
 
-    const plusBadges = container.querySelectorAll('div:has-text("+")')
-    expect(plusBadges.length).toBe(0)
+    // Overflow badge text starts with "+". No such text should exist here.
+    expect(container.textContent).not.toMatch(/\+\d/)
   })
 
   it('applies custom className', () => {
@@ -253,7 +253,11 @@ describe('PresenceIndicator', () => {
 
     const { container } = render(<PresenceIndicator />)
 
-    const avatarWithColor = container.querySelector('div[style*="#FF0000"]')
+    // jsdom normalizes hex colors to rgb() in the style attribute.
+    const avatarWithColor =
+      container.querySelector('div[style*="255, 0, 0"]') ||
+      container.querySelector('div[style*="#FF0000"]') ||
+      container.querySelector('div[style*="#ff0000"]')
     expect(avatarWithColor).toBeInTheDocument()
   })
 })

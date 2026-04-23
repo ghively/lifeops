@@ -106,7 +106,7 @@ async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, 
 
 
 async def get_optional_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)] | None = None,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
 ) -> dict | None:
     """
     FastAPI dependency to get the current user if authenticated, None otherwise.

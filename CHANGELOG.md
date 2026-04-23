@@ -2,6 +2,28 @@
 
 All notable changes to Knowledge OS will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Security / correctness**: JWT refresh/reset tokens were bcrypt-hashed, but JWTs exceed bcrypt's 72-byte input limit, so two tokens issued in the same second would collide on verify — a refresh token could be accepted when a different one was expected. Tokens are now HMAC-SHA-256 hashed (no truncation); passwords continue to use bcrypt. Legacy bcrypt-hashed tokens are verified via a fallback path for graceful rollover.
+- `app.middleware.auth.get_optional_user` had a malformed `Annotated[...] | None` signature that caused FastAPI to occasionally parse `HTTPAuthorizationCredentials` as a request body — POST routes using `get_optional_user` (e.g. `POST /api/v1/system/logs`) would return `422` instead of reading JSON. Union moved inside `Annotated`.
+- `POST /api/v1/auth/password-reset` previously leaked the raw reset token in the response when running with `DEBUG=true`; removed, so the endpoint can never be abused for privilege escalation regardless of environment.
+- `POST /api/v1/system/logs` now reads the body directly rather than relying on FastAPI's automatic body parsing (which collided with the rate-limit decorator's `**kwargs` wrapping).
+- `app.routers.system._parse_nginx_line` now returns `None` for lines with malformed timestamps instead of silently keeping the raw string.
+- `app.services.auth.revoke_all_refresh_tokens` used `sqlite_manager.connection.execute(...)` directly (which breaks when the manager is mocked) — now uses the thread-safe `sqlite_manager.execute(...)`.
+- `app.config.AGENTS_ROOT` was imported by the smoke-test but never defined; added.
+- System smoke-test overall status now treats `warn` (optional subsystems unreachable, e.g. Ollama not installed) as acceptable.
+
+### Added
+- **Alembic schema migrations** (`backend/alembic/`) — canonical baseline captures the current SQLite schema; future schema changes go through versioned migrations (`alembic revision`, `alembic upgrade head`). Idempotent: safe to stamp or upgrade on an existing DB.
+- **CI: Playwright E2E job** — `.github/workflows/ci.yml` now spins up a Qdrant service, the backend, and the Vite dev server, then runs the chromium Playwright suite. Reports and service logs are uploaded as artifacts.
+- **OpenAPI**: `docs_url=/docs`, `redoc_url=/redoc`, `openapi_url=/api/v1/openapi.json` with contact + license metadata. OpenAPI JSON is whitelisted from auth.
+- **WebSocket versioning**: `/api/v1/ws`, `/api/v1/ws/system`, `/api/v1/ws/agents/{agent_name}` are the canonical paths. Frontend (`wsUrl`, `AgentChatPanel`, `LogsPage`, `websocketApi.getUrl`) all updated. Unversioned `/ws*` aliases retained for backwards compatibility.
+
+### Changed
+- **Sidebar "Today"/"Inbox" badges** (`frontend/src/components/layout/Sidebar.tsx`) previously showed a static placeholder (`quickLinks.length`, hardcoded `3`). They now reflect real data: `Today` = tasks with a due date ≤ end of today and status ≠ `done`; `Inbox` = tasks in `todo` status with no due date. Badges hidden when zero.
+- Access tokens now include a `jti` claim so two tokens issued within the same second are distinct.
+
 ## [0.3.0] - 2026-04-05
 
 ### Security & Stability Audit (2026-04-05 21:30 CDT)

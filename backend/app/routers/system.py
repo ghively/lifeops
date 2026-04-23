@@ -6,13 +6,14 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from app.config import settings
 
@@ -45,9 +46,9 @@ def _parse_nginx_line(line: str) -> dict[str, Any] | None:
     d = m.groupdict()
     try:
         ts = datetime.strptime(d["time"], "%d/%b/%Y:%H:%M:%S %z")
-        d["timestamp"] = ts.strftime("%Y-%m-%dT%H:%M:%S%z")
     except ValueError:
-        d["timestamp"] = d["time"]
+        return None
+    d["timestamp"] = ts.strftime("%Y-%m-%dT%H:%M:%S%z")
     d["status"] = int(d["status"])
     return d
 
@@ -223,12 +224,17 @@ async def get_unified_logs(
 @router.post("/logs")
 @write_rate_limit
 async def ingest_frontend_log(
-    payload: dict[str, Any],
     request: Request,
     current_user: dict | None = Depends(get_optional_user),
 ):
     """Persist warn/error frontend logs through the backend logger. Supports single or batch."""
-    del request
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
 
     # Batch mode: multiple entries from localStorage flush
     batch = payload.get("batch")
@@ -313,8 +319,6 @@ async def smoke_test(
 
     # 1. SQLite — write + read a test row
     try:
-        import sqlite3
-
         db_path = settings.data_dir + "/knowledge_os.db"
         conn = sqlite3.connect(db_path, timeout=3)
         cur = conn.cursor()
@@ -426,7 +430,8 @@ async def smoke_test(
         results["openclaw"] = {"status": "warn", "message": f"gateway unreachable: {exc}"}
 
     duration_ms = round((time.monotonic() - overall_start) * 1000)
-    all_pass = all(r.get("status") in ("pass", "skip") for r in results.values())
+    # warn = optional subsystem unreachable (e.g. no Ollama). Does not fail overall.
+    all_pass = all(r.get("status") in ("pass", "skip", "warn") for r in results.values())
 
     return {
         "status": "pass" if all_pass else "fail",

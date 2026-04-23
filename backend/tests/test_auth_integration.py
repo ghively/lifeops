@@ -213,17 +213,11 @@ async def test_password_reset_flow(test_client, mock_sqlite_manager):
     )
     assert register_response.status_code == 201
 
-    # Request password reset
-    reset_request_response = await test_client.post(
-        "/api/v1/auth/password-reset",
-        json={"email": "test@example.com"},
-    )
-    assert reset_request_response.status_code == 200
-
-    # Get the reset token from mock storage
-    reset_tokens = list(mock_sqlite_manager._storage["password_reset_tokens"].values())
-    assert len(reset_tokens) > 0
-    reset_token = reset_tokens[0]["id"]  # token ID is what we use
+    # The /password-reset endpoint never returns the raw token (that would be a
+    # privilege-escalation leak). Call the service directly to obtain a token we can use,
+    # which is what a real mail-transport integration would forward to the user.
+    reset_token = await auth_service.create_password_reset_token("test@example.com")
+    assert reset_token, "expected a reset token for a registered user"
 
     # Confirm password reset with new password
     reset_confirm_response = await test_client.post(
@@ -295,18 +289,20 @@ async def test_concurrent_logins_independent_tokens(test_client, mock_sqlite_man
     # Tokens should be different
     assert token1 != token2
 
-    # Both tokens should work independently
+    # Both tokens should work independently — refresh rotates them, so capture the new values.
     refresh1 = await test_client.post(
         "/api/v1/auth/refresh",
         json={"refresh_token": token1},
     )
     assert refresh1.status_code == 200
+    token1 = refresh1.json()["refresh_token"]
 
     refresh2 = await test_client.post(
         "/api/v1/auth/refresh",
         json={"refresh_token": token2},
     )
     assert refresh2.status_code == 200
+    token2 = refresh2.json()["refresh_token"]
 
     # Logout with one token shouldn't affect the other
     logout_response = await test_client.post(
@@ -322,7 +318,7 @@ async def test_concurrent_logins_independent_tokens(test_client, mock_sqlite_man
     )
     assert refresh2_after_logout.status_code == 200
 
-    # Token 1 should not work
+    # Token 1 should not work (logged out)
     refresh1_after_logout = await test_client.post(
         "/api/v1/auth/refresh",
         json={"refresh_token": token1},

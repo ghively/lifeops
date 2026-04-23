@@ -1,5 +1,7 @@
 """Authentication Service - JWT tokens and password management"""
 
+import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -97,6 +99,30 @@ class AuthService:
         """Verify a password against a hash"""
         return pwd_context.verify(plain_password, hashed_password)
 
+    def _hash_token(self, token: str) -> str:
+        """
+        Hash a high-entropy token (JWT or UUID) for storage.
+
+        Uses SHA-256 + an HMAC keyed on the JWT secret. Unlike bcrypt, this has no
+        72-byte truncation limit, so distinct JWTs cannot collide on verify when their
+        first 72 bytes happen to be identical (same iat second + same payload prefix).
+        Tokens themselves are already cryptographically random, so per-value salting
+        adds nothing; HMAC prevents offline search if the storage leaks.
+        """
+        mac = hmac.new(self.secret_key.encode("utf-8"), token.encode("utf-8"), hashlib.sha256)
+        return "sha256$" + mac.hexdigest()
+
+    def _verify_token(self, token: str, stored_hash: str) -> bool:
+        """Constant-time compare of a token against its stored hash."""
+        if stored_hash.startswith("sha256$"):
+            expected = self._hash_token(token)
+            return hmac.compare_digest(expected, stored_hash)
+        # Legacy bcrypt-hashed tokens (migration path) — falls back to slow verify.
+        try:
+            return pwd_context.verify(token, stored_hash)
+        except Exception:
+            return False
+
     def create_access_token(self, user_id: str, additional_claims: Optional[Dict[str, Any]] = None) -> str:
         """Create a JWT access token"""
         claims = {
@@ -104,6 +130,7 @@ class AuthService:
             "type": "access",
             "iat": datetime.utcnow(),
             "exp": datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes),
+            "jti": str(uuid.uuid4()),  # Unique id ensures every issuance is a distinct token
         }
         if additional_claims:
             claims.update(additional_claims)
@@ -189,7 +216,7 @@ class AuthService:
     async def store_refresh_token(self, user_id: str, token: str) -> str:
         """Store a refresh token in the database"""
         token_id = str(uuid.uuid4())
-        token_hash = self.hash_password(token)  # Hash the token for storage
+        token_hash = self._hash_token(token)
         expires_at = datetime.utcnow() + timedelta(days=self.refresh_token_expire_days)
 
         await sqlite_manager.execute(
@@ -219,7 +246,7 @@ class AuthService:
         )
 
         for stored_token in tokens:
-            if self.verify_password(token, stored_token["token_hash"]):
+            if self._verify_token(token, stored_token["token_hash"]):
                 return True
 
         return False
@@ -234,7 +261,7 @@ class AuthService:
         tokens = await sqlite_manager.fetchall("SELECT * FROM refresh_tokens WHERE user_id = ?", (user_id,))
 
         for stored_token in tokens:
-            if self.verify_password(token, stored_token["token_hash"]):
+            if self._verify_token(token, stored_token["token_hash"]):
                 await sqlite_manager.execute("DELETE FROM refresh_tokens WHERE id = ?", (stored_token["id"],))
                 return True
 
@@ -242,10 +269,8 @@ class AuthService:
 
     async def revoke_all_refresh_tokens(self, user_id: str) -> int:
         """Revoke all refresh tokens for a user"""
-        # execute() returns an async context manager cursor, so we do it directly
-        async with sqlite_manager.connection.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,)) as cursor:
-            await sqlite_manager.connection.commit()
-            return cursor.rowcount
+        result = await sqlite_manager.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,))
+        return getattr(result, "rowcount", 0) or 0
 
     async def create_password_reset_token(self, email: str) -> Optional[str]:
         """Create a password reset token for a user"""
@@ -258,7 +283,7 @@ class AuthService:
         # Create reset token
         reset_token = str(uuid.uuid4())
         token_id = str(uuid.uuid4())
-        token_hash = self.hash_password(reset_token)
+        token_hash = self._hash_token(reset_token)
         expires_at = datetime.utcnow() + timedelta(hours=self.reset_token_expire_hours)
 
         await sqlite_manager.execute(
@@ -289,7 +314,7 @@ class AuthService:
         )
 
         for reset_token in tokens:
-            if self.verify_password(token, reset_token["token_hash"]):
+            if self._verify_token(token, reset_token["token_hash"]):
                 return reset_token
 
         return None

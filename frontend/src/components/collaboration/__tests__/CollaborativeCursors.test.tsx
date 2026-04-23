@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { CollaborativeCursors, useCollaborativeCursors, CursorLabel, useCursorBroadcast, broadcastSelection } from '../CollaborativeCursors'
+import { render, screen, renderHook } from '@testing-library/react'
+import {
+  CollaborativeCursors,
+  useCollaborativeCursors,
+  CursorLabel,
+  useCursorBroadcast,
+  broadcastSelection,
+} from '../CollaborativeCursors'
 import { useCollaborationStore } from '@/stores/collaboration'
 import type { PresenceUser } from '@/services/collaboration'
 
@@ -8,7 +14,21 @@ vi.mock('@/stores/collaboration', () => ({
   useCollaborationStore: vi.fn(),
 }))
 
-const mockCollaborationStore = useCollaborationStore as any
+const mockCollaborationStore = useCollaborationStore as unknown as ReturnType<typeof vi.fn>
+
+/**
+ * Build a selector-aware mock: the hook calls
+ *   useCollaborationStore((s) => s.users)
+ * so the mock must apply the selector to the given state object.
+ */
+function mockStoreState(state: Record<string, unknown>) {
+  mockCollaborationStore.mockImplementation((selector?: any) => {
+    if (typeof selector === 'function') {
+      return selector(state)
+    }
+    return state
+  })
+}
 
 describe('CollaborativeCursors', () => {
   beforeEach(() => {
@@ -23,21 +43,22 @@ describe('CollaborativeCursors', () => {
           display_name: 'Alice',
           color: '#FF0000',
           cursor: { path: [0], offset: 5 },
-        },
+        } as any,
         {
           user_id: 'user-2',
           display_name: 'Bob',
           color: '#00FF00',
           cursor: null,
-        },
+        } as any,
       ]
+      mockStoreState({ users, sendCursor: vi.fn() })
 
-      mockCollaborationStore.mockReturnValue(users)
+      const { result } = renderHook(() =>
+        useCollaborativeCursors({} as any, 'doc-1'),
+      )
 
-      const result = useCollaborativeCursors({} as any, 'doc-1')
-
-      expect(result.cursorUsers).toHaveLength(1)
-      expect(result.cursorUsers[0].user_id).toBe('user-1')
+      expect(result.current.cursorUsers).toHaveLength(1)
+      expect(result.current.cursorUsers[0].user_id).toBe('user-1')
     })
 
     it('generates decorate function that returns decorations', () => {
@@ -48,29 +69,29 @@ describe('CollaborativeCursors', () => {
           color: '#FF0000',
           cursor: { path: [0], offset: 5 },
           selection: null,
-        },
+        } as any,
       ]
+      mockStoreState({ users, sendCursor: vi.fn() })
 
-      mockCollaborationStore.mockReturnValue(users)
-
-      const mockEditor = {}
-      const { decorate } = useCollaborativeCursors(mockEditor as any, 'doc-1')
+      const { result } = renderHook(() =>
+        useCollaborativeCursors({} as any, 'doc-1'),
+      )
 
       const nodeEntry = [{ text: 'hello world' }, [0]] as any
-
-      const decorations = decorate(nodeEntry)
+      const decorations = result.current.decorate(nodeEntry)
 
       expect(Array.isArray(decorations)).toBe(true)
     })
 
     it('handles empty cursor users list', () => {
-      mockCollaborationStore.mockReturnValue([])
+      mockStoreState({ users: [], sendCursor: vi.fn() })
 
-      const mockEditor = {}
-      const { decorate } = useCollaborativeCursors(mockEditor as any, 'doc-1')
+      const { result } = renderHook(() =>
+        useCollaborativeCursors({} as any, 'doc-1'),
+      )
 
       const nodeEntry = [{ text: 'hello world' }, [0]] as any
-      const decorations = decorate(nodeEntry)
+      const decorations = result.current.decorate(nodeEntry)
 
       expect(decorations).toEqual([])
     })
@@ -86,37 +107,37 @@ describe('CollaborativeCursors', () => {
             anchor: { path: [0], offset: 2 },
             focus: { path: [0], offset: 8 },
           },
-        },
+        } as any,
       ]
+      mockStoreState({ users, sendCursor: vi.fn() })
 
-      mockCollaborationStore.mockReturnValue(users)
-
-      const mockEditor = {}
-      const { decorate } = useCollaborativeCursors(mockEditor as any, 'doc-1')
+      const { result } = renderHook(() =>
+        useCollaborativeCursors({} as any, 'doc-1'),
+      )
 
       const nodeEntry = [{ text: 'hello world' }, [0]] as any
-      const decorations = decorate(nodeEntry)
+      const decorations = result.current.decorate(nodeEntry)
 
       expect(decorations.some((d) => d.isSelection)).toBe(true)
     })
 
-    it('excludes undefined objectId', () => {
+    it('works with undefined objectId', () => {
       const users: PresenceUser[] = [
         {
           user_id: 'user-1',
           display_name: 'Alice',
           color: '#FF0000',
           cursor: { path: [0], offset: 5 },
-        },
+        } as any,
       ]
+      mockStoreState({ users, sendCursor: vi.fn() })
 
-      mockCollaborationStore.mockReturnValue(users)
+      const { result } = renderHook(() =>
+        useCollaborativeCursors({} as any, undefined),
+      )
 
-      const mockEditor = {}
-      const { cursorUsers } = useCollaborativeCursors(mockEditor as any, undefined)
-
-      // Should still filter users
-      expect(cursorUsers).toBeDefined()
+      expect(result.current.cursorUsers).toBeDefined()
+      expect(result.current.cursorUsers).toHaveLength(1)
     })
   })
 
@@ -145,37 +166,43 @@ describe('CollaborativeCursors', () => {
   describe('useCursorBroadcast', () => {
     it('broadcasts initial cursor on mount', () => {
       const mockSendCursor = vi.fn()
-      mockCollaborationStore.mockReturnValue(mockSendCursor)
+      mockStoreState({ users: [], sendCursor: mockSendCursor })
 
       const mockEditor = {
-        selection: { anchor: { path: [0], offset: 5 }, focus: { path: [0], offset: 5 } },
+        selection: {
+          anchor: { path: [0], offset: 5 },
+          focus: { path: [0], offset: 5 },
+        },
       } as any
 
-      useCursorBroadcast(mockEditor, 'doc-1')
+      renderHook(() => useCursorBroadcast(mockEditor, 'doc-1'))
 
       expect(mockSendCursor).toHaveBeenCalled()
     })
 
     it('does not broadcast without objectId', () => {
       const mockSendCursor = vi.fn()
-      mockCollaborationStore.mockReturnValue(mockSendCursor)
+      mockStoreState({ users: [], sendCursor: mockSendCursor })
 
       const mockEditor = {
-        selection: { anchor: { path: [0], offset: 5 }, focus: { path: [0], offset: 5 } },
+        selection: {
+          anchor: { path: [0], offset: 5 },
+          focus: { path: [0], offset: 5 },
+        },
       } as any
 
-      useCursorBroadcast(mockEditor, undefined)
+      renderHook(() => useCursorBroadcast(mockEditor, undefined))
 
       expect(mockSendCursor).not.toHaveBeenCalled()
     })
 
     it('does not broadcast without selection', () => {
       const mockSendCursor = vi.fn()
-      mockCollaborationStore.mockReturnValue(mockSendCursor)
+      mockStoreState({ users: [], sendCursor: mockSendCursor })
 
       const mockEditor = { selection: null } as any
 
-      useCursorBroadcast(mockEditor, 'doc-1')
+      renderHook(() => useCursorBroadcast(mockEditor, 'doc-1'))
 
       expect(mockSendCursor).not.toHaveBeenCalled()
     })
@@ -204,7 +231,7 @@ describe('CollaborativeCursors', () => {
       expect(mockSendCursor).toHaveBeenCalled()
       const call = mockSendCursor.mock.calls[0]
       expect(call[0]).toEqual({ path: [0], offset: 5 })
-      expect(call[1]).toBeNull() // No selection data for collapsed range
+      expect(call[1]).toBeNull()
     })
 
     it('broadcasts cursor and selection data from range selection', () => {

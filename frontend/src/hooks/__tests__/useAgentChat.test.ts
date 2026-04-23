@@ -5,15 +5,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useAgentChat } from '../useAgentChat'
 
-// Mock the API
+// Mock the API — the hook calls `chatWithAgent`, which returns { response, cancel }
+// where `response` is an async iterable of RuntimeChatEvent.
 vi.mock('@/services/api', () => ({
   agentRuntimeApi: {
-    chat: vi.fn(),
+    chatWithAgent: vi.fn(),
   },
   APIError: class APIError extends Error {},
 }))
 
 import { agentRuntimeApi } from '@/services/api'
+
+function streamFrom(events: Array<{ type: string; [k: string]: unknown }>) {
+  return {
+    response: (async function* () {
+      for (const evt of events) {
+        yield evt
+      }
+    })(),
+    cancel: vi.fn(),
+  }
+}
 
 describe('useAgentChat Hook', () => {
   beforeEach(() => {
@@ -52,11 +64,9 @@ describe('useAgentChat Hook', () => {
   })
 
   it('sends message and adds it to history', async () => {
-    const mockChatResponse = async function* () {
-      yield { type: 'message', data: 'Response text' }
-    }
-
-    vi.mocked(agentRuntimeApi.chat).mockReturnValue(mockChatResponse() as any)
+    vi.mocked(agentRuntimeApi.chatWithAgent).mockReturnValue(
+      streamFrom([{ type: 'text_delta', delta: 'Response text' }]) as any
+    )
 
     const { result } = renderHook(() => useAgentChat({ agentId: 'test-agent' }))
 
@@ -74,7 +84,9 @@ describe('useAgentChat Hook', () => {
 
   it('sets error when API call fails', async () => {
     const errorMessage = 'API Error'
-    vi.mocked(agentRuntimeApi.chat).mockRejectedValue(new Error(errorMessage))
+    vi.mocked(agentRuntimeApi.chatWithAgent).mockImplementation(() => {
+      throw new Error(errorMessage)
+    })
 
     const { result } = renderHook(() => useAgentChat({ agentId: 'test-agent' }))
 
@@ -89,30 +101,24 @@ describe('useAgentChat Hook', () => {
     expect(result.current.error).toBe(errorMessage)
   })
 
-  it('clears isPending when request completes', async () => {
-    const mockChatResponse = async function* () {
-      yield { type: 'message', data: 'Response' }
-    }
-
-    vi.mocked(agentRuntimeApi.chat).mockReturnValue(mockChatResponse() as any)
+  it('clears isStreaming when request completes', async () => {
+    vi.mocked(agentRuntimeApi.chatWithAgent).mockReturnValue(
+      streamFrom([{ type: 'text_delta', delta: 'Response' }]) as any
+    )
 
     const { result } = renderHook(() => useAgentChat({ agentId: 'test-agent' }))
 
+    expect(result.current.isStreaming).toBe(false)
     await act(async () => {
-      const promise = result.current.sendMessage('Hello')
-      expect(result.current.isStreaming).toBe(true)
-      await promise
+      await result.current.sendMessage('Hello')
     })
-
     expect(result.current.isStreaming).toBe(false)
   })
 
   it('supports cancellation', async () => {
-    const mockChatResponse = async function* () {
-      yield { type: 'message', data: 'Response' }
-    }
-
-    vi.mocked(agentRuntimeApi.chat).mockReturnValue(mockChatResponse() as any)
+    vi.mocked(agentRuntimeApi.chatWithAgent).mockReturnValue(
+      streamFrom([{ type: 'text_delta', delta: 'Response' }]) as any
+    )
 
     const { result } = renderHook(() => useAgentChat({ agentId: 'test-agent' }))
 

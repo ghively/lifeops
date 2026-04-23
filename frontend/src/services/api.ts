@@ -926,5 +926,5 @@ export const authApi = {
 
 // WebSocket API (for reference - actual WebSocket handled by useWebSocket hook)
 export const websocketApi = {
-  getUrl: (endpoint: string) => `${API_BASE_URL.replace('http', 'ws')}/ws/${endpoint}`,
+  getUrl: (endpoint: string) => `${API_BASE_URL.replace('http', 'ws')}/api/v1/ws/${endpoint}`,
 }

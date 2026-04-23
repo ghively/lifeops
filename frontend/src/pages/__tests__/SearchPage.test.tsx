@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -17,18 +17,18 @@ const mockSearchApi = searchApi as any
 const mockResults: SearchResult[] = [
   {
     id: 'obj-1',
-    name: 'Test Object',
+    title: 'Test Object',
     collection: 'objects',
-    excerpt: 'This is a test',
+    content: 'This is a test',
     score: 0.95,
-  },
+  } as any,
   {
     id: 'file-1',
-    name: 'Test File',
+    filename: 'Test File',
     collection: 'files',
-    excerpt: 'File content',
+    content: 'File content',
     score: 0.87,
-  },
+  } as any,
 ]
 
 describe('SearchPage', () => {
@@ -36,9 +36,11 @@ describe('SearchPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // Reset URL so state from prior tests doesn't leak through BrowserRouter.
+    window.history.replaceState(null, '', '/')
     queryClient = new QueryClient({
       defaultOptions: {
-        queries: { retry: false },
+        queries: { retry: false, gcTime: 0, staleTime: 0 },
         mutations: { retry: false },
       },
     })
@@ -58,21 +60,21 @@ describe('SearchPage', () => {
   it('renders search input', () => {
     renderPage()
 
-    const input = screen.getByPlaceholderText(/search/i)
+    const input = screen.getByPlaceholderText(/Search across all your knowledge/i)
     expect(input).toBeInTheDocument()
   })
 
-  it('displays empty state initially', () => {
+  it('displays empty-state prompt initially', () => {
     renderPage()
 
-    expect(screen.getByText(/search for/i)).toBeInTheDocument()
+    expect(screen.getByText(/Start searching/i)).toBeInTheDocument()
   })
 
   it('sends API request on Enter key', async () => {
     const user = userEvent.setup()
     renderPage()
 
-    const input = screen.getByPlaceholderText(/search/i)
+    const input = screen.getByPlaceholderText(/Search across all/i)
     await user.type(input, 'test query')
     await user.keyboard('{Enter}')
 
@@ -85,7 +87,7 @@ describe('SearchPage', () => {
     const user = userEvent.setup()
     renderPage()
 
-    const input = screen.getByPlaceholderText(/search/i)
+    const input = screen.getByPlaceholderText(/Search across all/i)
     await user.type(input, 'test')
     await user.keyboard('{Enter}')
 
@@ -95,23 +97,22 @@ describe('SearchPage', () => {
     })
   })
 
-  it('shows loading state while searching', async () => {
+  it('shows loading spinner while searching', async () => {
     mockSearchApi.search.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => resolve({ results: mockResults }), 100)
-        })
+      () => new Promise((resolve) => {
+        setTimeout(() => resolve({ results: mockResults }), 100)
+      })
     )
 
     const user = userEvent.setup()
-    renderPage()
+    const { container } = renderPage()
 
-    const input = screen.getByPlaceholderText(/search/i)
+    const input = screen.getByPlaceholderText(/Search across all/i)
     await user.type(input, 'test')
     await user.keyboard('{Enter}')
 
     await waitFor(() => {
-      expect(screen.getByRole('status')).toBeInTheDocument()
+      expect(container.querySelector('.animate-spin')).toBeInTheDocument()
     })
   })
 
@@ -121,12 +122,12 @@ describe('SearchPage', () => {
     const user = userEvent.setup()
     renderPage()
 
-    const input = screen.getByPlaceholderText(/search/i)
+    const input = screen.getByPlaceholderText(/Search across all/i)
     await user.type(input, 'test')
     await user.keyboard('{Enter}')
 
     await waitFor(() => {
-      expect(screen.getByText(/error|failed/i)).toBeInTheDocument()
+      expect(screen.getByText(/API Error/i)).toBeInTheDocument()
     })
   })
 
@@ -134,10 +135,10 @@ describe('SearchPage', () => {
     const user = userEvent.setup()
     renderPage()
 
-    const exactButton = screen.getByRole('button', { name: /exact/i })
+    const exactButton = screen.getByRole('button', { name: /Exact Match/i })
     await user.click(exactButton)
 
-    const input = screen.getByPlaceholderText(/search/i)
+    const input = screen.getByPlaceholderText(/Search across all/i)
     await user.type(input, 'test')
     await user.keyboard('{Enter}')
 
@@ -146,27 +147,24 @@ describe('SearchPage', () => {
     })
   })
 
-  it('debounces search input', async () => {
-    vi.useFakeTimers()
-    const user = userEvent.setup({ delay: null })
-
-    renderPage()
-
-    const input = screen.getByPlaceholderText(/search/i)
-    await user.type(input, 'test')
-
-    vi.advanceTimersByTime(100)
-
-    expect(mockSearchApi.search).not.toHaveBeenCalled()
-
-    vi.useRealTimers()
-  })
-
-  it('filters results by type', async () => {
+  it('does not search until Enter (no implicit debounce)', async () => {
     const user = userEvent.setup()
     renderPage()
 
-    const input = screen.getByPlaceholderText(/search/i)
+    const input = screen.getByPlaceholderText(/Search across all/i)
+    await user.type(input, 'test')
+
+    // Typing alone should NOT trigger a search — SearchPage waits for Enter
+    // or a click on the Search button. Small delay to rule out async fire.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mockSearchApi.search).not.toHaveBeenCalled()
+  })
+
+  it('shows result type label (files filter badge) when searching', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    const input = screen.getByPlaceholderText(/Search across all/i)
     await user.type(input, 'test')
     await user.keyboard('{Enter}')
 
@@ -174,31 +172,29 @@ describe('SearchPage', () => {
       expect(screen.getByText('Test Object')).toBeInTheDocument()
     })
 
-    const fileFilter = screen.queryByRole('button', { name: /files/i })
-    if (fileFilter) {
-      await user.click(fileFilter)
-    }
+    // Each result renders a capitalized collection badge
+    const fileBadges = screen.queryAllByText(/files/i)
+    expect(fileBadges.length).toBeGreaterThan(0)
   })
 
-  it('updates URL search params', async () => {
+  it('updates URL search params after searching', async () => {
     const user = userEvent.setup()
-    const { container } = renderPage()
+    renderPage()
 
-    const input = screen.getByPlaceholderText(/search/i)
+    const input = screen.getByPlaceholderText(/Search across all/i)
     await user.type(input, 'test query')
     await user.keyboard('{Enter}')
 
     await waitFor(() => {
-      const url = window.location.href
-      expect(url).toContain('q=test')
+      expect(window.location.search).toContain('q=test')
     })
   })
 
-  it('clears search results when input is empty', async () => {
+  it('does not search for empty string even after Enter', async () => {
     const user = userEvent.setup()
     renderPage()
 
-    const input = screen.getByPlaceholderText(/search/i) as HTMLInputElement
+    const input = screen.getByPlaceholderText(/Search across all/i) as HTMLInputElement
     await user.type(input, 'test')
     await user.keyboard('{Enter}')
 
@@ -209,6 +205,8 @@ describe('SearchPage', () => {
     await user.clear(input)
     await user.keyboard('{Enter}')
 
-    expect(mockSearchApi.search).not.toHaveBeenCalledWith('', expect.anything())
+    // Search should never have been called with empty string.
+    const calls = mockSearchApi.search.mock.calls as Array<[string, string]>
+    expect(calls.every(([q]) => q !== '')).toBe(true)
   })
 })

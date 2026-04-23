@@ -6,15 +6,24 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TasksPage } from '../TasksPage'
 import { tasksApi, objectsApi, type TaskItem } from '@/services/api'
 
+// TasksPage uses tasksApi.list for listing (with filters) and
+// objectsApi.create for creating new tasks.
 vi.mock('@/services/api', () => ({
   tasksApi: {
     list: vi.fn(),
-    update: vi.fn(),
-    complete: vi.fn(),
+    get: vi.fn(),
+    assign: vi.fn(),
+    updateStatus: vi.fn(),
   },
   objectsApi: {
     list: vi.fn(),
+    create: vi.fn(),
   },
+}))
+
+// TaskAssignmentDialog renders nothing of interest here; stub it.
+vi.mock('@/components/tasks/TaskAssignmentDialog', () => ({
+  TaskAssignmentDialog: () => null,
 }))
 
 const mockTasksApi = tasksApi as any
@@ -23,25 +32,22 @@ const mockObjectsApi = objectsApi as any
 const mockTasks: TaskItem[] = [
   {
     id: 'task-1',
+    type: 'task',
     title: 'Task 1',
-    status: 'todo',
-    priority: 'high',
-    created_at: new Date().toISOString(),
-  },
+    properties: { status: 'todo', priority: 'high' },
+  } as any,
   {
     id: 'task-2',
+    type: 'task',
     title: 'Task 2',
-    status: 'in-progress',
-    priority: 'medium',
-    created_at: new Date().toISOString(),
-  },
+    properties: { status: 'in-progress', priority: 'medium' },
+  } as any,
   {
     id: 'task-3',
+    type: 'task',
     title: 'Task 3',
-    status: 'done',
-    priority: 'low',
-    created_at: new Date().toISOString(),
-  },
+    properties: { status: 'done', priority: 'low' },
+  } as any,
 ]
 
 describe('TasksPage', () => {
@@ -51,11 +57,15 @@ describe('TasksPage', () => {
     vi.clearAllMocks()
     queryClient = new QueryClient({
       defaultOptions: {
-        queries: { retry: false },
+        queries: { retry: false, gcTime: 0, staleTime: 0 },
         mutations: { retry: false },
       },
     })
-    mockTasksApi.list.mockResolvedValue({ tasks: mockTasks })
+    mockTasksApi.list.mockResolvedValue({
+      tasks: mockTasks,
+      by_status: { todo: 1, 'in-progress': 1, done: 1 },
+      by_priority: { high: 1, medium: 1, low: 1 },
+    })
     mockObjectsApi.list.mockResolvedValue({ objects: [] })
   })
 
@@ -69,24 +79,29 @@ describe('TasksPage', () => {
     )
   }
 
-  it('renders tasks page', () => {
-    renderPage()
-
-    expect(screen.getByText(/tasks/i)).toBeInTheDocument()
-  })
-
-  it('displays loading state initially', async () => {
-    mockTasksApi.list.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => resolve({ tasks: mockTasks }), 50)
-        })
-    )
-
+  it('renders tasks heading after load', async () => {
     renderPage()
 
     await waitFor(() => {
-      expect(screen.getByRole('status')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: /Tasks/i, level: 1 })).toBeInTheDocument()
+    })
+  })
+
+  it('displays pulse loading placeholder initially', async () => {
+    mockTasksApi.list.mockImplementation(
+      () => new Promise((resolve) => {
+        setTimeout(() => resolve({
+          tasks: mockTasks,
+          by_status: {},
+          by_priority: {},
+        }), 50)
+      })
+    )
+
+    const { container } = renderPage()
+
+    await waitFor(() => {
+      expect(container.querySelector('.animate-pulse')).toBeInTheDocument()
     })
   })
 
@@ -100,74 +115,82 @@ describe('TasksPage', () => {
     })
   })
 
-  it('filters by status', async () => {
+  it('filters by status via Done filter button', async () => {
     const user = userEvent.setup()
     renderPage()
 
-    await waitFor(() => {
-      expect(screen.getByText('Task 1')).toBeInTheDocument()
-    })
+    await screen.findByText('Task 1')
 
-    const doneFilter = screen.getByRole('button', { name: /done/i })
+    // Status filters are buttons labeled like "Done (N)".
+    const doneFilter = await screen.findByRole('button', { name: /^Done \(/i })
     await user.click(doneFilter)
 
-    // Only done tasks should be visible
-    expect(screen.getByText('Task 3')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockTasksApi.list).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: 'done' })
+      )
+    })
   })
 
-  it('filters by priority', async () => {
+  it('filters by priority via high button', async () => {
     const user = userEvent.setup()
     renderPage()
 
-    await waitFor(() => {
-      expect(screen.getByText('Task 1')).toBeInTheDocument()
-    })
+    await screen.findByText('Task 1')
 
-    const highFilter = screen.getByRole('button', { name: /high/i })
+    // Priority filter buttons are labelled "high (N)" etc (lowercase).
+    const highFilter = await screen.findByRole('button', { name: /^high \(/i })
     await user.click(highFilter)
 
-    // Only high priority tasks should be visible
-    expect(screen.getByText('Task 1')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockTasksApi.list).toHaveBeenLastCalledWith(
+        expect.objectContaining({ priority: 'high' })
+      )
+    })
   })
 
-  it('marks task as complete', async () => {
+  it('creates a task via the New Task header button', async () => {
     const user = userEvent.setup()
-    mockTasksApi.complete.mockResolvedValue({ success: true })
+    mockObjectsApi.create.mockResolvedValue({
+      id: 'task-new',
+      type: 'task',
+      title: 'New Task',
+      properties: { status: 'todo', priority: 'medium' },
+    })
 
     renderPage()
 
+    await screen.findByText('Task 1')
+
+    const newTaskButton = await screen.findByRole('button', { name: /^New Task$/i })
+    await user.click(newTaskButton)
+
     await waitFor(() => {
-      expect(screen.getByText('Task 1')).toBeInTheDocument()
+      expect(mockObjectsApi.create).toHaveBeenCalled()
     })
-
-    const completeButtons = screen.getAllByRole('button', { name: /complete|check/i })
-    if (completeButtons.length > 0) {
-      await user.click(completeButtons[0])
-
-      await waitFor(() => {
-        expect(mockTasksApi.complete).toHaveBeenCalled()
-      })
-    }
   })
 
-  it('creates new task', async () => {
+  it('creates a task inline via the Add button', async () => {
     const user = userEvent.setup()
-    mockTasksApi.update.mockResolvedValue({ id: 'task-new', title: 'New Task' })
+    mockObjectsApi.create.mockResolvedValue({
+      id: 'task-new',
+      type: 'task',
+      title: 'Inline Task',
+      properties: { status: 'todo', priority: 'medium' },
+    })
 
     renderPage()
 
-    await waitFor(() => {
-      expect(screen.getByText('Task 1')).toBeInTheDocument()
-    })
+    await screen.findByText('Task 1')
 
-    const newTaskInput = screen.getByPlaceholderText(/new task/i)
-    await user.type(newTaskInput, 'New Task')
+    const inlineInput = screen.getByPlaceholderText(/Create a task inline/i)
+    await user.type(inlineInput, 'Inline Task')
 
-    const addButton = screen.getByRole('button', { name: /\+|add|create/i })
+    const addButton = await screen.findByRole('button', { name: /^Add$/i })
     await user.click(addButton)
 
     await waitFor(() => {
-      expect(mockTasksApi.update).toHaveBeenCalled()
+      expect(mockObjectsApi.create).toHaveBeenCalled()
     })
   })
 
@@ -177,60 +200,77 @@ describe('TasksPage', () => {
     renderPage()
 
     await waitFor(() => {
-      expect(screen.getByText(/error|failed/i)).toBeInTheDocument()
+      expect(screen.getByText(/Failed to load tasks/i)).toBeInTheDocument()
     })
   })
 
-  it('disables submit while pending', async () => {
-    mockTasksApi.update.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => resolve({}), 100)
-        })
+  it('disables inline Add button while creating', async () => {
+    mockObjectsApi.create.mockImplementation(
+      () => new Promise((resolve) => {
+        setTimeout(() => resolve({
+          id: 'task-new',
+          type: 'task',
+          title: 'Pending Task',
+          properties: {},
+        }), 100)
+      })
     )
 
     const user = userEvent.setup()
     renderPage()
 
-    await waitFor(() => {
-      expect(screen.getByText('Task 1')).toBeInTheDocument()
-    })
+    await screen.findByText('Task 1')
 
-    const newTaskInput = screen.getByPlaceholderText(/new task/i)
-    await user.type(newTaskInput, 'Test Task')
+    const inlineInput = screen.getByPlaceholderText(/Create a task inline/i)
+    await user.type(inlineInput, 'Pending Task')
 
-    const addButton = screen.getByRole('button', { name: /\+|add|create/i })
+    const addButton = await screen.findByRole('button', { name: /^Add$/i })
     await user.click(addButton)
 
-    // Button should be disabled during request
-    expect(addButton).toBeDisabled()
+    await waitFor(() => {
+      expect(addButton).toBeDisabled()
+    })
   })
 
-  it('shows all tasks when filter is "all"', async () => {
+  it('shows all tasks when the All filter is clicked', async () => {
     const user = userEvent.setup()
     renderPage()
 
-    await waitFor(() => {
-      expect(screen.getByText('Task 1')).toBeInTheDocument()
-    })
+    await screen.findByText('Task 1')
 
-    const allFilter = screen.getByRole('button', { name: /all/i })
-    await user.click(allFilter)
+    // Two filter rows each have an "All" button (status + priority). Any
+    // click should not trigger errors and should re-render with all tasks.
+    const allButtons = await screen.findAllByRole('button', { name: /All/i })
+    expect(allButtons.length).toBeGreaterThan(0)
+    await user.click(allButtons[0])
 
     expect(screen.getByText('Task 1')).toBeInTheDocument()
     expect(screen.getByText('Task 2')).toBeInTheDocument()
     expect(screen.getByText('Task 3')).toBeInTheDocument()
   })
 
-  it('displays task priority and status badges', async () => {
+  it('displays task priority and status text', async () => {
+    renderPage()
+
+    await screen.findByText('Task 1')
+
+    // Priority labels appear alongside task titles.
+    expect(screen.getAllByText(/high/i).length).toBeGreaterThan(0)
+    // Status label "To Do" from statusLabels map
+    expect(screen.getByText('To Do')).toBeInTheDocument()
+  })
+
+  it('shows empty state when there are no tasks', async () => {
+    mockTasksApi.list.mockResolvedValue({
+      tasks: [],
+      by_status: {},
+      by_priority: {},
+    })
+
     renderPage()
 
     await waitFor(() => {
-      expect(screen.getByText('Task 1')).toBeInTheDocument()
+      expect(screen.getByText(/No tasks found/i)).toBeInTheDocument()
     })
-
-    // Check for status and priority display
-    const badges = screen.queryAllByRole('button')
-    expect(badges.length).toBeGreaterThan(0)
   })
 })

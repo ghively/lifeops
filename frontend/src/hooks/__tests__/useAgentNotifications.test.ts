@@ -1,163 +1,239 @@
 /**
  * Tests for useAgentNotifications hook.
+ *
+ * The hook polls agentsApi.list via react-query when enabled and fires a
+ * Notification whenever an agent's status or current_task changes between
+ * polls. It returns no public API - observable effects are the Notification
+ * constructor / showNotification calls.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
+import { renderHook, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import React from 'react'
 import { useAgentNotifications } from '../useAgentNotifications'
+import { agentsApi } from '@/services/api'
 
-// Mock WebSocket
-let mockWsInstance: any
-
-vi.stubGlobal('WebSocket', vi.fn(function (this: any) {
-  this.addEventListener = vi.fn()
-  this.removeEventListener = vi.fn()
-  this.send = vi.fn()
-  this.close = vi.fn()
-  mockWsInstance = this
-  return this
+vi.mock('@/services/api', () => ({
+  agentsApi: {
+    list: vi.fn(),
+  },
 }))
 
+const mockList = agentsApi.list as unknown as ReturnType<typeof vi.fn>
+
+function wrapper(client: QueryClient) {
+  return ({ children }: { children: React.ReactNode }) =>
+    React.createElement(QueryClientProvider, { client }, children)
+}
+
+function makeClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0, staleTime: 0 },
+    },
+  })
+}
+
 describe('useAgentNotifications Hook', () => {
+  let NotificationCtor: any
+
+  let originalSW: any
+
   beforeEach(() => {
     vi.clearAllMocks()
-    mockWsInstance = undefined
+    mockList.mockResolvedValue({ agents: [] })
+
+    // Stub a Notification constructor with permission='granted'
+    NotificationCtor = vi.fn()
+    NotificationCtor.permission = 'granted'
+    ;(globalThis as any).Notification = NotificationCtor
+
+    // Stub navigator.serviceWorker.ready to resolve with a registration whose
+    // showNotification proxies to our NotificationCtor spy. This keeps the
+    // primary code path exercised deterministically.
+    originalSW = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker')
+    const fakeRegistration = {
+      showNotification: (title: string, options: NotificationOptions) => {
+        NotificationCtor(title, options)
+        return Promise.resolve()
+      },
+    }
+    try {
+      Object.defineProperty(navigator, 'serviceWorker', {
+        value: { ready: Promise.resolve(fakeRegistration) },
+        configurable: true,
+      })
+    } catch {
+      // noop
+    }
   })
 
   afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('initializes with empty notifications', () => {
-    const { result } = renderHook(() => useAgentNotifications())
-
-    expect(result.current.notifications).toEqual([])
-  })
-
-  it('subscribes to WebSocket on mount', () => {
-    renderHook(() => useAgentNotifications())
-
-    expect(WebSocket).toHaveBeenCalled()
-  })
-
-  it('unsubscribes from WebSocket on unmount', () => {
-    const { unmount } = renderHook(() => useAgentNotifications())
-
-    expect(mockWsInstance.removeEventListener).not.toHaveBeenCalled()
-
-    unmount()
-
-    // After unmount, WebSocket should be cleaned up
-    expect(mockWsInstance.close).toHaveBeenCalled()
-  })
-
-  it('adds notification to list when message received', async () => {
-    const { result } = renderHook(() => useAgentNotifications())
-
-    expect(WebSocket).toHaveBeenCalled()
-
-    // Simulate WebSocket message
-    const listeners = (mockWsInstance.addEventListener as any).mock.calls
-    const messageListener = listeners.find((call: any) => call[0] === 'message')?.[1]
-
-    if (messageListener) {
-      await act(async () => {
-        messageListener({
-          data: JSON.stringify({
-            id: 'notif-1',
-            title: 'Test Notification',
-            message: 'This is a test',
-          }),
-        })
-      })
-    }
-
-    expect(result.current.notifications).toContainEqual(
-      expect.objectContaining({
-        id: 'notif-1',
-        title: 'Test Notification',
-      })
-    )
-  })
-
-  it('dedupes duplicate notification IDs', async () => {
-    const { result } = renderHook(() => useAgentNotifications())
-
-    const listeners = (mockWsInstance.addEventListener as any).mock.calls
-    const messageListener = listeners.find((call: any) => call[0] === 'message')?.[1]
-
-    if (messageListener) {
-      await act(async () => {
-        messageListener({
-          data: JSON.stringify({
-            id: 'notif-duplicate',
-            title: 'First Notification',
-          }),
-        })
-        messageListener({
-          data: JSON.stringify({
-            id: 'notif-duplicate',
-            title: 'Duplicate Notification',
-          }),
-        })
-      })
-    }
-
-    // Should only have one notification with that ID
-    const duplicateNotifs = result.current.notifications.filter((n) => n.id === 'notif-duplicate')
-    expect(duplicateNotifs.length).toBeLessThanOrEqual(2) // Either 1 or 2 depending on implementation
-  })
-
-  it('handles dismiss notification', async () => {
-    const { result } = renderHook(() => useAgentNotifications())
-
-    const listeners = (mockWsInstance.addEventListener as any).mock.calls
-    const messageListener = listeners.find((call: any) => call[0] === 'message')?.[1]
-
-    if (messageListener) {
-      await act(async () => {
-        messageListener({
-          data: JSON.stringify({
-            id: 'notif-1',
-            title: 'Test',
-          }),
-        })
-      })
-
-      expect(result.current.notifications).toHaveLength(1)
-
-      result.current.dismiss('notif-1')
-
-      expect(result.current.notifications).toHaveLength(0)
+    delete (globalThis as any).Notification
+    if (originalSW) {
+      try {
+        Object.defineProperty(navigator, 'serviceWorker', originalSW)
+      } catch {
+        // noop
+      }
+    } else {
+      try {
+        // @ts-expect-error cleanup
+        delete (navigator as any).serviceWorker
+      } catch {
+        // noop
+      }
     }
   })
 
-  it('no memory leak on unmount', () => {
-    const { unmount } = renderHook(() => useAgentNotifications())
+  it('does nothing when disabled', async () => {
+    const client = makeClient()
+    renderHook(() => useAgentNotifications(false), { wrapper: wrapper(client) })
 
-    const closeBeforeUnmount = (mockWsInstance.close as any).mock.callCount
+    // Allow any pending microtasks
+    await new Promise((r) => setTimeout(r, 10))
 
-    unmount()
-
-    const closeAfterUnmount = (mockWsInstance.close as any).mock.callCount
-    expect(closeAfterUnmount).toBeGreaterThan(closeBeforeUnmount)
+    expect(mockList).not.toHaveBeenCalled()
+    expect(NotificationCtor).not.toHaveBeenCalled()
   })
 
-  it('handles malformed notification data', async () => {
-    const { result } = renderHook(() => useAgentNotifications())
+  it('fetches agent list when enabled', async () => {
+    const client = makeClient()
+    renderHook(() => useAgentNotifications(true), { wrapper: wrapper(client) })
 
-    const listeners = (mockWsInstance.addEventListener as any).mock.calls
-    const messageListener = listeners.find((call: any) => call[0] === 'message')?.[1]
+    await waitFor(() => {
+      expect(mockList).toHaveBeenCalled()
+    })
+  })
 
-    if (messageListener) {
-      await act(async () => {
-        // Invalid JSON
-        messageListener({
-          data: 'invalid json',
-        })
-      })
+  it('does not notify on initial load', async () => {
+    mockList.mockResolvedValue({
+      agents: [
+        { id: 'a1', name: 'one', status: 'idle', current_task: null, current_action: null },
+      ],
+    })
+    const client = makeClient()
+    renderHook(() => useAgentNotifications(true), { wrapper: wrapper(client) })
 
-      // Should not crash, notifications unchanged
-      expect(result.current.notifications).toEqual([])
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(NotificationCtor).not.toHaveBeenCalled()
+  })
+
+  it('fires a Notification when agent status changes between polls', async () => {
+    mockList.mockResolvedValue({
+      agents: [
+        { id: 'a1', name: 'one', status: 'idle', current_task: null, current_action: null },
+      ],
+    })
+    const client = makeClient()
+    const { rerender } = renderHook(() => useAgentNotifications(true), {
+      wrapper: wrapper(client),
+    })
+
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+    // Allow the initial effect (which primes previousAgentsRef) to run.
+    await new Promise((r) => setTimeout(r, 20))
+
+    // Now update mock so the refetch returns a changed status.
+    mockList.mockResolvedValue({
+      agents: [
+        { id: 'a1', name: 'one', status: 'active', current_task: null, current_action: null },
+      ],
+    })
+    await client.refetchQueries({ queryKey: ['agent-notifications'] })
+    rerender()
+
+    await waitFor(() => {
+      expect(NotificationCtor).toHaveBeenCalled()
+    })
+    const [title, options] = NotificationCtor.mock.calls[0]
+    expect(title).toMatch(/@one/)
+    expect(options).toMatchObject({ tag: 'agent-a1' })
+  })
+
+  it('does nothing when permission is not granted', async () => {
+    NotificationCtor.permission = 'denied'
+    mockList.mockResolvedValueOnce({
+      agents: [
+        { id: 'a1', name: 'one', status: 'idle', current_task: null, current_action: null },
+      ],
+    })
+    const client = makeClient()
+    const { rerender } = renderHook(() => useAgentNotifications(true), {
+      wrapper: wrapper(client),
+    })
+
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+
+    mockList.mockResolvedValueOnce({
+      agents: [
+        { id: 'a1', name: 'one', status: 'active', current_task: null, current_action: null },
+      ],
+    })
+    await client.refetchQueries({ queryKey: ['agent-notifications'] })
+    rerender()
+
+    await new Promise((r) => setTimeout(r, 20))
+    expect(NotificationCtor).not.toHaveBeenCalled()
+  })
+
+  it('does not notify when nothing changed between polls', async () => {
+    const payload = {
+      agents: [
+        { id: 'a1', name: 'one', status: 'idle', current_task: null, current_action: null },
+      ],
     }
+    mockList.mockResolvedValue(payload)
+    const client = makeClient()
+    const { rerender } = renderHook(() => useAgentNotifications(true), {
+      wrapper: wrapper(client),
+    })
+
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+
+    await client.refetchQueries({ queryKey: ['agent-notifications'] })
+    rerender()
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(NotificationCtor).not.toHaveBeenCalled()
+  })
+
+  it('notifies when current_task changes', async () => {
+    mockList.mockResolvedValue({
+      agents: [
+        { id: 'a1', name: 'one', status: 'idle', current_task: null, current_action: null },
+      ],
+    })
+    const client = makeClient()
+    const { rerender } = renderHook(() => useAgentNotifications(true), {
+      wrapper: wrapper(client),
+    })
+
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 20))
+
+    mockList.mockResolvedValue({
+      agents: [
+        { id: 'a1', name: 'one', status: 'idle', current_task: 'Deploy app', current_action: null },
+      ],
+    })
+    await client.refetchQueries({ queryKey: ['agent-notifications'] })
+    rerender()
+
+    await waitFor(() => expect(NotificationCtor).toHaveBeenCalled())
+    const [, options] = NotificationCtor.mock.calls[0]
+    expect(options.body).toContain('Deploy app')
+  })
+
+  it('unmounts without errors', async () => {
+    const client = makeClient()
+    const { unmount } = renderHook(() => useAgentNotifications(true), {
+      wrapper: wrapper(client),
+    })
+
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+    expect(() => unmount()).not.toThrow()
   })
 })

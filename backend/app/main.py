@@ -106,8 +106,20 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="Knowledge OS API",
-    description="API for Knowledge OS - A knowledge management system with AI agent integration",
-    version="0.1.0",
+    description=(
+        "API for Knowledge OS — a local-first knowledge management system with "
+        "AI agent integration.\n\n"
+        "- Authentication: Bearer JWT on `/api/v1/**` except whitelisted endpoints.\n"
+        "- Versioning: all endpoints live under `/api/v1/`.\n"
+        "- WebSockets: `/api/v1/ws`, `/api/v1/ws/agents/{agent_name}`, "
+        "`/api/v1/collaboration/ws/{object_id}` (unversioned aliases retained for backwards compat)."
+    ),
+    version="0.3.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/api/v1/openapi.json",
+    contact={"name": "Knowledge OS", "url": "https://github.com/ghively/knowledge-os"},
+    license_info={"name": "MIT", "url": "https://opensource.org/licenses/MIT"},
     lifespan=lifespan,
 )
 app.state.limiter = limiter
@@ -211,7 +223,14 @@ AUTH_WHITELIST = {
     "/api/v1/auth/refresh",
     "/api/v1/auth/forgot-password",
     "/api/v1/auth/reset-password",
+    "/api/v1/auth/password-reset",
+    "/api/v1/auth/password-reset/confirm",
     "/api/v1/system/health",
+    # Frontend error/warn log ingestion — must accept anonymous POSTs so errors
+    # that occur before/after auth (e.g. on login page, on token expiry) still reach the backend.
+    "/api/v1/system/logs",
+    # OpenAPI schema — safe to expose; does not include user data.
+    "/api/v1/openapi.json",
 }
 
 
@@ -265,6 +284,11 @@ async def root(request: Request):
     return {"message": "Knowledge OS API", "version": "0.1.0", "docs": "/docs"}
 
 
+@app.websocket("/api/v1/ws")
+@app.websocket("/api/v1/ws/system")
+@app.websocket("/api/v1/ws/agents/{agent_name}")
+# Deprecated unversioned aliases — kept for backwards compatibility with older clients.
+# Remove once all clients are confirmed on /api/v1/ws.
 @app.websocket("/ws")
 @app.websocket("/ws/system")
 @app.websocket("/ws/agents/{agent_name}")
@@ -292,7 +316,7 @@ async def websocket_endpoint(websocket: WebSocket, agent_name: str = "system"):
         websocket_manager.disconnect(websocket)
 
 
-# Note: Collaboration WebSocket is handled by the collaboration router at /api/collaboration/ws/{object_id}
+# Collaboration WebSocket is served by the collaboration router at /api/v1/collaboration/ws/{object_id}.
 
 
 if __name__ == "__main__":
