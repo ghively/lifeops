@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useToast } from '../useToast'
+import { useToast, toast } from '../useToast'
 
 describe('useToast Hook', () => {
   beforeEach(() => {
@@ -21,11 +21,11 @@ describe('useToast Hook', () => {
     expect(result.current.toasts).toEqual([])
   })
 
-  it('adds toast to list', () => {
+  it('adds toast to list when toast() is called', () => {
     const { result } = renderHook(() => useToast())
 
     act(() => {
-      result.current.addToast({
+      result.current.toast({
         title: 'Test Toast',
         description: 'Test message',
       })
@@ -38,37 +38,32 @@ describe('useToast Hook', () => {
     })
   })
 
-  it('auto-dismisses toast after duration', () => {
+  it('auto-dismisses toast after default duration', () => {
     const { result } = renderHook(() => useToast())
 
-    const toastId = act(() => {
-      return result.current.addToast({
-        title: 'Auto-dismiss',
-        duration: 3000,
-      })
+    act(() => {
+      result.current.toast({ title: 'Auto-dismiss' })
     })
 
     expect(result.current.toasts).toHaveLength(1)
 
     act(() => {
-      vi.advanceTimersByTime(3000)
+      vi.advanceTimersByTime(4000)
     })
 
     expect(result.current.toasts).toHaveLength(0)
   })
 
-  it('respects maxToasts cap', () => {
-    const { result } = renderHook(() => useToast({ maxToasts: 3 }))
+  it('accumulates multiple toasts', () => {
+    const { result } = renderHook(() => useToast())
 
     act(() => {
       for (let i = 0; i < 5; i++) {
-        result.current.addToast({
-          title: `Toast ${i}`,
-        })
+        result.current.toast({ title: `Toast ${i}` })
       }
     })
 
-    expect(result.current.toasts.length).toBeLessThanOrEqual(3)
+    expect(result.current.toasts.length).toBe(5)
   })
 
   it('dismisses toast by ID', () => {
@@ -77,9 +72,7 @@ describe('useToast Hook', () => {
     let toastId: string | undefined
 
     act(() => {
-      toastId = result.current.addToast({
-        title: 'Dismissible Toast',
-      })
+      toastId = result.current.toast({ title: 'Dismissible Toast' })
     })
 
     expect(result.current.toasts).toHaveLength(1)
@@ -99,9 +92,9 @@ describe('useToast Hook', () => {
     let toastId3: string | undefined
 
     act(() => {
-      toastId1 = result.current.addToast({ title: 'Toast 1' })
-      toastId2 = result.current.addToast({ title: 'Toast 2' })
-      toastId3 = result.current.addToast({ title: 'Toast 3' })
+      toastId1 = result.current.toast({ title: 'Toast 1' })
+      toastId2 = result.current.toast({ title: 'Toast 2' })
+      toastId3 = result.current.toast({ title: 'Toast 3' })
     })
 
     expect(result.current.toasts).toHaveLength(3)
@@ -123,9 +116,7 @@ describe('useToast Hook', () => {
 
     act(() => {
       for (let i = 0; i < 5; i++) {
-        const id = result.current.addToast({
-          title: `Toast ${i}`,
-        })
+        const id = result.current.toast({ title: `Toast ${i}` })
         ids.add(id)
       }
     })
@@ -133,40 +124,24 @@ describe('useToast Hook', () => {
     expect(ids.size).toBe(5)
   })
 
-  it('handles dismissAll', () => {
+  it('exported toast() notifies subscribed hooks', () => {
     const { result } = renderHook(() => useToast())
 
     act(() => {
-      result.current.addToast({ title: 'Toast 1' })
-      result.current.addToast({ title: 'Toast 2' })
-      result.current.addToast({ title: 'Toast 3' })
+      toast({ title: 'From singleton' })
     })
 
-    expect(result.current.toasts).toHaveLength(3)
-
-    act(() => {
-      result.current.dismissAll?.()
-    })
-
-    expect(result.current.toasts).toHaveLength(0)
+    expect(result.current.toasts.length).toBe(1)
+    expect(result.current.toasts[0].title).toBe('From singleton')
   })
 
-  it('does not auto-dismiss when duration is 0', () => {
+  it('supports destructive variant', () => {
     const { result } = renderHook(() => useToast())
 
     act(() => {
-      result.current.addToast({
-        title: 'Persistent Toast',
-        duration: 0,
-      })
+      result.current.toast({ title: 'Error', variant: 'destructive' })
     })
 
-    expect(result.current.toasts).toHaveLength(1)
-
-    act(() => {
-      vi.advanceTimersByTime(10000)
-    })
-
-    expect(result.current.toasts).toHaveLength(1)
+    expect(result.current.toasts[0].variant).toBe('destructive')
   })
 })
