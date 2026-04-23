@@ -50,484 +50,293 @@ A **production-ready knowledge management system** with an integrated AI agent r
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- Qdrant (local or Docker)
-- LLM provider: Ollama (default, local) or API key (OpenAI/Anthropic/Google)
+- **Docker & Docker Compose** (recommended)
+- **An LLM provider:** Ollama (local), OpenAI, Anthropic, or Google
 
-### 30-Second Setup
+### Setup in 3 Steps
+
+**1. Install an LLM Provider**
 
 ```bash
-# 1. Clone and enter directory
+# Option A: Ollama (local, free)
+brew install ollama
+ollama pull qwen2.5-coder:7b
+ollama serve
+
+# Option B: Use cloud provider (set API key in .env)
+LLM_PROVIDER=openai
+LLM_API_KEY=sk-...
+```
+
+**2. Clone and Start Services**
+
+```bash
 git clone https://github.com/ghively/knowledge-os.git
 cd knowledge-os
-
-# 2. Run with Docker Compose (recommended)
-docker-compose up
-
-# 3. Open http://localhost:5173
-# Login with: demo / demo123
+docker compose up -d --build
 ```
 
-### Manual Setup
+**3. Access the App**
 
-```bash
-# Backend
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-export DATABASE_URL=sqlite:///knowledge_os.db
-export LOG_LEVEL=INFO
-python -m uvicorn app.main:app --reload
-
-# Frontend (new terminal)
-cd frontend
-npm install
-npm run dev
-
-# Qdrant (new terminal, or use Docker)
-docker run -p 6333:6333 qdrant/qdrant
-
-# Ollama (optional, new terminal)
-ollama run mistral
-```
-
-Open http://localhost:5173 → Register → Start creating notes!
+- **App:** http://localhost:3010 (register/login)
+- **API:** http://localhost:8010
+- **Qdrant:** http://localhost:6335/dashboard
 
 ### First Steps
 
-1. **Create a Note** — Click "Notes", start typing, use `[[` to link
-2. **Try Search** — Click "Search", search by meaning not keywords
-3. **Chat with Agent** — Click "Agents", select "Researcher", send a message
-4. **View Logs** — Click "Logs" to see structured system logs
-5. **Configure Settings** — Click "Settings" to customize
+1. Create account at http://localhost:3010
+2. Go to **Agents** → **Create Agent** → pick a template
+3. Start chatting with an agent
+4. Create notes with `[[wiki links]]`
+5. Use semantic search to find content by meaning
 
 ---
 
 ## 📋 Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     Knowledge OS                              │
-├──────────────────────────────────────────────────────────────┤
-│ Frontend (React 18 + TypeScript + Vite + Tailwind)            │
-│ ├─ Pages: Notes, Tasks, Files, Agents, Chat, Search, Logs    │
-│ ├─ Real-time: WebSocket for presence, cursors, events        │
-│ └─ Auth: JWT with automatic token refresh                    │
-├──────────────────────────────────────────────────────────────┤
-│ Backend (FastAPI + Python 3.11 + Pydantic)                    │
-│ ├─ Routers: Auth, Agents, Blocks, Objects, Tasks, Files...  │
-│ ├─ Services: Auth, Embedding, Collaboration, File Watching   │
-│ ├─ Agent Runtime: Loop, Memory, Tools, LLM Router, MCP      │
-│ └─ Middleware: Auth, Rate Limiting, Structured Logging       │
-├──────────────────────────────────────────────────────────────┤
-│ Data Layer                                                    │
-│ ├─ SQLite: Users, Sessions, Audit, Schedules, Webhooks      │
-│ ├─ Qdrant: Objects, Blocks, Files, Code, Images, Memories   │
-│ └─ File System: Agent definitions, watched folders          │
-└──────────────────────────────────────────────────────────────┘
-```
-│   Port: 3010    │◄────│   Port: 8010    │◄────│   Port: 6335    │
-└─────────────────┘     └────────┬────────┘     └─────────────────┘
-                                │
-                    ┌───────────┼───────────┐
-                    ▼           ▼           ▼
-               ┌─────────┐ ┌────────┐ ┌──────────┐
-               │  LLM    │ │ SQLite │ │  CLI     │
-               │(external│ │ (DB)   │ │  Agents  │
-               │ Ollama, │ │         │ │ Codex,   │
-               │ OpenAI) │ │         │ │ Claude,  │
-               └─────────┘ └────────┘ │ Kimi,    │
-                                     │ Gemini   │
-                                     └──────────┘
+┌──────────────────────────────────────────────────────┐
+│              Knowledge OS v0.3.0                      │
+├──────────────────────────────────────────────────────┤
+│ Frontend (React 18 + TypeScript + Vite)              │
+│ • Pages: Notes, Tasks, Agents, Search, Logs          │
+│ • Real-time: WebSocket presence, cursors             │
+│ • Auth: JWT with auto token refresh                  │
+├──────────────────────────────────────────────────────┤
+│ Backend (FastAPI + Python 3.11)                      │
+│ • 86 REST endpoints organized in 9 routers           │
+│ • Agent Runtime: ReAct loop + Memory + Scheduling    │
+│ • Tool Sandboxing: Approval gates + Rate limits      │
+│ • Structured JSON logging + WebSocket broadcast      │
+├──────────────────────────────────────────────────────┤
+│ Data Layer                                           │
+│ • SQLite: Users, Sessions, Audit, Schedules, etc.   │
+│ • Qdrant: 8 collections (objects, blocks, memories) │
+│ • File System: Agent definitions, watched folders   │
+└──────────────────────────────────────────────────────┘
 ```
 
-### Agent Runtime Components
+**Agent Runtime Stack:**
+- Identity: AGENT.md, SOUL.md, MEMORY.md, TOOLS.md
+- LLM Router: Ollama/OpenAI/Anthropic/Google
+- Tool System: Native + CLI agents + MCP servers
+- Memory: Semantic retrieval + daily curation
+- Audit: Every decision logged (90-day retention)
 
-```
-Agent Orchestrator
-├── IdentityLoader — parse AGENT.md, SOUL.md, MEMORY.md, TOOLS.md
-├── LLMRouter — Ollama/OpenAI/Anthropic/Google with streaming
-├── ToolRegistry
-│   ├── Native tools (create_object, search, manage_tasks, etc.)
-│   ├── CLI Agent tools (codex, claude_code, kimi, gemini, opencode)
-│   └── MCP Client (external tool servers via stdio/HTTP)
-├── AgentLoop — ReAct pattern with sub-agent support
-├── MemoryManager — daily logs, Qdrant retrieval, MEMORY.md curation
-├── SessionManager — SQLite conversation persistence
-├── Scheduler — autonomous background task execution
-├── Webhooks — external event triggers
-└── AuditLogger — comprehensive decision logging
-```
+---
 
-### Qdrant Collections
-1. `objects` — Main objects (pages, tasks, people, etc.)
-2. `blocks` — Block-level content for outliner
-3. `relations` — Object relationships and backlinks
-4. `files` — File metadata and content
-5. `images` — Image embeddings (CLIP)
-6. `code` — Code file embeddings
-7. `agent_memories` — Agent conversation history
-8. `chat_logs` — User-agent chat sessions
-9. `tags` — Tag index
-10. `sessions` — Session metadata
+## ⚙️ Agent Configuration
 
-## Quick Start
+Each agent directory contains 4 markdown files (`backend/agents/{name}/`):
 
-### Prerequisites
-- **Docker & Docker Compose**
-- **An LLM provider** — Ollama (local), OpenAI, Anthropic, or Google
-
-### 1. Set Up an LLM Provider
-
-The agent runtime works with any OpenAI-compatible LLM. **Ollama** (recommended for local, free inference) is the default but must be running separately — it's not part of the Docker stack.
-
-**Option A: Ollama (local, free)**
-```bash
-# Install Ollama
-brew install ollama  # macOS
-# Or: curl -fsSL https://ollama.ai/install.sh | sh  # Linux
-
-# Pull a model
-ollama pull qwen2.5-coder:7b
-
-# Start Ollama (if not running)
-ollama serve
-```
-
-**Option B: Cloud provider (OpenAI, Anthropic, Google)**
-```bash
-# Set API key in .env
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4o-mini
-LLM_API_KEY=sk-xxx
-```
-
-**Recommended models:**
-| Model | Provider | Size | Best For |
-|-------|----------|------|----------|
-| `qwen2.5-coder:7b` | Ollama (local) | 4.7GB | Tool calling, code, reasoning |
-| `deepseek-r1:8b` | Ollama (local) | 5.2GB | Deep reasoning |
-| `llama3.1:8b` | Ollama (local) | 4.9GB | General-purpose |
-| `gpt-4o-mini` | OpenAI | API | Fast, cheap, capable |
-| `claude-sonnet-4-20250514` | Anthropic | API | Best reasoning |
-
-### 2. Clone and Start
-
-```bash
-git clone https://github.com/ghively/knowledge-os.git
-cd knowledge-os
-
-# Start all services
-docker compose up -d --build
-```
-
-### 3. Access the Application
-
-- **App**: http://localhost:3010
-- **Backend API**: http://localhost:8010
-- **Qdrant Dashboard**: http://localhost:6335/dashboard
-
-### 4. Register and Create an Agent
-
-1. Go to http://localhost:3010/register and create an account
-2. Navigate to **Agents** → **Create Agent** → pick a template
-3. Edit the agent's TOOLS.md to customize model, tools, and MCP servers
-4. Start chatting!
-
-## Configuration
-
-### Environment Variables
-
-```env
-# Ports
-FRONTEND_PORT=3010
-BACKEND_PORT=8010
-QDRANT_HTTP_PORT=6335
-QDRANT_GRPC_PORT=6336
-
-# LLM Provider (default: Ollama; set LLM_BASE_URL for custom endpoints)
-# Override per-agent in TOOLS.md
-LLM_PROVIDER=ollama
-LLM_MODEL=qwen2.5-coder:7b
-LLM_BASE_URL=
-LLM_API_KEY=
-
-# OpenClaw Integration (optional)
-OPENCLAW_URL=http://host.docker.internal:18789
-OPENCLAW_TOKEN=
-
-# Embeddings
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-```
-
-### Agent Configuration
-
-Each agent is defined by 4 markdown files in their directory (`backend/agents/{agent_name}/`). You can edit these through the UI or directly.
-
-#### AGENT.md — Identity & Capabilities
-
+**AGENT.md** — Identity & capabilities
 ```markdown
----
-name: Researcher
-model: qwen2.5-coder:7b
-capabilities:
-  - web_research
-  - summarization
-  - fact_checking
-constraints:
-  - Always cite sources
-  - Never fabricate information
----
+# Your Agent Name
+You are a specialized assistant for [domain].
 
-You are a research assistant. Your job is to find accurate information,
-summarize findings, and provide sourced answers.
+## Capabilities
+- [capability 1]
+- [capability 2]
 
 ## Instructions
-1. When given a question, break it into sub-questions
-2. Use available tools to gather information
-3. Cross-reference multiple sources
-4. Provide concise, well-structured answers
+1. [Instruction 1]
+2. [Instruction 2]
 ```
 
-#### SOUL.md — Personality & Behavior
-
+**SOUL.md** — Personality & behavior
 ```markdown
 ## Personality
-- Curious and thorough
-- Prefers precision over speed
-- Honest about uncertainty
+- [Trait 1]
+- [Trait 2]
 
 ## Tone
-- Professional but approachable
-- Avoid jargon unless the user uses it
-- Use bullet points for structured information
-
-## Decision Making
-- Always verify claims before presenting them
-- If uncertain, say so explicitly
-- Prefer primary sources over secondary
+- [Communication style]
 ```
 
-#### TOOLS.md — LLM, CLI Agents & MCP Servers
-
+**TOOLS.md** — LLM & MCP servers
 ```markdown
 ## LLM Provider
 provider: ollama
 model: qwen2.5-coder:7b
 temperature: 0.2
 max_tokens: 2048
-fallback_model: llama3.1:8b
-
-## CLI Agents Available
-- codex: coding, git, file operations
-- claude_code: coding, analysis, file operations
-- kimi: research, web search, coding (256K context)
-- gemini: analysis, research, documentation (free tier)
-- opencode: coding assistant
 
 ## MCP Servers
 - name: brave-search
-  transport: stdio
-  command: npx
-  args: ["-y", "@anthropic/mcp-server-brave-search"]
-  env:
-    BRAVE_API_KEY: sk-xxx
-
-- name: filesystem
-  transport: stdio
-  command: npx
-  args: ["-y", "@anthropic/mcp-server-filesystem", "/app/data"]
+  command: npx @anthropic/mcp-server-brave-search
 ```
 
-#### MEMORY.md — Long-Term Memory (auto-curated)
-
+**MEMORY.md** — Auto-curated long-term memory
 ```markdown
-# Auto-curated by the agent during memory curation tasks.
+# Memory Log
 
 ## User Preferences
-- Prefers concise summaries over detailed reports
-- Works in software engineering domain
-- Timezone: America/Chicago
+- [Preference 1]
 
 ## Learned Context
-- Project uses FastAPI + React stack
-- Qdrant for vector storage
-- Ollama for local LLM inference
+- [Context 1]
 ```
 
-#### memory/YYYY-MM-DD.md — Daily Logs (auto-written)
+### Creating Custom Agents
 
-```markdown
-# 2026-04-05
+**UI Method:**
+1. **Agents** → **Create Agent** → pick template
+2. Edit the 4 markdown files
+3. Save and start chatting
 
-## Session 1
-- User asked about microservices patterns
-- Found 3 relevant articles via search
-- Summarized key differences between monolith and microservices
-```
-
-### Creating Agents
-
-**From the UI:**
-1. Go to **Agents** → **Create Agent**
-2. Pick a template (Researcher, Coder, Analyst, Writer, Personal Assistant)
-3. Edit the identity files as needed
-4. Start chatting
-
-**Via API:**
+**API Method:**
 ```bash
-# Create from template
-curl -X POST http://localhost:8010/api/v1/agents/runtime/create-from-template \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"template": "researcher", "name": "my-researcher"}'
-
-# Edit a file
-curl -X PUT http://localhost:8010/api/v1/agents/runtime/my-researcher/files/TOOLS.md \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: text/markdown" \
-  -d '## LLM Provider\nprovider: ollama\nmodel: deepseek-r1:8b'
+POST /api/v1/agents/runtime/create-from-template
+PUT /api/v1/agents/runtime/{id}/files/AGENT.md
 ```
 
-### Agent Templates
+### Built-in Agent Templates
 
-| Template | Purpose | Best LLM |
-|----------|---------|----------|
+| Name | Purpose | Best LLM |
+|------|---------|----------|
 | **Researcher** | Web research, fact-checking | qwen2.5-coder:7b |
 | **Coder** | Code generation, debugging | qwen2.5-coder:7b |
-| **Analyst** | Data analysis, reports | llama3.1:8b |
+| **Analyst** | Data analysis, reporting | llama3.1:8b |
 | **Writer** | Content creation, editing | llama3.1:8b |
 | **Personal Assistant** | General tasks, scheduling | qwen2.5-coder:7b |
 
-### Switching LLM Providers
+### Recommended Models
 
-Change the provider and model in TOOLS.md:
+| Model | Provider | Use Case |
+|-------|----------|----------|
+| `qwen2.5-coder:7b` | Ollama | Tool calling, code, reasoning |
+| `deepseek-r1:8b` | Ollama | Deep reasoning, analysis |
+| `llama3.1:8b` | Ollama | General-purpose |
+| `gpt-4o-mini` | OpenAI | Fast, cheap, capable |
+| `claude-sonnet-4-20250514` | Anthropic | Best reasoning |
 
-```markdown
-## LLM Provider
-provider: openai           # ollama | openai | anthropic | google
-model: gpt-4o-mini
-base_url:                  # auto-detected for ollama; set for others
-api_key: sk-xxx            # not needed for ollama
-```
+## 🔒 Security
 
-**Provider base URLs (auto-detected for Ollama):**
-- Ollama: `http://host.docker.internal:11434/v1` (automatic)
-- OpenAI: `https://api.openai.com/v1`
-- Anthropic: `https://api.anthropic.com/v1`
-- Google: `https://generativelanguage.googleapis.com/v1beta`
+- **JWT Authentication** — Required on all CRUD endpoints with bcrypt-hashed passwords
+- **Rate Limiting** — Per-agent (100k tokens/day), per-user (1000 req/day), per-minute (10 req)
+- **Tool Sandboxing** — Restricted filesystem, timeouts, output truncation, approval gates
+- **Prompt Injection Defense** — Input sanitization, output validation
+- **Tool Approval Flow** — Destructive operations require human confirmation
+- **HMAC Webhooks** — Signature verification on incoming webhook events
+- **Audit Logging** — Every agent decision logged with 90-day retention
+- **Persistent Secrets** — JWT secret survives container restarts
 
-## Security
+---
 
-- **JWT authentication** — Required on all CRUD endpoints
-- **Rate limiting** — Auth: 5/min, Write: 30/min, Read: 60/min, Per-agent limits
-- **Persistent JWT secret** — Survives container restarts
-- **Tool sandboxing** — Filesystem restrictions, timeouts, output truncation
-- **Prompt injection defense** — Input/output sanitization
-- **Tool approval flow** — Destructive operations require human confirmation
-- **HMAC webhooks** — Signature verification on incoming webhooks
-- **Audit logging** — Every agent decision logged
+## 📚 API & Documentation
 
-## API Endpoints
+**86 REST Endpoints** across 9 routers:
+- **Authentication** — Register, login, refresh, logout, password reset
+- **Objects & Blocks** — CRUD for notes, tasks, and structured content
+- **Agents & Runtime** — Create, configure, and chat with agents
+- **Scheduling & Webhooks** — Cron tasks and event triggers
+- **Search** — Semantic search with vector embeddings
+- **System** — Health checks, logs, settings
 
-### Authentication
-- `POST /api/v1/auth/register` — Create account
-- `POST /api/v1/auth/login` — Login → access_token + refresh_token
-- `POST /api/v1/auth/refresh` — Refresh token
-- `POST /api/v1/auth/logout` — Logout
+**Interactive Docs:**
+- Swagger UI: `http://localhost:8010/docs`
+- ReDoc: `http://localhost:8010/redoc`
 
-### Objects
-- `GET/POST /api/v1/objects` — List/Create
-- `GET/PUT/DELETE /api/v1/objects/{id}` — CRUD
+**Full API Reference:**
+See [API.md](docs/API.md) for complete endpoint documentation with examples.
 
-### Blocks
-- `GET /api/v1/blocks/object/{object_id}` — Get blocks
-- `POST /api/v1/blocks` — Create block
-- `PUT /api/v1/blocks/{id}` — Update block
-- `POST /api/v1/blocks/batch-update` — Batch update
-
-### Tasks
-- `GET /api/v1/tasks` — List tasks
-- `POST /api/v1/tasks/{id}/assign` — Assign to agent
-- `POST /api/v1/tasks/{id}/status` — Update status
-
-### Agent Runtime
-- `POST /api/v1/agents/runtime/chat` — Chat with agent (SSE stream)
-- `GET /api/v1/agents/runtime/cli-status` — CLI agent availability
-- `GET/POST/DELETE /api/v1/agents/runtime/sessions` — Session management
-- `GET/PUT /api/v1/agents/runtime/{id}/files/{name}` — Edit agent markdown files
-- `POST /api/v1/agents/runtime/{id}/curate-memory` — Trigger memory curation
-- `GET /api/v1/agents/runtime/templates` — List agent templates
-- `POST /api/v1/agents/runtime/create-from-template` — Create from template
-- `GET/POST/DELETE /api/v1/agents/runtime/schedule` — Scheduled tasks
-- `GET/POST/DELETE /api/v1/agents/runtime/webhooks` — Webhook management
-- `GET /api/v1/agents/runtime/{id}/audit` — Audit log
-- `GET /api/v1/agents/runtime/{id}/usage` — Token usage stats
-
-### MCP Server Management
-- `GET /api/v1/agents/runtime/mcp/servers` — List MCP servers
-- `POST /api/v1/agents/runtime/mcp/servers` — Add server
-- `DELETE /api/v1/agents/runtime/mcp/servers/{name}` — Remove server
-- `POST /api/v1/agents/runtime/mcp/servers/{name}/connect` — Connect
-- `POST /api/v1/agents/runtime/mcp/test` — Test connection
-
-### Search (optional auth)
-- `GET /api/v1/search?q={query}` — Semantic search
-- `GET /api/v1/search/similar/{id}` — Find similar
-
-### System
-- `GET /api/v1/system/status` — System health
-- `GET /api/v1/system/logs` — Structured logs
-- `GET /api/v1/settings` — Settings
-- `PUT /api/v1/settings` — Update settings
-
-### WebSockets
-- `ws://localhost:8010/ws/system` — System updates
+**WebSocket Endpoints:**
+- `ws://localhost:8010/ws/system` — System updates, logs, events
 - `ws://localhost:8010/ws/agents/{name}` — Agent-specific updates
 
-## Development
+## 🛠️ Development
 
-### Docker Compose
-
-```bash
-docker compose up -d --build      # Start all services
-docker compose down -v             # Stop and remove volumes (fresh start)
-docker compose logs -f backend     # Backend logs
-docker compose exec backend python -m pytest --tb=short  # Run tests
-```
-
-### Frontend Development
+### Quick Start (Docker)
 
 ```bash
-cd frontend
-npm install
-VITE_API_URL=http://127.0.0.1:8010 npm run dev
+docker compose up -d --build        # Start all services
+docker compose logs -f backend      # View logs
+docker compose down -v              # Stop & clean
 ```
 
-## Tech Stack
+### Manual Development
+
+```bash
+# Backend
+cd backend && python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload
+
+# Frontend (new terminal)
+cd frontend && npm install && npm run dev
+
+# Qdrant (new terminal)
+docker run -p 6333:6333 qdrant/qdrant
+
+# Ollama (new terminal)
+ollama serve
+```
+
+### Testing
+
+```bash
+# Run tests
+pytest backend/tests/
+
+# Frontend tests
+npm test
+
+# With coverage
+pytest --cov=app backend/
+```
+
+**See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed setup and contribution guidelines.**
+
+---
+
+## 💻 Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui |
-| Backend | FastAPI, Python 3.11+, Pydantic v2 |
-| Vector DB | Qdrant (8 collections) |
-| Database | SQLite (aiosqlite) |
-| LLM | Ollama (default), OpenAI, Anthropic, Google |
-| Agent Runtime | ReAct loop, MCP client, CLI delegation |
-| Auth | JWT + bcrypt, rate limiting via slowapi |
-| Logging | structlog (JSON), rotating file handler |
-| PWA | vite-plugin-pwa, Workbox |
-| Real-time | WebSocket + SSE streaming |
+| **Frontend** | React 18, TypeScript, Vite, Tailwind, shadcn/ui |
+| **Backend** | FastAPI, Python 3.11+, Pydantic v2 |
+| **Vector DB** | Qdrant (384-dim embeddings) |
+| **SQL Database** | SQLite with Alembic migrations |
+| **LLM** | Ollama, OpenAI, Anthropic, Google |
+| **Agent Runtime** | ReAct loop, MCP client, tool sandboxing |
+| **Auth** | JWT + bcrypt, slowapi rate limiting |
+| **Logging** | structlog JSON with file rotation |
+| **Real-time** | WebSocket + Server-Sent Events |
+| **PWA** | vite-plugin-pwa, Workbox offline support |
 
-## License
+---
 
-MIT License — See LICENSE file
+## 📖 Documentation
 
-## Contributing
+Complete documentation suite available in `docs/`:
+
+- **[INSTALLATION.md](docs/INSTALLATION.md)** — Setup guides (Docker, local)
+- **[CONFIGURATION.md](docs/CONFIGURATION.md)** — Environment variables
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** — System design & component overview
+- **[API.md](docs/API.md)** — All 86 endpoints with examples
+- **[AGENT_SYSTEM.md](docs/AGENT_SYSTEM.md)** — Agent building guide
+- **[DATABASE.md](docs/DATABASE.md)** — Schema reference
+- **[DEVELOPMENT.md](docs/DEVELOPMENT.md)** — Contributing & dev workflow
+- **[DEPLOYMENT.md](docs/DEPLOYMENT.md)** — Production deployment
+
+**Quick Links:**
+- Project Context: [CLAUDE.md](CLAUDE.md)
+- License: [MIT](LICENSE)
+- Issues: [GitHub Issues](https://github.com/ghively/knowledge-os/issues)
+
+---
+
+## 📝 License
+
+MIT License — See [LICENSE](LICENSE) file
+
+## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+2. Create a feature branch (`git checkout -b feature/description`)
+3. Make changes and test thoroughly
+4. Commit with clear messages (`git commit -m "feat: description"`)
+5. Push to your branch (`git push origin feature/description`)
+6. Open a Pull Request
+
+See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed contribution guidelines.
