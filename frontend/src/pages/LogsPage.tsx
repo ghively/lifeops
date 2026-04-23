@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { logger, type FrontendLogEntry } from '@/lib/logger'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { getSystemWsUrl } from '@/lib/wsUrl'
 import { systemApi, type SystemLogEntry, type SystemStatus } from '@/services/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -25,19 +26,7 @@ interface DisplayLogEntry {
   data?: Record<string, unknown>
 }
 
-const LOG_WS_URL = (() => {
-  const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined
-  if (configuredApiUrl) {
-    return `${configuredApiUrl.replace(/^http/, 'ws')}/ws/system`
-  }
-
-  if (typeof window !== 'undefined') {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/ws/system`
-  }
-
-  return '/ws/system'
-})()
+const LOG_WS_URL = getSystemWsUrl()
 
 function normalizeFrontendLog(entry: FrontendLogEntry): DisplayLogEntry {
   return {

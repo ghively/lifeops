@@ -306,7 +306,13 @@ def mock_sqlite_manager():
         params = params or ()
 
         if "insert into users" in normalized_query:
-            user_id, email, username, display_name, hashed_password, is_active, created_at, updated_at = params
+            # Auth service INSERT hardcodes is_active=1 and passes 7 params.
+            # Some callers may pass 8 (explicit is_active) — accept both.
+            if len(params) == 7:
+                user_id, email, username, display_name, hashed_password, created_at, updated_at = params
+                is_active = 1
+            else:
+                user_id, email, username, display_name, hashed_password, is_active, created_at, updated_at = params
             storage["users"][user_id] = {
                 "id": user_id,
                 "email": email,
@@ -696,6 +702,8 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
         stack.enter_context(patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(backup_service, "run_backup", AsyncMock(return_value=None)))
 
+        from datetime import datetime
+
         async def fake_current_user():
             return {
                 "id": "test-user-id",
@@ -703,6 +711,8 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
                 "username": "test-user",
                 "display_name": "Test User",
                 "is_active": True,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
             }
 
         limiter_enabled = getattr(app.state.limiter, "enabled", True)
@@ -790,6 +800,8 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
         stack.enter_context(patch.object(file_watcher_service, "remove_folder", AsyncMock(return_value=None)))
         stack.enter_context(patch.object(backup_service, "run_backup", AsyncMock(return_value=None)))
 
+        from datetime import datetime
+
         async def fake_current_user():
             return {
                 "id": "test-user-id",
@@ -797,6 +809,8 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
                 "username": "test-user",
                 "display_name": "Test User",
                 "is_active": True,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
             }
 
         limiter_enabled = getattr(app.state.limiter, "enabled", True)

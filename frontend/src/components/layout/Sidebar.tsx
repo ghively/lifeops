@@ -21,8 +21,10 @@ import {
   agentsApi,
   objectsApi,
   settingsApi,
+  tasksApi,
   type AgentItem,
   type ObjectItem,
+  type TaskItem,
 } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
@@ -106,10 +108,37 @@ export function Sidebar({
   })
   const recentObjects: ObjectItem[] = recentObjectsData?.objects ?? []
 
-  // Counts shown next to nav items (lightweight; uses what's already fetched)
+  const { data: tasksData } = useQuery({
+    queryKey: ['tasks', 'sidebar-counts'],
+    queryFn: () => tasksApi.list(),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  })
+  const tasks: TaskItem[] = (tasksData?.tasks ?? []) as TaskItem[]
+
   const totalObjects = recentObjectsData?.total ?? recentObjects.length
   const agentCount = agents.length
-  const todayCount = quickLinks.length // placeholder badge to match design spirit
+
+  // Today = tasks due today or overdue and not yet done
+  const endOfToday = (() => {
+    const d = new Date()
+    d.setHours(23, 59, 59, 999)
+    return d
+  })()
+  const todayCount = tasks.filter((t) => {
+    const status = t.properties?.status
+    if (status === 'done') return false
+    const due = t.properties?.due_date
+    if (!due) return false
+    const parsed = new Date(due)
+    return !Number.isNaN(parsed.getTime()) && parsed <= endOfToday
+  }).length
+
+  // Inbox = tasks still in `todo` with no due date (unprocessed)
+  const inboxCount = tasks.filter((t) => {
+    const status = t.properties?.status
+    return status === 'todo' && !t.properties?.due_date
+  }).length
 
   if (!isMobile && collapsed) {
     return (
@@ -224,11 +253,11 @@ export function Sidebar({
                   >
                     <q.icon className="kos-nav-ico" size={16} />
                     <span>{q.name}</span>
-                    {q.id === 'today' && (
+                    {q.id === 'today' && todayCount > 0 && (
                       <span className="kos-nav-count">{todayCount}</span>
                     )}
-                    {q.id === 'inbox' && (
-                      <span className="kos-nav-count">3</span>
+                    {q.id === 'inbox' && inboxCount > 0 && (
+                      <span className="kos-nav-count">{inboxCount}</span>
                     )}
                   </Link>
                 )

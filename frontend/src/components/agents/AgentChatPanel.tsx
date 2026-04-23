@@ -38,7 +38,7 @@ export function AgentChatPanel({ agent, isOpen, onClose }: AgentChatPanelProps) 
   // WebSocket for real-time updates
   const { lastMessage, connectionStatus } = useWebSocket(
     agent
-      ? `${(import.meta.env.VITE_API_URL || window.location.origin).replace(/^http/, 'ws')}/ws/agents/${agent.name}`
+      ? `${(import.meta.env.VITE_API_URL || window.location.origin).replace(/^http/, 'ws')}/api/v1/ws/agents/${agent.name}`
       : null
   )
 

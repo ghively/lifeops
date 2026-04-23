@@ -210,6 +210,11 @@ async def request_password_reset(request: Request, data: PasswordResetRequest):
     # In production, send email with reset token
     logger.info(f"Password reset requested for: {data.email}")
 
+    # Never expose the raw reset token in the HTTP response — that would be a
+    # privilege-escalation vector if an attacker can trigger password resets for
+    # other users and read the response. Dev UIs / e2e harnesses should retrieve the
+    # token from the server-side log or from a real mail transport.
+    del reset_token
     return {
         "message": "If an account with this email exists, a password reset token has been sent",
     }

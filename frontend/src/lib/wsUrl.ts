@@ -3,7 +3,7 @@
  * Used by useWebSocket hook, websocket store, and collaboration service.
  */
 
-const DEFAULT_WS_PATH = '/ws/system'
+const DEFAULT_WS_PATH = '/api/v1/ws/system'
 
 function buildBaseUrl(): string {
   const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined
@@ -26,7 +26,7 @@ export function getSystemWsUrl(): string {
 
 /**
  * Get a WebSocket URL for a given path, with optional auth token.
- * @param path - e.g. "/ws/system" or "/api/v1/collaboration/ws/{objectId}"
+ * @param path - e.g. "/api/v1/ws/system" or "/api/v1/collaboration/ws/{objectId}"
  * @param token - optional access token to append as query param
  */
 export function getWsUrl(path: string, token?: string | null): string {
