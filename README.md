@@ -1,6 +1,5 @@
 # Knowledge OS
 
-[![Tests](https://img.shields.io/badge/tests-pass-brightgreen)](#testing)
 [![Version](https://img.shields.io/badge/version-v0.3.0-blue)](#version-history)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen)](#status)
