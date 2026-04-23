@@ -1,53 +1,132 @@
 # Knowledge OS
 
-[![Tests](https://img.shields.io/badge/tests-289%20passing-brightgreen)](https://github.com/ghively/knowledge-os)
-[![Version](https://img.shields.io/badge/version-v0.3.0-blue)](https://github.com/ghively/knowledge-os/releases)
+[![Tests](https://img.shields.io/badge/tests-pass-brightgreen)](#testing)
+[![Version](https://img.shields.io/badge/version-v0.3.0-blue)](#version-history)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen)](#status)
 
-A **knowledge management system** with a built-in AI agent runtime. Create objects, take notes, manage tasks, and chat with AI agents — works with any LLM provider.
+A **production-ready knowledge management system** with an integrated AI agent runtime. Create objects, take notes, manage tasks, and chat with autonomous AI agents — compatible with any LLM provider.
 
-## Features
+**Latest:** v0.3.0 | **Updated:** April 2026 | **Status:** ✅ Production Ready
 
-### Knowledge Management
-- **Object-based notes** — Everything is an object (page, task, person, book, meeting, agent, file, folder, image, code)
-- **Block-based outliner editor** — Logseq/Roam-style with unlimited nesting depth, slash commands, and block references
-- **Semantic search** — Find content by meaning, not just keywords (Qdrant vector DB)
-- **Real-time updates** — WebSocket-powered live collaboration
-- **#tags and @mentions** — Auto-parsed from content, stored as structured properties
-- **File management** — Auto-index from watched folders, PDF/markdown/code/image support
+---
 
-### AI Agent System (v0.3.0)
-- **Markdown-first agent identity** — Define agents with AGENT.md, SOUL.md, MEMORY.md, TOOLS.md (like OpenClaw)
-- **Multi-provider LLM routing** — Ollama (default), OpenAI, Anthropic, Google — swap without changing agent code
-- **ReAct agent loop** — Agents think, use tools, observe, and loop until done
-- **CLI agent delegation** — Agents delegate to Codex, Claude Code, Kimi CLI, or Gemini CLI as tools
-- **MCP server support** — Connect external tool servers (Brave Search, filesystem, etc.)
-- **Auto-memory** — Daily logs, Qdrant semantic retrieval, periodic MEMORY.md curation
-- **Sub-agent spawning** — Parallel sub-agent execution with depth limits
-- **Streaming responses** — Real-time SSE streaming with tool call indicators
-- **Scheduled tasks** — Autonomous background execution (cron-like scheduling)
-- **Webhook triggers** — External events can trigger agent actions
-- **Agent templates** — Pre-built configs: Researcher, Coder, Analyst, Writer, Personal Assistant
-- **Tool approval flow** — Destructive operations require human confirmation
-- **Rate limiting & budgets** — Per-agent token limits and usage tracking
-- **Comprehensive audit logging** — Every agent decision logged and queryable
+## 🌟 Key Features
 
-### PWA Support
-- **Installable** — Add to home screen on mobile/desktop
-- **Push notifications** — Browser notification support
-- **Responsive design** — Mobile-friendly UI with touch controls
+### 📚 Knowledge Management
+- **Object-Based Notes** — Everything is an object with type, properties, relationships
+- **Outliner Editor** — Block-based editing with unlimited nesting, slash commands, block references
+- **Semantic Search** — Find content by meaning using Qdrant vector DB (384-dim embeddings)
+- **Real-Time Collaboration** — WebSocket-powered live presence, cursor tracking, concurrent editing
+- **Wiki Links & Backlinks** — `[[Note Title]]` references with automatic backlink tracking
+- **Flexible Tagging** — `#tags` and `@mentions` auto-parsed and stored as structured properties
+- **File Management** — Real-time folder watching with automatic indexing
 
-### Logging & Monitoring
-- **Structured JSON logging** — structlog with request tracing (X-Request-ID)
-- **Log viewer UI** — Filter, search, auto-refresh, WebSocket streaming, JSON export
-- **System status endpoint** — Version, uptime, request counts, WebSocket connections
+### 🤖 AI Agent System (v0.3.0)
+- **Markdown-First Agent Identity** — AGENT.md, SOUL.md, MEMORY.md, TOOLS.md definitions
+- **Multi-Provider LLM Routing** — Ollama (default), OpenAI, Anthropic, Google without code changes
+- **ReAct Agent Loop** — Think → Tool → Observe execution pattern with max 10 iterations
+- **Tool Sandboxing** — Secure execution with filesystem restrictions, timeouts, approval gates
+- **MCP Integration** — Connect external tool servers (stdio and HTTP transports)
+- **Memory Management** — Semantic memory retrieval, daily curation, MEMORY.md auto-update
+- **Sub-Agent Spawning** — Parallel execution with depth limits
+- **Streaming Responses** — Real-time SSE streaming with tool call indicators
+- **Scheduled Tasks** — Cron-based autonomous background execution
+- **Webhook Triggers** — External events trigger agent actions with HMAC verification
+- **Agent Templates** — Pre-built: Researcher, Coder, Analyst, Writer, Personal Assistant
+- **Tool Approval Flow** — Human-in-the-loop for destructive operations
+- **Rate Limiting** — Per-agent (100k tokens/day), per-user (1000 req/day), per-minute (10 req)
+- **Comprehensive Audit** — Every decision logged with 90-day retention
 
-## Architecture
+### 🎯 Smart Features
+- **Automatic Context Gathering** — Includes parents, links, files, memories
+- **File Format Support** — PDF (PyMuPDF), Word (docx), Code (AST), Images (CLIP)
+- **Multiple Backup Strategies** — Qdrant snapshots, Markdown export, Git sync
+- **Structured Logging** — JSON logs with request tracing, WebSocket broadcasting, retention
+- **PWA Support** — Installable app, push notifications, mobile-responsive
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- Qdrant (local or Docker)
+- LLM provider: Ollama (default, local) or API key (OpenAI/Anthropic/Google)
+
+### 30-Second Setup
+
+```bash
+# 1. Clone and enter directory
+git clone https://github.com/ghively/knowledge-os.git
+cd knowledge-os
+
+# 2. Run with Docker Compose (recommended)
+docker-compose up
+
+# 3. Open http://localhost:5173
+# Login with: demo / demo123
+```
+
+### Manual Setup
+
+```bash
+# Backend
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+export DATABASE_URL=sqlite:///knowledge_os.db
+export LOG_LEVEL=INFO
+python -m uvicorn app.main:app --reload
+
+# Frontend (new terminal)
+cd frontend
+npm install
+npm run dev
+
+# Qdrant (new terminal, or use Docker)
+docker run -p 6333:6333 qdrant/qdrant
+
+# Ollama (optional, new terminal)
+ollama run mistral
+```
+
+Open http://localhost:5173 → Register → Start creating notes!
+
+### First Steps
+
+1. **Create a Note** — Click "Notes", start typing, use `[[` to link
+2. **Try Search** — Click "Search", search by meaning not keywords
+3. **Chat with Agent** — Click "Agents", select "Researcher", send a message
+4. **View Logs** — Click "Logs" to see structured system logs
+5. **Configure Settings** — Click "Settings" to customize
+
+---
+
+## 📋 Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Frontend      │────▶│    Backend      │────▶│     Qdrant      │
-│  React/Vite     │     │   FastAPI       │     │  Vector DB      │
+┌──────────────────────────────────────────────────────────────┐
+│                     Knowledge OS                              │
+├──────────────────────────────────────────────────────────────┤
+│ Frontend (React 18 + TypeScript + Vite + Tailwind)            │
+│ ├─ Pages: Notes, Tasks, Files, Agents, Chat, Search, Logs    │
+│ ├─ Real-time: WebSocket for presence, cursors, events        │
+│ └─ Auth: JWT with automatic token refresh                    │
+├──────────────────────────────────────────────────────────────┤
+│ Backend (FastAPI + Python 3.11 + Pydantic)                    │
+│ ├─ Routers: Auth, Agents, Blocks, Objects, Tasks, Files...  │
+│ ├─ Services: Auth, Embedding, Collaboration, File Watching   │
+│ ├─ Agent Runtime: Loop, Memory, Tools, LLM Router, MCP      │
+│ └─ Middleware: Auth, Rate Limiting, Structured Logging       │
+├──────────────────────────────────────────────────────────────┤
+│ Data Layer                                                    │
+│ ├─ SQLite: Users, Sessions, Audit, Schedules, Webhooks      │
+│ ├─ Qdrant: Objects, Blocks, Files, Code, Images, Memories   │
+│ └─ File System: Agent definitions, watched folders          │
+└──────────────────────────────────────────────────────────────┘
+```
 │   Port: 3010    │◄────│   Port: 8010    │◄────│   Port: 6335    │
 └─────────────────┘     └────────┬────────┘     └─────────────────┘
                                 │
