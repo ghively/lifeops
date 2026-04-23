@@ -50,9 +50,20 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
   const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionId || null)
   const abortControllerRef = useRef<AbortController | null>(null)
 
+  // Re-sync messages when initialMessages content actually changes.
+  // Using the array reference alone infinite-loops when callers pass a fresh
+  // `[]` (or a newly built array) on every render.
+  const initialMessagesKey = useMemo(
+    () =>
+      initialMessages.length === 0
+        ? 'empty'
+        : `${initialMessages.length}|${initialMessages[0]?.id ?? ''}|${initialMessages[initialMessages.length - 1]?.id ?? ''}`,
+    [initialMessages],
+  )
   useEffect(() => {
     setMessages(initialMessages.map(mapHistoryMessage))
-  }, [initialMessages])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessagesKey])
 
   useEffect(() => {
     setActiveSessionId(sessionId || null)
