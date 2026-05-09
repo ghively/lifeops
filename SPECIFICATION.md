@@ -65,7 +65,7 @@ This section maps every requirement from our conversation to the specification.
 
 | Requirement | Source | Implementation | Status |
 |-------------|--------|----------------|--------|
-| **Task assignment to agents** | User request | `POST /api/tasks/{id}/assign` endpoint | ✅ |
+| **Task assignment to agents** | User request | `POST /api/v1/tasks/{id}/assign` endpoint | ✅ |
 | **Priority levels** (low, medium, high, urgent) | User request | `Priority` enum in models | ✅ |
 | **Status values** (todo, in-progress, blocked, review, done) | User request | `TaskStatus` enum, can go backwards | ✅ |
 | **Direct assignment** (medium/high/urgent) | User request | OpenClaw Gateway API call | ✅ |
@@ -83,7 +83,7 @@ This section maps every requirement from our conversation to the specification.
 | **Custom skill with API calls** | User request | `skills/knowledge-os/SKILL.md` | ✅ |
 | **Agent chat interface** | User request | `AgentsPage` with chat panel | ✅ |
 | **Sidebar + embedded chat** | User request | Collapsible sidebar + slide-over chat | ✅ |
-| **Chat without task** | User request | `POST /api/agents/{name}/chat` | ✅ |
+| **Chat without task** | User request | `POST /api/v1/agents/{name}/chat` | ✅ |
 | **Chat logs in Qdrant** | User request | `chat_logs` collection | ✅ |
 | **Agent status indicators** | User request | Status badges (active/idle/busy/offline) | ✅ |
 | **Real-time agent updates** | User request | WebSocket events for agent activity | ✅ |
@@ -593,7 +593,7 @@ CREATE TABLE agent_sessions (
 
 #### List Objects
 ```http
-GET /api/objects
+GET /api/v1/objects
 ```
 
 **Query Parameters:**
@@ -628,7 +628,7 @@ GET /api/objects
 
 #### Get Object
 ```http
-GET /api/objects/{id}
+GET /api/v1/objects/{id}
 ```
 
 **Response:**
@@ -646,7 +646,7 @@ GET /api/objects/{id}
 
 #### Create Object
 ```http
-POST /api/objects
+POST /api/v1/objects
 ```
 
 **Request Body:**
@@ -677,7 +677,7 @@ POST /api/objects
 
 #### Update Object
 ```http
-PUT /api/objects/{id}
+PUT /api/v1/objects/{id}
 ```
 
 **Request Body:**
@@ -692,7 +692,7 @@ PUT /api/objects/{id}
 
 #### Delete Object
 ```http
-DELETE /api/objects/{id}
+DELETE /api/v1/objects/{id}
 ```
 
 **Response:**
@@ -707,7 +707,7 @@ DELETE /api/objects/{id}
 
 #### Get Object Blocks
 ```http
-GET /api/blocks/object/{object_id}
+GET /api/v1/blocks/object/{object_id}
 ```
 
 **Response:**
@@ -739,7 +739,7 @@ GET /api/blocks/object/{object_id}
 
 #### Create Block
 ```http
-POST /api/blocks?object_id={object_id}
+POST /api/v1/blocks?object_id={object_id}
 ```
 
 **Request Body:**
@@ -754,7 +754,7 @@ POST /api/blocks?object_id={object_id}
 
 #### Update Block
 ```http
-PUT /api/blocks/{id}
+PUT /api/v1/blocks/{id}
 ```
 
 **Request Body:**
@@ -769,7 +769,7 @@ PUT /api/blocks/{id}
 
 #### Batch Update Blocks
 ```http
-POST /api/blocks/batch-update
+POST /api/v1/blocks/batch-update
 ```
 
 **Request Body:**
@@ -786,7 +786,7 @@ POST /api/blocks/batch-update
 
 #### List Tasks
 ```http
-GET /api/tasks
+GET /api/v1/tasks
 ```
 
 **Query Parameters:**
@@ -817,7 +817,7 @@ GET /api/tasks
 
 #### Assign Task
 ```http
-POST /api/tasks/{id}/assign
+POST /api/v1/tasks/{id}/assign
 ```
 
 **Request Body:**
@@ -843,7 +843,7 @@ POST /api/tasks/{id}/assign
 
 #### Update Task Status
 ```http
-POST /api/tasks/{id}/status
+POST /api/v1/tasks/{id}/status
 ```
 
 **Request Body:**
@@ -859,7 +859,7 @@ POST /api/tasks/{id}/status
 
 #### Get Task Context
 ```http
-GET /api/tasks/{id}/context
+GET /api/v1/tasks/{id}/context
 ```
 
 **Response:**
@@ -889,7 +889,7 @@ GET /api/tasks/{id}/context
 
 #### List Agents
 ```http
-GET /api/agents
+GET /api/v1/agents
 ```
 
 **Response:**
@@ -912,7 +912,7 @@ GET /api/agents
 
 #### Chat with Agent
 ```http
-POST /api/agents/{name}/chat
+POST /api/v1/agents/{name}/chat
 ```
 
 **Request Body:**
@@ -925,14 +925,14 @@ POST /api/agents/{name}/chat
 
 #### Get Chat History
 ```http
-GET /api/agents/{name}/chat?session_id={session_id}
+GET /api/v1/agents/{name}/chat?session_id={session_id}
 ```
 
 ### Search API
 
 #### Semantic Search
 ```http
-GET /api/search?q={query}&limit=10
+GET /api/v1/search?q={query}&limit=10
 ```
 
 **Response:**
@@ -953,7 +953,7 @@ GET /api/search?q={query}&limit=10
 
 #### Find Similar
 ```http
-GET /api/search/similar/{object_id}?limit=5
+GET /api/v1/search/similar/{object_id}?limit=5
 ```
 
 ---
@@ -1116,9 +1116,9 @@ Connect to: `ws://localhost:8000/ws`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/sessions/main/messages` | POST | Send message to agent |
-| `/api/sessions/{id}/history` | GET | Get session history |
-| `/api/agents/{name}/status` | GET | Get agent status |
+| `/api/v1/sessions/main/messages` | POST | Send message to agent |
+| `/api/v1/sessions/{id}/history` | GET | Get session history |
+| `/api/v1/agents/{name}/status` | GET | Get agent status |
 
 ### Task Assignment Flow
 
@@ -1136,7 +1136,7 @@ Connect to: `ws://localhost:8000/ws`
    • Recent chat
    ↓
 4. Backend calls OpenClaw Gateway
-   POST /api/sessions/main/messages
+   POST /api/v1/sessions/main/messages
    ↓
 5. Agent receives task + context
    ↓
@@ -1323,7 +1323,7 @@ tools:
 | `QDRANT_PORT` | 6333 | Qdrant port |
 | `QDRANT_API_KEY` | - | Qdrant API key |
 | `OPENCLAW_GATEWAY_URL` | http://localhost:18789 | OpenClaw URL |
-| `OPENCLAW_GATEWAY_TOKEN` | - | OpenClaw token |
+| `OPENCLAW_TOKEN` | - | OpenClaw token (alias: `OPENCLAW_GATEWAY_TOKEN`) |
 | `OPENCLAW_ENABLED` | true | Enable OpenClaw |
 | `EMBEDDING_MODEL` | all-MiniLM-L6-v2 | Text embedding model |
 | `CLIP_MODEL` | openai/clip-vit-base-patch32 | Image embedding model |

@@ -203,7 +203,6 @@ docs(api): update authentication documentation
 
 - Open an issue for questions
 - Join discussions in existing issues
-- Check the [FAQ](FAQ.md) (coming soon)
 
 ## License
 

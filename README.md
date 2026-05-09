@@ -6,7 +6,7 @@
 
 A **production-ready knowledge management system** with an integrated AI agent runtime. Create objects, take notes, manage tasks, and chat with autonomous AI agents — compatible with any LLM provider.
 
-**Latest:** v0.3.0 | **Updated:** April 2026 | **Status:** ✅ Production Ready
+**Latest:** v0.3.0 | **Updated:** May 2026 | **Status:** ✅ Production Ready
 
 ---
 
@@ -103,7 +103,7 @@ docker compose up -d --build
 │ • Auth: JWT with auto token refresh                  │
 ├──────────────────────────────────────────────────────┤
 │ Backend (FastAPI + Python 3.11)                      │
-│ • 86 REST endpoints organized in 9 routers           │
+│ • 86 REST endpoints organized in 13 routers          │
 │ • Agent Runtime: ReAct loop + Memory + Scheduling    │
 │ • Tool Sandboxing: Approval gates + Rate limits      │
 │ • Structured JSON logging + WebSocket broadcast      │
@@ -224,7 +224,7 @@ PUT /api/v1/agents/runtime/{id}/files/AGENT.md
 
 ## 📚 API & Documentation
 
-**86 REST Endpoints** across 9 routers:
+**86 REST Endpoints** across 13 routers:
 - **Authentication** — Register, login, refresh, logout, password reset
 - **Objects & Blocks** — CRUD for notes, tasks, and structured content
 - **Agents & Runtime** — Create, configure, and chat with agents

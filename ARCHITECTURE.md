@@ -250,7 +250,7 @@ Collections:
 
 ```
 1. User sends message
-   └─ POST /api/agents/{name}/chat
+   └─ POST /api/v1/agents/{name}/chat
 
 2. Session Management
    ├─ Create new or retrieve existing session
@@ -301,7 +301,7 @@ Collections:
 
 ```
 1. User enters search query
-   └─ POST /api/search?q=...&type=...
+   └─ POST /api/v1/search?q=...&type=...
 
 2. Query Preprocessing
    ├─ Clean and normalize text
@@ -416,11 +416,11 @@ All collections use **384-dimensional vectors** from `sentence-transformers/all-
 ### RESTful Conventions
 
 All APIs follow RESTful conventions:
-- `GET /api/resource` - List resources
-- `GET /api/resource/{id}` - Get single resource
-- `POST /api/resource` - Create resource
-- `PUT /api/resource/{id}` - Update resource
-- `DELETE /api/resource/{id}` - Delete resource
+- `GET /api/v1/resource` - List resources
+- `GET /api/v1/resource/{id}` - Get single resource
+- `POST /api/v1/resource` - Create resource
+- `PUT /api/v1/resource/{id}` - Update resource
+- `DELETE /api/v1/resource/{id}` - Delete resource
 
 ### Versioning
 
@@ -640,7 +640,7 @@ data: {"level":"info","message":"...","timestamp":"..."}
 
 ```
 1. Register/Login
-   ├─ POST /api/auth/register or /api/auth/login
+   ├─ POST /api/v1/auth/register or /api/v1/auth/login
    ├─ Validate credentials
    └─ Return { access_token, refresh_token }
 
@@ -656,13 +656,13 @@ data: {"level":"info","message":"...","timestamp":"..."}
 
 4. Token Refresh
    ├─ If access_token expired
-   ├─ POST /api/auth/refresh with refresh_token
+   ├─ POST /api/v1/auth/refresh with refresh_token
    ├─ Get new access_token
    ├─ Update localStorage
    └─ Retry original request
 
 5. Logout
-   ├─ POST /api/auth/logout
+   ├─ POST /api/v1/auth/logout
    ├─ Invalidate refresh_token in DB
    ├─ Delete tokens from localStorage
    └─ Redirect to login
@@ -680,7 +680,7 @@ Payload: {
   iat: 1682000000,
   exp: 1682003600
 }
-Signature: HMAC-SHA256(header.payload, SECRET_KEY)
+Signature: HMAC-SHA256(header.payload, JWT_SECRET_KEY)
 ```
 
 **Token Hashing (in DB):**

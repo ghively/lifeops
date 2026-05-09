@@ -416,7 +416,7 @@ DATABASE_URL=postgresql://...?pool_size=10
 
 ### Qdrant Configuration
 
-Custom Qdrant settings in `qdrant/config.yaml`:
+Custom Qdrant settings in `qdrant/config/production.yaml`:
 
 ```yaml
 storage:

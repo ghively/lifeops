@@ -127,7 +127,7 @@ docker push 123456789.dkr.ecr.us-east-1.amazonaws.com/knowledge-os-backend:lates
           "value": "redis://cache-host:6379"
         },
         {
-          "name": "SECRET_KEY",
+          "name": "JWT_SECRET_KEY",
           "value": "your-secret-key"
         }
       ],
@@ -216,7 +216,7 @@ services:
     environment:
       DATABASE_URL: postgresql://user:pass@postgres:5432/knowledge_os
       REDIS_URL: redis://redis:6379
-      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       DEBUG: "false"
     depends_on:
       - postgres
@@ -330,7 +330,7 @@ spec:
             secretKeyRef:
               name: db-credentials
               key: url
-        - name: SECRET_KEY
+        - name: JWT_SECRET_KEY
           valueFrom:
             secretKeyRef:
               name: app-secrets
