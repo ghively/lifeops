@@ -198,7 +198,7 @@ docker run -d \
   --name knowledge-os \
   -p 8000:8000 \
   -e DATABASE_URL=sqlite:///knowledge_os.db \
-  -e SECRET_KEY=your-secret \
+  -e JWT_SECRET_KEY=your-secret \
   -v /data:/app/data \
   knowledge-os:latest
 ```

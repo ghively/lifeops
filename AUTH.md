@@ -18,18 +18,25 @@ The authentication system provides:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | Auto-generated (dev only) |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token expiry time | `1440` (24 hours) |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token expiry time | `7` (days) |
+| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | Persisted to `<data_dir>/.jwt_secret` if unset |
+| `JWT_SECRET_FILE` | Override path for the persisted dev secret | `<data_dir>/.jwt_secret` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token expiry | `1440` (24 hours) |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token expiry | `7` (days) |
 | `RESET_TOKEN_EXPIRE_HOURS` | Password reset token expiry | `1` (hour) |
 
-**Important**: Set `JWT_SECRET_KEY` in production! A random key is generated for development only.
+**Important**: In production, `JWT_SECRET_KEY` is **required**. The backend
+refuses to start if it's unset and `DEBUG` is not `true`. In development,
+if `JWT_SECRET_KEY` is unset the service generates a 64-byte URL-safe
+secret and persists it to `<data_dir>/.jwt_secret` so tokens survive
+restarts. If that file write ever fails the secret falls back to an
+ephemeral one (and an explicit error is logged) — sessions will not
+survive restarts in that mode.
 
 ### API Endpoints
 
-All endpoints are prefixed with `/api/auth`.
+All endpoints are prefixed with `/api/v1/auth`.
 
-#### POST `/api/auth/register`
+#### POST `/api/v1/auth/register`
 Register a new user account.
 
 **Request:**
@@ -60,7 +67,7 @@ Register a new user account.
 }
 ```
 
-#### POST `/api/auth/login`
+#### POST `/api/v1/auth/login`
 Login with email and password.
 
 **Request:**
@@ -73,7 +80,7 @@ Login with email and password.
 
 **Response:** `TokenResponse` (same as register)
 
-#### POST `/api/auth/refresh`
+#### POST `/api/v1/auth/refresh`
 Refresh an access token using a refresh token.
 
 **Request:**
@@ -85,7 +92,7 @@ Refresh an access token using a refresh token.
 
 **Response:** `TokenResponse` (same as register)
 
-#### POST `/api/auth/logout`
+#### POST `/api/v1/auth/logout`
 Logout by invalidating the refresh token.
 
 **Request:**
@@ -102,7 +109,7 @@ Logout by invalidating the refresh token.
 }
 ```
 
-#### GET `/api/auth/me`
+#### GET `/api/v1/auth/me`
 Get the current authenticated user's profile.
 
 **Headers:** `Authorization: Bearer <access_token>`
@@ -119,7 +126,7 @@ Get the current authenticated user's profile.
 }
 ```
 
-#### POST `/api/auth/password-reset`
+#### POST `/api/v1/auth/password-reset`
 Request a password reset email.
 
 **Request:**
@@ -132,12 +139,16 @@ Request a password reset email.
 **Response:**
 ```json
 {
-  "message": "If an account with this email exists, a password reset token has been sent",
-  "_dev_token": "uuid"  // Only in development
+  "message": "If an account with this email exists, a password reset token has been sent"
 }
 ```
 
-#### POST `/api/auth/password-reset/confirm`
+> The endpoint never returns the reset token in the response body — even in
+> development. Tokens are delivered via the configured email transport (or
+> the application log if SMTP is not configured). This avoids accidental
+> token leaks via shared HAR files / dev tools.
+
+#### POST `/api/v1/auth/password-reset/confirm`
 Confirm a password reset with the token.
 
 **Request:**
@@ -292,12 +303,28 @@ Tokens are automatically:
 
 ## Security Considerations
 
-1. **JWT Secret**: Always set `JWT_SECRET_KEY` in production
-2. **HTTPS**: Use HTTPS in production to protect tokens in transit
-3. **Token Expiry**: Configure appropriate expiry times for your use case
-4. **Password Requirements**: Minimum 8 characters (enforced on frontend)
-5. **Password Reset**: Tokens expire after 1 hour by default
-6. **Refresh Tokens**: Stored hashed in database, can be revoked
+1. **JWT Secret**: `JWT_SECRET_KEY` is required in production — backend
+   refuses to start without it (unless `DEBUG=true`).
+2. **HTTPS**: Use HTTPS in production to protect tokens in transit.
+3. **Token expiry**: Access 24h, refresh 7d, reset 1h by default; tune via
+   env vars.
+4. **Refresh tokens** are stored as HMAC-SHA-256 hashes (not bcrypt — JWTs
+   are too long for bcrypt's 72-byte input limit). Legacy bcrypt-hashed
+   tokens are still verified for graceful rollover. Revocation works by
+   deleting the hash row.
+5. **Token rotation**: each access token includes a `jti` claim so two
+   tokens issued in the same second are distinct.
+6. **Password hashing**: bcrypt via `passlib`.
+7. **Rate limiting**: The auth endpoint group has stricter limits
+   (`5/minute`). The user-keyed limiter binds bad / expired tokens to
+   `(client_ip, sha256(token)[:16])` so an attacker rotating IPs while
+   reusing malformed tokens cannot dodge per-user caps. See
+   [SECURITY.md](SECURITY.md) for the per-process limiter caveat.
+8. **Tokens in localStorage**: the SPA stores access + refresh tokens in
+   `localStorage` for cross-tab persistence. This is XSS-exposed — the
+   bleach-based content sanitizer + nginx CSP are the primary mitigations.
+   Move to HttpOnly refresh cookies if you operate in a hostile
+   environment.
 
 ## Development Setup
 
@@ -329,26 +356,34 @@ npm run dev
 
 ## Testing
 
-In development, the password reset token is returned in the API response (`_dev_token` field) and logged to the console. In production, you would implement email sending.
+The auth flow has dedicated coverage:
 
-## Files Created/Modified
+- `backend/tests/test_auth.py`, `test_auth_integration.py` — unit and
+  integration tests for register / login / refresh / logout / password
+  reset / `/auth/me`.
+- `backend/tests/test_rate_limiter.py` — verifies the per-user keying
+  including the bad-token fingerprint binding.
+- `e2e/specs/00-anonymous/auth.spec.ts` — Playwright walks the register,
+  login, and reset-password flows in the real browser.
+- `e2e/specs/90-api/api-health.spec.ts` — verifies an unauthenticated read
+  of a protected endpoint returns 401, plus the agent-id traversal
+  regression.
 
-### Backend:
-- `backend/app/models/user.py` - User Pydantic models
-- `backend/app/services/auth.py` - AuthService (JWT, password hashing)
-- `backend/app/routers/auth.py` - Auth API endpoints
-- `backend/app/middleware/auth.py` - get_current_user dependency
-- `backend/app/config.py` - JWT settings
-- `backend/app/database/sqlite.py` - Auth tables
-- `backend/requirements.txt` - JWT dependencies
-- `backend/app/main.py` - Register auth router
+Reset tokens are not returned in the API response. To test the reset flow
+without a real SMTP server, point `LOG_LEVEL=DEBUG` and inspect the
+backend log — the token is logged so you can complete the flow locally.
 
-### Frontend:
-- `frontend/src/services/api.ts` - Auth API functions & interceptors
-- `frontend/src/stores/auth.ts` - Auth Zustand store
-- `frontend/src/pages/LoginPage.tsx` - Login/Register page
-- `frontend/src/pages/ResetPasswordPage.tsx` - Password reset page
-- `frontend/src/components/auth/ProtectedRoute.tsx` - Route protection
-- `frontend/src/components/ui/card.tsx` - Card UI component
-- `frontend/src/App.tsx` - Auth routes
-- `frontend/src/components/layout/Sidebar.tsx` - User info & logout
+## Source layout
+
+| Layer | Path |
+|---|---|
+| Models | `backend/app/models/user.py` |
+| Service | `backend/app/services/auth.py` |
+| Router | `backend/app/routers/auth.py` |
+| Middleware | `backend/app/middleware/auth.py`, `backend/app/middleware/rate_limit.py` |
+| Migrations | `backend/alembic/versions/0001_baseline_schema.py` |
+| Frontend store | `frontend/src/stores/auth.ts` |
+| Login UI | `frontend/src/pages/LoginPage.tsx` |
+| Reset UI | `frontend/src/pages/ResetPasswordPage.tsx` |
+| Route guard | `frontend/src/components/auth/ProtectedRoute.tsx` |
+| API client | `frontend/src/services/api.ts` (`authApi`) |

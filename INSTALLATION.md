@@ -179,8 +179,9 @@ MARKDOWN_EXPORT_ENABLED=true
 GIT_BACKUP_ENABLED=false
 
 # Security
-SECRET_KEY=your-secret-key-here-min-32-chars
+JWT_SECRET_KEY=your-secret-key-here-min-32-chars
 DEBUG=false
+CORS_ORIGINS=http://localhost:5173
 ```
 
 ### 6. LLM Setup

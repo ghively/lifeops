@@ -46,7 +46,7 @@ docker-compose up -d
 cd frontend && npm install && npm run dev
 
 # Backend
-cd backend && pip install -r requirements.txt && uvicorn main:app --reload
+cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload
 ```
 
 ## Making Changes
@@ -62,18 +62,31 @@ cd backend && pip install -r requirements.txt && uvicorn main:app --reload
 ### Before Submitting
 
 1. **Test your changes**
-   - Run the test suite
-   - Test manually in the Docker environment
-   - Check for console errors
+   ```bash
+   # Backend
+   cd backend && pytest
+
+   # Frontend
+   cd frontend && npm test
+
+   # E2E (with backend + frontend running locally — always exits 0,
+   # writes the result punch list to e2e/REPORT.md):
+   cd e2e && bash scripts/run-suite.sh
+   ```
 
 2. **Update documentation**
-   - Update README.md if needed
-   - Add JSDoc/docstring comments
-   - Update CHANGELOG.md
+   - Update README.md if user-facing
+   - Update the relevant top-level doc (API.md, AUTH.md, AGENT_SYSTEM.md, etc.)
+   - Add an entry to CHANGELOG.md under `[Unreleased]`
 
 3. **Check code quality**
-   - Frontend: `npm run lint`
-   - Backend: `flake8 . && black --check .`
+   ```bash
+   # Frontend
+   cd frontend && npm run lint && npx tsc --noEmit
+
+   # Backend (formatting via black; isort for import ordering):
+   cd backend && black --check . && isort --check-only .
+   ```
 
 ## Submitting Changes
 

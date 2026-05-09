@@ -149,25 +149,39 @@ OPENCLAW_TOKEN=...
 
 ### Security
 
-**SECRET_KEY** (Required for production)
+**JWT_SECRET_KEY** (Required for production)
 ```bash
-# Minimum 32 characters for JWT signing
-# Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
-SECRET_KEY=your-secret-key-min-32-chars
+# Used to sign JWTs. Backend refuses to start without it unless DEBUG=true.
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(64))"
+JWT_SECRET_KEY=your-secret-key-min-32-chars
+```
+
+**JWT_SECRET_FILE** (Optional)
+```bash
+# In dev (DEBUG=true), if JWT_SECRET_KEY is unset the backend persists a
+# generated secret to <data_dir>/.jwt_secret. Override the path here.
+JWT_SECRET_FILE=/var/lib/knowledge-os/.jwt_secret
 ```
 
 **DEBUG**
 ```bash
-# Development/debugging mode
-DEBUG=false  # Default - always false in production
-
-# Never set to true in production!
+# Development/debugging mode. Never set to true in production!
+DEBUG=false
 ```
 
-**ALLOWED_ORIGINS** (For CORS)
+**CORS_ORIGINS**
 ```bash
-# Comma-separated origins allowed
-ALLOWED_ORIGINS=http://localhost:5173,https://example.com
+# Comma-separated origins allowed for CORS.
+CORS_ORIGINS=http://localhost:5173,https://app.example.com
+```
+
+**KOS_SKIP_MIGRATIONS** (Docker only)
+```bash
+# When the backend container starts, backend/entrypoint.sh runs
+# `alembic upgrade head` automatically. Set this to 1 to skip — useful if
+# you run migrations from a separate job (Kubernetes init container,
+# CI pre-deploy step, etc.).
+KOS_SKIP_MIGRATIONS=0
 ```
 
 ### Email (Optional)
@@ -223,8 +237,9 @@ MARKDOWN_EXPORT_ENABLED=true
 GIT_BACKUP_ENABLED=false
 
 # Security
-SECRET_KEY=your-secret-key-here-min-32-chars
+JWT_SECRET_KEY=your-secret-key-here-min-32-chars
 DEBUG=false
+CORS_ORIGINS=http://localhost:5173
 ```
 
 ---
@@ -327,8 +342,10 @@ services:
       - LOG_LEVEL=INFO
       - AGENTS_ROOT=/app/agents
       - LLM_PROVIDER=ollama
-      - SECRET_KEY=your-secret-key-here
+      - JWT_SECRET_KEY=your-secret-key-here
       - DEBUG=false
+      # Skip auto-migrations if you run them from a separate job:
+      # - KOS_SKIP_MIGRATIONS=1
 
   frontend:
     environment:
@@ -370,8 +387,8 @@ OPENAI_API_KEY=sk-...
 
 # Security
 DEBUG=false
-SECRET_KEY=<strong-random-32-chars>
-ALLOWED_ORIGINS=https://example.com,https://www.example.com
+JWT_SECRET_KEY=<strong-random-32-chars>
+CORS_ORIGINS=https://example.com,https://www.example.com
 
 # Backup: Enable
 SNAPSHOT_INTERVAL_HOURS=12
@@ -412,15 +429,25 @@ service:
 
 ### Rate Limiting Customization
 
-Modify in `backend/app/middleware/rate_limit.py`:
+Defaults live in `backend/app/middleware/rate_limit.py`:
 
 ```python
-RATE_LIMITS = {
-    "default": "100/hour",
-    "agent_chat": "10/minute",
-    "search": "30/minute"
-}
+auth_rate_limit  = limiter.limit("5/minute")    # tighter for /auth/*
+read_rate_limit  = limiter.limit("60/minute")
+write_rate_limit = limiter.limit("30/minute")
 ```
+
+The user-keyed limiter (`user_limiter`) keys requests by:
+- `user:<sub>` for valid Bearer tokens
+- `badtoken:<ip>:<sha256(token)[:16]>` for malformed/expired tokens — so
+  rotating IPs while reusing a bad token cannot dodge the per-user cap
+- `<ip>` for purely unauthenticated requests
+
+Rate limiter storage is **in-memory per process**. With multiple Uvicorn
+workers each enforces its own bucket, so the effective cap is N × the
+configured limit. For a hard cap, run a single worker behind a proxy or
+swap `storage_uri="memory://"` for `storage_uri="redis://..."` on lines
+18 and 40 of `rate_limit.py`.
 
 ---
 
@@ -436,7 +463,7 @@ INFO: Log Level: INFO
 INFO: Agents Root: ./agents
 
 # If configuration is invalid:
-ERROR: SECRET_KEY must be at least 32 characters
+RuntimeError: JWT_SECRET_KEY is not set and DEBUG is not 'true'.
 ```
 
 ---

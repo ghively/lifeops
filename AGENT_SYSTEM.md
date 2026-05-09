@@ -253,6 +253,24 @@ POST /api/v1/agents/personal-assistant/chat
 
 ## Creating Custom Agents
 
+### Agent ID naming rules
+
+The agent's directory name doubles as its `agent_id` in every API call
+(`GET /api/v1/agents/runtime/{agent_id}/...`). To prevent path-traversal
+attacks the runtime validates `agent_id` against:
+
+```
+^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$
+```
+
+Allowed: letters, digits, `.`, `_`, `-`. First character must be
+alphanumeric. Max 64 characters. **Spaces, slashes, leading dots, and any
+form of `..` are rejected with a 400.**
+
+Examples:
+- ✅ `researcher`, `writer-v2`, `coder.python`, `agent_42`
+- ❌ `my agent` (space), `../escape`, `.hidden`, `slash/in/name`
+
 ### Step 1: Create Agent Directory
 
 ```bash
