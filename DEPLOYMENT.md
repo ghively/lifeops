@@ -21,9 +21,9 @@ Production deployment instructions for Knowledge OS.
 
 ## Pre-Deployment Checklist
 
-- [ ] All tests passing (`pytest`, `npm test`)
-- [ ] Environment variables configured
-- [ ] Database migrations applied
+- [ ] All tests passing (`pytest`, `npm test`, `e2e/scripts/run-suite.sh`)
+- [ ] Environment variables configured (`JWT_SECRET_KEY` is **required** in production — backend refuses to start without it unless `DEBUG=true`)
+- [ ] Database migrations applied (automatic — `backend/entrypoint.sh` runs `alembic upgrade head` on container start; set `KOS_SKIP_MIGRATIONS=1` to opt out)
 - [ ] SSL certificates obtained
 - [ ] Backups configured
 - [ ] Monitoring set up
@@ -396,6 +396,26 @@ kubectl logs -l app=knowledge-os-backend
 
 ## Database Setup
 
+### Migrations: automatic on container start
+
+The backend container's entrypoint (`backend/entrypoint.sh`) runs
+`alembic upgrade head` before the app process starts. For most deployments
+you do **not** need to run migrations manually — bringing up the container
+is sufficient.
+
+Opt out by setting `KOS_SKIP_MIGRATIONS=1` if you migrate from a separate
+job (e.g. a Kubernetes init container, a pre-deploy CI step, or a
+blue/green release script that wants migrations to happen exactly once
+ahead of the rolling update):
+
+```bash
+docker run -e KOS_SKIP_MIGRATIONS=1 ghcr.io/your-org/knowledge-os-backend:latest
+```
+
+When migrations run inside the entrypoint they execute as the application
+user (`appuser`), so the database file (for SQLite) inherits the right
+ownership.
+
 ### PostgreSQL Production
 
 ```bash
@@ -406,7 +426,8 @@ createuser knowledge -P
 # Grant privileges
 psql -c "GRANT ALL PRIVILEGES ON DATABASE knowledge_os TO knowledge"
 
-# Run migrations
+# Migrations — only needed if you set KOS_SKIP_MIGRATIONS=1; otherwise
+# the backend container runs this automatically on startup.
 alembic upgrade head
 
 # Verify

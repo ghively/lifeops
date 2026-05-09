@@ -201,6 +201,12 @@ ollama pull neural-chat  # High quality (13B params)
 curl http://localhost:11434/api/tags
 ```
 
+> **Note** — the cloud provider SDKs (`openai`, `anthropic`,
+> `google-generativeai`) are pinned in `backend/requirements.txt` and will
+> be installed automatically by `pip install -r requirements.txt`. You only
+> need the API key for the provider you actually use; the others can stay
+> unset.
+
 #### Option B: OpenAI
 
 ```bash
@@ -450,8 +456,8 @@ git pull origin main
 source venv/bin/activate
 pip install -r requirements.txt --upgrade
 
-# Run migrations
-cd backend
+# Run migrations (only needed for local non-Docker dev — the Docker
+# entrypoint runs this automatically; opt out with KOS_SKIP_MIGRATIONS=1).
 python -m alembic upgrade head
 ```
 
