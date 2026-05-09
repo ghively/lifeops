@@ -1,0 +1,20 @@
+{
+  "name": "knowledge-os-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end Playwright suite for Knowledge OS. Run with `npm run suite`.",
+  "scripts": {
+    "install-browsers": "playwright install --with-deps chromium",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "PWDEBUG=1 playwright test",
+    "report": "tsx scripts/generate-report.ts",
+    "suite": "bash scripts/run-suite.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}

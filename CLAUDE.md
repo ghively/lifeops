@@ -4,6 +4,22 @@ Session context and project information for Claude Code development.
 
 ---
 
+## ⚡ Read this first when the user asks "what's broken" / "what needs fixing"
+
+The end-to-end suite at `e2e/` writes a fresh report to `e2e/REPORT.md`
+every time it runs. **Whenever the user asks about e2e results, broken
+features, what to fix, or what the most recent run found — read
+`e2e/REPORT.md` before answering.** Do not re-run the suite, guess, or
+synthesize from memory; the file is the source of truth.
+
+If the user asks you to run the suite yourself, `cd e2e && bash
+scripts/run-suite.sh` regenerates the report. The runner assumes the
+backend (`http://localhost:8000`) and frontend (`http://localhost:5173`)
+are already up; override with `E2E_BACKEND_URL` / `E2E_FRONTEND_URL` if
+they're on different ports.
+
+---
+
 ## Project Overview
 
 **Knowledge OS** is a production-ready knowledge management system with an integrated AI agent runtime.
