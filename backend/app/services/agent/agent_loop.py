@@ -137,6 +137,25 @@ class AgentLoop:
 
         for iteration in range(self.max_iterations):
             warning = token_budget >= floor(model_context_window * 0.9)
+            # Pre-call budget check: refuse to send a request that already exceeds
+            # the configured cap, so we can fail with a structured error instead of
+            # discovering the overrun after the LLM has already burned tokens.
+            hard_cap = min(self.max_tokens, model_context_window)
+            if token_budget > hard_cap:
+                yield StreamingEvent(
+                    type="error",
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    data={"error": "token_budget_exceeded", "tokens": token_budget, "limit": hard_cap},
+                )
+                yield StreamingEvent(
+                    type="done",
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    message="",
+                    data={"token_usage": token_usage, "budget": allocation, "stopped_reason": "token_budget_exceeded"},
+                )
+                return
             yield StreamingEvent(
                 type="thinking",
                 session_id=session_id,
@@ -263,8 +282,8 @@ class AgentLoop:
                         data={**result.model_dump(), "tool_call_id": tool_call.get("id")},
                     )
                 token_budget = self._estimate_messages_tokens(messages)
-                if token_budget > min(self.max_tokens, model_context_window):
-                    raise RuntimeError("Token budget exceeded during tool loop")
+                # Budget check happens at top of next iteration so we yield a
+                # structured error event instead of raising into the caller.
                 continue
 
             content = response.get("content", "")
@@ -279,7 +298,20 @@ class AgentLoop:
             )
             return
 
-        raise RuntimeError("Max agent iterations exceeded")
+        # Max iterations reached without a terminal response.
+        yield StreamingEvent(
+            type="error",
+            session_id=session_id,
+            agent_id=agent_id,
+            data={"error": "max_iterations_exceeded", "iterations": self.max_iterations},
+        )
+        yield StreamingEvent(
+            type="done",
+            session_id=session_id,
+            agent_id=agent_id,
+            message="",
+            data={"token_usage": token_usage, "budget": allocation, "stopped_reason": "max_iterations_exceeded"},
+        )
 
     def _collect_stream(self, content: str) -> List[str]:
         if not content:

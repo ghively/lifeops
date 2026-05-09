@@ -22,14 +22,27 @@ limiter = Limiter(
 
 
 def _user_id_key(request: Request) -> str:
-    """Key function for per-user rate limiting on authenticated endpoints."""
+    """Key function for per-user rate limiting on authenticated endpoints.
+
+    On authenticated endpoints the auth dependency runs first, so by the time
+    this key function executes the token has already been validated. To make
+    sure a malformed-token attacker can't downgrade themselves to the (looser)
+    per-IP bucket and dodge per-user limits, we key by IP+token-hash for any
+    request whose token is missing or undecodable. That keeps the limit tight
+    while still allowing legitimate unauthenticated traffic to be IP-limited.
+    """
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
         payload = auth_service.decode_token(token)
         if payload and payload.get("sub"):
             return f"user:{payload['sub']}"
-    # Fall back to IP if no valid token
+        if token:
+            # Bad/expired token: bind the bucket to (ip, token-fingerprint) so
+            # rotating IPs alone can't reset the counter.
+            import hashlib
+            fingerprint = hashlib.sha256(token.encode("utf-8", "replace")).hexdigest()[:16]
+            return f"badtoken:{get_remote_address(request)}:{fingerprint}"
     return get_remote_address(request)
 
 

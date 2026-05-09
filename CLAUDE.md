@@ -22,8 +22,8 @@ Session context and project information for Claude Code development.
 - **Databases:** SQLite + Qdrant (vector DB)
 - **Agents:** ReAct-style with multi-provider LLM support
 - **Real-time:** WebSocket for collaboration & events
-- **Tests:** 23 backend + 13 frontend + E2E tests
-- **Documentation:** 16 comprehensive guides (108 KB)
+- **Tests:** 33 backend test files (~320 test functions) + 21 frontend test files + 4 Playwright E2E specs
+- **Documentation:** 17 comprehensive guides (~190 KB)
 - **API Endpoints:** 86 documented endpoints
 
 ---
@@ -54,7 +54,7 @@ Session context and project information for Claude Code development.
 ### 4. API (86 endpoints)
 - `/api/v1/auth/` — Authentication (7 endpoints)
 - `/api/v1/agents/` — Agent management (5 endpoints)
-- `/api/v1/agent-runtime/` — Agent execution (40+ endpoints)
+- `/api/v1/agents/runtime/` — Agent execution (40+ endpoints; mounted via `agent_chat` router)
 - `/api/v1/objects/` — Content management (7 endpoints)
 - `/api/v1/blocks/` — Editor blocks (6 endpoints)
 - `/api/v1/tasks/` — Task management (6 endpoints)

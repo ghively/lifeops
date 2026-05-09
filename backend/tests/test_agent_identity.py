@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.services.agent.identity import IdentityLoader
 
 
@@ -58,3 +60,32 @@ temperature: 0.1
     (agent_dir / "MEMORY.md").write_text("Updated fact.", encoding="utf-8")
     identity2 = loader.load("tester")
     assert "Updated fact." in identity2.long_term_memory
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "../escape",
+        "..",
+        "foo/../bar",
+        "foo/bar",
+        "/etc/passwd",
+        "",
+        ".hidden",
+        "with space",
+        "x" * 200,
+    ],
+)
+def test_identity_loader_rejects_unsafe_agent_ids(tmp_path: Path, bad_id: str):
+    loader = IdentityLoader(tmp_path)
+    with pytest.raises(ValueError):
+        loader.agent_dir(bad_id)
+
+
+def test_identity_loader_rejects_unsafe_filename(tmp_path: Path):
+    loader = IdentityLoader(tmp_path)
+    loader.ensure_agent("safe-agent")
+    with pytest.raises(ValueError):
+        loader.get_file("safe-agent", "../AGENT.md")
+    with pytest.raises(ValueError):
+        loader.update_file("safe-agent", "../../etc/passwd", "pwned")
