@@ -62,7 +62,6 @@ export function useAgentChat({ agentId, sessionId, initialMessages = [] }: UseAg
   )
   useEffect(() => {
     setMessages(initialMessages.map(mapHistoryMessage))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMessagesKey])
 
   useEffect(() => {

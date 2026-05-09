@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -14,6 +15,26 @@ except ImportError:  # pragma: no cover - dependency installed in backend runtim
     yaml = None
 
 logger = logging.getLogger(__name__)
+
+_VALID_AGENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_VALID_AGENT_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _validate_agent_id(agent_id: str) -> str:
+    if not isinstance(agent_id, str) or not _VALID_AGENT_ID.match(agent_id):
+        raise ValueError(
+            f"Invalid agent_id {agent_id!r}: must match {_VALID_AGENT_ID.pattern}"
+        )
+    return agent_id
+
+
+def _validate_agent_filename(name: str) -> str:
+    if not isinstance(name, str) or not _VALID_AGENT_FILE.match(name):
+        raise ValueError(
+            f"Invalid agent file name {name!r}: must match {_VALID_AGENT_FILE.pattern}"
+        )
+    return name
+
 
 DEFAULT_AGENT_FILES = {
     "AGENT.md": """---
@@ -66,7 +87,14 @@ class IdentityLoader:
         self._cache: Dict[str, AgentIdentity] = {}
 
     def agent_dir(self, agent_id: str) -> Path:
-        return self.agents_root / agent_id
+        _validate_agent_id(agent_id)
+        root = self.agents_root.resolve()
+        candidate = (root / agent_id).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"agent_id {agent_id!r} resolves outside agents_root") from exc
+        return candidate
 
     def ensure_agent(self, agent_id: str) -> Path:
         agent_dir = self.agent_dir(agent_id)
@@ -99,9 +127,11 @@ class IdentityLoader:
         self._cache.pop(agent_id, None)
 
     def get_file(self, agent_id: str, name: str) -> str:
+        _validate_agent_filename(name)
         return (self.ensure_agent(agent_id) / name).read_text(encoding="utf-8")
 
     def update_file(self, agent_id: str, name: str, content: str) -> None:
+        _validate_agent_filename(name)
         (self.ensure_agent(agent_id) / name).write_text(content, encoding="utf-8")
         self._cache.pop(agent_id, None)
 

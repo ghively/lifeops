@@ -85,8 +85,9 @@ pytest backend/tests/
 # Frontend tests
 cd frontend && npm test
 
-# E2E tests
-cd e2e && npm test
+# E2E suite (requires backend + frontend running locally; always exits 0
+# and writes e2e/REPORT.md as the canonical "what's broken" artifact).
+cd e2e && bash scripts/run-suite.sh
 ```
 
 ### 3. Commit and Push
@@ -370,22 +371,45 @@ test('toggles sidebar', async () => {
 })
 ```
 
-### E2E Test Example
+### E2E Suite
+
+The Playwright suite at `e2e/` runs unattended (by an agent or CI) against
+a live stack and produces `e2e/REPORT.md` as the canonical "what's broken"
+artifact. 60 tests across 13 spec files cover every page, every read-side
+API endpoint, and per-page browser-error capture.
+
+```bash
+# Run the suite (assumes backend on :8000, frontend on :5173):
+cd e2e && bash scripts/run-suite.sh
+
+# Override URLs for a Docker stack on different ports:
+E2E_FRONTEND_URL=http://localhost:3010 \
+E2E_BACKEND_URL=http://localhost:8010 \
+bash scripts/run-suite.sh
+
+# Iterate on a single spec:
+cd e2e
+npx playwright test specs/30-tasks/tasks.spec.ts --headed
+```
+
+Adding a new spec — a feature spec lives under `e2e/specs/<NN-name>/` and
+runs as the authenticated user. Tests should use permissive selectors
+(role / placeholder / regex), and `test.skip()` rather than fail when a
+feature isn't yet present, so the report stays honest.
 
 ```typescript
-// e2e/tests/auth.spec.ts
+// e2e/specs/30-tasks/tasks.spec.ts (excerpt)
 import { test, expect } from '@playwright/test'
+import { FRONTEND_URL } from '../../helpers/env'
 
-test('user can login', async ({ page }) => {
-  await page.goto('http://localhost:5173')
-  
-  await page.fill('input[name="email"]', 'test@example.com')
-  await page.fill('input[name="password"]', 'password123')
-  await page.click('button[type="submit"]')
-  
-  await expect(page).toHaveURL('/notes')
+test('task creation control is reachable', async ({ page }) => {
+  await page.goto(`${FRONTEND_URL}/tasks`)
+  const createBtn = page.getByRole('button', { name: /new task|create/i }).first()
+  expect(await createBtn.isVisible().catch(() => false)).toBe(true)
 })
 ```
+
+See `e2e/README.md` for the full breakdown.
 
 ---
 

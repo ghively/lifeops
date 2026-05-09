@@ -211,8 +211,17 @@ class BackupService:
                 title = payload.get("title", "untitled")
                 content = payload.get("content", "")
 
-                filename = f"{result.id}.md"
+                # Defensive: even though Qdrant point IDs are normally UUIDs,
+                # strip any path components before writing.
+                safe_id = os.path.basename(str(result.id)).replace("..", "_")
+                if not safe_id or safe_id.startswith("."):
+                    safe_id = f"item_{abs(hash(str(result.id)))}"
+                filename = f"{safe_id}.md"
                 filepath = os.path.join(collection_dir, filename)
+                resolved = os.path.realpath(filepath)
+                if not resolved.startswith(os.path.realpath(collection_dir) + os.sep):
+                    logger.warning("Skipping export of %s: path escapes collection dir", result.id)
+                    continue
 
                 with open(filepath, "w", encoding="utf-8") as file_handle:
                     file_handle.write("---\n")

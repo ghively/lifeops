@@ -6,7 +6,7 @@
 
 A **production-ready knowledge management system** with an integrated AI agent runtime. Create objects, take notes, manage tasks, and chat with autonomous AI agents — compatible with any LLM provider.
 
-**Latest:** v0.3.0 | **Updated:** April 2026 | **Status:** ✅ Production Ready
+**Latest:** v0.3.0 | **Updated:** May 2026 | **Status:** ✅ Production Ready
 
 ---
 
@@ -103,7 +103,7 @@ docker compose up -d --build
 │ • Auth: JWT with auto token refresh                  │
 ├──────────────────────────────────────────────────────┤
 │ Backend (FastAPI + Python 3.11)                      │
-│ • 86 REST endpoints organized in 9 routers           │
+│ • 86 REST endpoints organized in 13 routers          │
 │ • Agent Runtime: ReAct loop + Memory + Scheduling    │
 │ • Tool Sandboxing: Approval gates + Rate limits      │
 │ • Structured JSON logging + WebSocket broadcast      │
@@ -224,7 +224,7 @@ PUT /api/v1/agents/runtime/{id}/files/AGENT.md
 
 ## 📚 API & Documentation
 
-**86 REST Endpoints** across 9 routers:
+**86 REST Endpoints** across 13 routers:
 - **Authentication** — Register, login, refresh, logout, password reset
 - **Objects & Blocks** — CRUD for notes, tasks, and structured content
 - **Agents & Runtime** — Create, configure, and chat with agents
@@ -237,7 +237,7 @@ PUT /api/v1/agents/runtime/{id}/files/AGENT.md
 - ReDoc: `http://localhost:8010/redoc`
 
 **Full API Reference:**
-See [API.md](docs/API.md) for complete endpoint documentation with examples.
+See [API.md](API.md) for complete endpoint documentation with examples.
 
 **WebSocket Endpoints:**
 - `ws://localhost:8010/ws/system` — System updates, logs, events
@@ -284,7 +284,25 @@ npm test
 pytest --cov=app backend/
 ```
 
-**See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed setup and contribution guidelines.**
+### End-to-End Testing
+
+A comprehensive Playwright suite at [`e2e/`](e2e/) exercises every page,
+every read-side API endpoint, and per-page browser-error capture (60
+tests across 13 spec files). It is designed to run unattended — by an
+agent or CI — against a live stack:
+
+```bash
+# With backend + frontend running (defaults: http://localhost:8000 and :5173)
+cd e2e
+bash scripts/run-suite.sh   # always exits 0
+cat REPORT.md               # canonical "what is broken" artifact
+```
+
+`e2e/REPORT.md` is regenerated on every run and committed to the repo, so
+the latest results are always visible. See [`e2e/README.md`](e2e/README.md)
+for the full breakdown.
+
+**See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed setup and contribution guidelines.**
 
 ---
 
@@ -307,16 +325,21 @@ pytest --cov=app backend/
 
 ## 📖 Documentation
 
-Complete documentation suite available in `docs/`:
+Complete documentation suite (top-level `.md` files):
 
-- **[INSTALLATION.md](docs/INSTALLATION.md)** — Setup guides (Docker, local)
-- **[CONFIGURATION.md](docs/CONFIGURATION.md)** — Environment variables
-- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** — System design & component overview
-- **[API.md](docs/API.md)** — All 86 endpoints with examples
-- **[AGENT_SYSTEM.md](docs/AGENT_SYSTEM.md)** — Agent building guide
-- **[DATABASE.md](docs/DATABASE.md)** — Schema reference
-- **[DEVELOPMENT.md](docs/DEVELOPMENT.md)** — Contributing & dev workflow
-- **[DEPLOYMENT.md](docs/DEPLOYMENT.md)** — Production deployment
+- **[INSTALLATION.md](INSTALLATION.md)** — Setup guides (Docker, local)
+- **[QUICKSTART.md](QUICKSTART.md)** — Five-minute walkthrough
+- **[CONFIGURATION.md](CONFIGURATION.md)** — Environment variables
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — System design & component overview
+- **[API.md](API.md)** — All 86 endpoints with examples
+- **[AGENT_SYSTEM.md](AGENT_SYSTEM.md)** — Agent building guide
+- **[AUTH.md](AUTH.md)** — Authentication & token model
+- **[DATABASE.md](DATABASE.md)** — Schema reference
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** — Contributing & dev workflow
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — Production deployment
+- **[SECURITY.md](SECURITY.md)** — Reporting issues & known limitations
+- **[CHANGELOG.md](CHANGELOG.md)** — Release history
+- **[e2e/REPORT.md](e2e/REPORT.md)** — Latest end-to-end test results (regenerated each run)
 
 **Quick Links:**
 - Project Context: [CLAUDE.md](CLAUDE.md)
@@ -338,4 +361,4 @@ MIT License — See [LICENSE](LICENSE) file
 5. Push to your branch (`git push origin feature/description`)
 6. Open a Pull Request
 
-See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed contribution guidelines.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed contribution guidelines.

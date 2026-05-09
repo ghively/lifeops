@@ -218,6 +218,7 @@ async def create_object(obj: ObjectCreate, request: Request, current_user: dict 
     embedding = await embedding_service.embed_text(content)
 
     properties = _merge_properties({}, obj.properties.model_dump(exclude_none=True) if obj.properties else {})
+    properties.setdefault("created_by", current_user.get("id") or current_user.get("username"))
     payload = {
         "id": object_id,
         "type": obj.type,

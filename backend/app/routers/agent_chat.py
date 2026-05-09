@@ -158,6 +158,24 @@ async def create_mcp_server(
             detail=f"Command '{parts[0]}' is not in the allowed binaries: {', '.join(sorted(safe_binaries))}",
         )
 
+    # Block flags that turn a whitelisted interpreter into an arbitrary code runner.
+    forbidden_flags = {
+        "-c", "--command",                      # python, node, deno
+        "-e", "--eval",                         # node, deno
+        "--print", "-p",                        # node
+        "--input-type",                         # node
+        "-m",                                   # python -m importable.module
+        "--allow-all", "-A",                    # deno
+        "--allow-run", "--allow-write", "--allow-read", "--allow-net",
+        "--unsafely-ignore-certificate-errors", # deno
+    }
+    for arg in parts[1:]:
+        if arg in forbidden_flags or arg.startswith("--eval=") or arg.startswith("--command="):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Command flag '{arg}' is not permitted; pass a script path instead",
+            )
+
     status = await get_agent_runtime().tool_registry.mcp_manager.configure_server(config, persist=True)
     if config.enabled and config.auto_connect:
         try:

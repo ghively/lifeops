@@ -87,7 +87,7 @@ Edit `backend/.env`:
 
 ```env
 OPENCLAW_GATEWAY_URL=http://localhost:18789
-OPENCLAW_GATEWAY_TOKEN=your-token-here
+OPENCLAW_TOKEN=your-token-here
 OPENCLAW_ENABLED=true
 ```
 
@@ -96,7 +96,7 @@ OPENCLAW_ENABLED=true
 Via Settings page or API:
 
 ```bash
-curl -X POST http://localhost:8000/api/settings/watched-folders \
+curl -X POST http://localhost:8000/api/v1/settings/watched-folders \
   -H "Content-Type: application/json" \
   -d '{
     "path": "/home/username/Documents",
@@ -153,10 +153,31 @@ Edit settings in the Settings page:
 
 ## API Examples
 
+> **All `/api/v1/*` endpoints require authentication.** Get a token by
+> registering or logging in, then pass it as a `Bearer` header on every
+> subsequent call.
+
+### Get an Access Token
+
+```bash
+# Register (one-time)
+curl -X POST http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","username":"you","password":"pass1234","full_name":"You"}'
+
+# Login (any time)
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"pass1234"}' | jq -r .access_token)
+```
+
+The `$TOKEN` variable below assumes you ran the snippet above.
+
 ### Create a Task
 
 ```bash
-curl -X POST http://localhost:8000/api/objects \
+curl -X POST http://localhost:8000/api/v1/objects \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "task",
@@ -173,7 +194,8 @@ curl -X POST http://localhost:8000/api/objects \
 ### Assign Task to Agent
 
 ```bash
-curl -X POST http://localhost:8000/api/tasks/{task_id}/assign \
+curl -X POST http://localhost:8000/api/v1/tasks/{task_id}/assign \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "task_id": "{task_id}",
@@ -186,7 +208,8 @@ curl -X POST http://localhost:8000/api/tasks/{task_id}/assign \
 ### Search
 
 ```bash
-curl "http://localhost:8000/api/search?q=vector%20databases&limit=10"
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/v1/search?q=vector%20databases&limit=10"
 ```
 
 ## Troubleshooting

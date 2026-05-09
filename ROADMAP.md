@@ -4,104 +4,94 @@ This document outlines the planned development roadmap for Knowledge OS.
 
 ## Version History
 
-### v0.1.0 (Current) - MVP Release ✅
-- [x] Object-based note system
+### v0.3.0 (Current) ✅ Production-ready
+
+- [x] Object-based note system (Qdrant + SQLite)
 - [x] Block-based outliner editor (Slate.js)
-- [x] Qdrant vector database integration (8 collections)
-- [x] OpenClaw agent integration
+- [x] Qdrant vector database integration (8 collections, 384-dim embeddings)
+- [x] Multi-provider LLM agents (Ollama, OpenAI, Anthropic, Google)
 - [x] Task assignment with priority routing
-- [x] Agent chat panel with WebSocket
-- [x] File watching and semantic indexing
-- [x] Semantic search
-- [x] Docker Compose setup
+- [x] Agent chat panel with WebSocket streaming
+- [x] File watching and semantic indexing (PDF, Word, Markdown, Code, Images)
+- [x] Semantic search across all collections
+- [x] Real-time collaborative editing (WebSocket)
+- [x] PWA support
+- [x] Docker Compose stack
+- [x] User authentication (JWT access + refresh, password reset)
+- [x] Protected API routes
+- [x] Per-user rate limiting
+- [x] OpenAPI / Swagger UI at `/docs`
+- [x] Alembic migrations (auto-applied on container start)
+- [x] Backup & export (Qdrant snapshots, markdown export, optional git sync)
+- [x] CI/CD pipeline (GitHub Actions: backend pytest, frontend vitest+tsc+build, Playwright smoke)
+- [x] Comprehensive Playwright e2e suite with auto-generated `e2e/REPORT.md`
+- [x] Security hardening (agent path-traversal, MCP flag denylist, rate-limit fingerprinting,
+      backup filename sanitization, hardened production Docker images)
+
+### v0.2.0 — Production Readiness ✅ (shipped 2026-04)
+
+- [x] User authentication system (JWT)
+- [x] Protected API routes
+- [x] Session management with refresh tokens
+- [x] Password reset flow
+- [x] Unit & integration tests (~320 backend test functions, 246 frontend)
+- [x] E2E tests with Playwright
+- [x] CI/CD test integration
+- [x] Pagination on list endpoints
+- [x] OpenAPI / Swagger
+- [x] Full documentation suite
+
+### v0.1.0 — MVP ✅ (shipped 2026-Q1)
+
+- [x] Object-based notes
+- [x] Outliner editor
+- [x] Qdrant integration
+- [x] Agent runtime with OpenClaw
 - [x] Real-time updates
 
-## Upcoming Versions
+## Upcoming
 
-### v0.2.0 - Production Readiness 🚧
+### v0.4.0 — Multi-Tenancy & Mobile 📱
 
-**Target: Q2 2026**
+**Target: 2026-Q3**
 
-#### Security & Authentication
-- [ ] User authentication system (JWT)
-- [ ] User registration and login
-- [ ] Protected API routes
-- [ ] Session management
-- [ ] Password reset
+#### True multi-tenant isolation
+- [ ] `user_id` filtering on every Qdrant query (objects, blocks, files, tasks)
+- [ ] Backfill migration for existing single-tenant data
+- [ ] Workspace abstraction (multiple users sharing a workspace)
+- [ ] Workspace invites and per-workspace permissions
 
-#### Testing
-- [ ] Unit tests for backend services (>80% coverage)
-- [ ] API endpoint tests
-- [ ] Frontend component tests
-- [ ] E2E tests with Playwright
-- [ ] CI/CD test integration
-
-#### Performance
-- [ ] Pagination for large datasets
-- [ ] Query optimization
-- [ ] Frontend caching
-- [ ] Lazy loading for images
-- [ ] Virtual scrolling for long lists
-
-#### Documentation
-- [ ] API documentation (OpenAPI/Swagger)
-- [ ] User guide
-- [ ] Developer documentation
-- [ ] Deployment guide
-
-### v0.3.0 - Collaboration & Mobile 📱
-
-**Target: Q3 2026**
-
-#### Collaboration
-- [ ] Real-time collaborative editing
-- [ ] User presence indicators
-- [ ] Conflict resolution (CRDT)
-- [ ] Comments on blocks
-- [ ] Activity feed
-
-#### Mobile
-- [ ] PWA support
-- [ ] Responsive mobile UI
-- [ ] Offline mode
+#### Mobile-first
+- [ ] Responsive editor for narrow viewports
+- [ ] Offline-first sync (service worker queueing writes)
 - [ ] Push notifications
-- [ ] Mobile-optimized editor
 
 #### Import/Export
-- [ ] Notion import
-- [ ] Obsidian import
-- [ ] Roam Research import
-- [ ] Markdown bulk export
+- [ ] Notion / Obsidian / Roam import
+- [ ] Bulk markdown export
 - [ ] JSON API export
 
-### v0.4.0 - AI Enhancements 🤖
+### v0.5.0 — AI Enhancements 🤖
 
-**Target: Q4 2026**
+**Target: 2026-Q4**
 
-#### AI Features
 - [ ] Auto-tagging suggestions
 - [ ] Content summarization
-- [ ] Smart linking suggestions
-- [ ] Writing assistant
-- [ ] Automatic categorization
+- [ ] Smart linking
+- [ ] Multi-agent orchestration (one agent calls another)
+- [ ] Agent workflows / scheduled chains
+- [ ] Agent marketplace / shareable agent definitions
 
-#### Agent Improvements
-- [ ] Multi-agent collaboration
-- [ ] Agent workflows
-- [ ] Custom agent skills
-- [ ] Agent marketplace
+### v1.0.0 — Stable Release 🎉
 
-### v1.0.0 - Stable Release 🎉
+**Target: 2027-Q1**
 
-**Target: Q1 2027**
-
-- [ ] Stable API
-- [ ] Plugin system
-- [ ] Theme support
-- [ ] Advanced permissions
-- [ ] Audit logging
-- [ ] Performance benchmarks
-- [ ] Security audit
+- [ ] Stable, versioned API contract
+- [ ] Plugin system (custom block types, custom tools, custom themes)
+- [ ] Advanced permission model (roles, scoped capabilities)
+- [ ] Distributed rate limiter (Redis-backed)
+- [ ] Performance benchmarks & published SLOs
+- [ ] Third-party security audit
 
 ## Future Ideas
 
@@ -111,25 +101,23 @@ This document outlines the planned development roadmap for Knowledge OS.
 - Custom themes
 - Workflow automation
 
-### Enterprise Features
-- SSO/SAML support
+### Enterprise
+- SSO / SAML
 - Advanced analytics
-- Compliance features
-- On-premise deployment options
+- Compliance reporting (SOC 2, ISO 27001)
+- On-premise deployment kits
 
 ### Advanced AI
 - Knowledge graph visualization
 - Semantic clustering
 - Automated insights
-- Natural language queries
+- Natural language queries against structured data
 
 ## Contributing
 
-Want to help shape the roadmap? 
-
-1. Open an issue with your feature request
-2. Join discussions on existing issues
-3. Submit PRs for roadmap items
+1. Open an issue with your feature request.
+2. Join discussions on existing issues.
+3. Submit PRs for roadmap items.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 

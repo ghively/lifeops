@@ -127,6 +127,16 @@ app.state.metrics = AppMetrics.create()
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Surface validation errors as 400 instead of leaking as 500."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc), "request_id": request_id},
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch-all for unhandled exceptions — log with full traceback, return structured 500."""

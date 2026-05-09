@@ -59,3 +59,33 @@ Knowledge OS includes several security features:
 - Security headers in nginx
 - Docker security best practices
 - Dependency scanning in CI/CD
+
+### Known Limitations
+
+**Tenancy model.** Knowledge OS is designed as a **single-tenant** system —
+one instance per user or trusted team. Authentication is enforced on every
+endpoint, but content objects (`objects`, `blocks`, `tasks`, `files`) are not
+filtered by `user_id` at the data layer. Every authenticated user can read,
+update, and delete every other user's content. The `created_by` field is
+populated for audit purposes but is **not** enforced for access control.
+
+If you need true multi-tenant isolation, run one Knowledge OS instance per
+tenant (separate SQLite + Qdrant volumes), or fork the project and add
+`user_id` filtering to every Qdrant query in `backend/app/routers/`.
+
+**Tokens in localStorage.** The web client stores JWTs in `localStorage` so
+they survive reloads. This is XSS-exposed — any successful XSS gives the
+attacker a long-lived token. We mitigate by sanitizing user-supplied content
+(`backend/app/utils/sanitize.py`) and shipping a strict CSP via nginx, but
+defense-in-depth recommends moving to HttpOnly refresh cookies if you operate
+a hostile environment.
+
+**Rate limiter is per-process.** The default in-memory rate limiter does not
+share state across Uvicorn workers. With N workers, the effective rate cap is
+N×. If you need a hard cap, run a single worker behind a reverse proxy that
+enforces rate limits, or wire a Redis-backed limiter.
+
+**MCP server creation is privileged.** Authenticated users can register MCP
+server commands that execute local binaries (`node`, `python`, etc.). The
+allowed binaries and flags are restricted (`backend/app/routers/agent_chat.py`),
+but treat MCP server creation as an admin-equivalent capability.

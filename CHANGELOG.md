@@ -4,6 +4,65 @@ All notable changes to Knowledge OS will be documented in this file.
 
 ## [Unreleased]
 
+### Security & Hardening (2026-05-09)
+
+- **Agent ID path traversal (CRITICAL)** — `backend/app/services/agent/identity.py`
+  now validates `agent_id` against a strict regex and resolves the path back
+  inside `agents_root` before any filesystem operation. Same treatment for
+  filenames passed to `get_file`/`update_file`. Previously a request like
+  `GET /api/v1/agents/runtime/../escape/files/AGENT.md` would walk outside
+  the sandbox; it's now a clean 400.
+- **MCP server registration** (`backend/app/routers/agent_chat.py`) now
+  rejects dangerous interpreter flags (`-c`, `-e`, `-m`, `--eval`, deno's
+  `--allow-*`, etc.) in addition to shell metacharacters. Whitelisted
+  binaries plus a flag denylist closes the "registered MCP server runs
+  arbitrary code" path.
+- **Rate-limit fallback** (`backend/app/middleware/rate_limit.py`) — bad/
+  expired tokens are bound to a `(ip, token-fingerprint)` bucket instead of
+  silently downgrading to per-IP. Stops attackers from rotating IPs while
+  reusing malformed tokens to dodge per-user caps.
+- **Agent loop token budget** (`backend/app/services/agent/agent_loop.py`)
+  is now checked at the top of each iteration. The loop yields a structured
+  `error`+`done` event pair instead of raising `RuntimeError` into the
+  streaming caller; same treatment for max-iterations.
+- **Backup export filenames** (`backend/app/services/backup.py`) sanitize
+  Qdrant point IDs through `os.path.basename` and refuse paths that escape
+  the collection directory.
+- **Object audit trail** (`backend/app/routers/objects.py`) — newly created
+  objects auto-populate `properties.created_by` from the authenticated user.
+- **Validation error mapping** (`backend/app/main.py`) — `ValueError`s from
+  validators now surface as 400 instead of leaking as 500.
+
+### Infra & Operations (2026-05-09)
+
+- **Auto-migration on container start** — `backend/entrypoint.sh` now runs
+  `alembic upgrade head` before the application starts. Set
+  `KOS_SKIP_MIGRATIONS=1` to opt out (e.g. when running migrations in a
+  separate job or against a DB that's already at head).
+- **LLM provider SDKs pinned** — `openai==1.59.6`, `anthropic==0.42.0`,
+  `google-generativeai==0.8.3` are now declared in `backend/requirements.txt`.
+  They were already imported dynamically by `agent/llm_router.py`; pinning
+  them makes the dependency explicit and reproducible.
+- **Frontend production image hardened** — `frontend/Dockerfile.prod` now
+  drops to the non-root `nginx` user with proper ownership of html/cache/
+  log/pid (matching `frontend/Dockerfile`).
+- **GitHub Actions CI re-added** — `.github/workflows/ci.yml` runs backend
+  pytest, frontend tsc + vitest + build, and an optional Playwright smoke
+  job on push and PR.
+
+### Testing
+
+- **Comprehensive Playwright e2e suite** lives at `e2e/`. 60 tests across
+  13 spec files cover every page (auth, navigation, outliner, tasks, files,
+  search, agents, agent-chat, settings, logs), every read-side API
+  endpoint, and per-page console-error capture. Run with
+  `cd e2e && bash scripts/run-suite.sh`; the suite always exits 0 and
+  writes `e2e/REPORT.md` as the canonical "what's broken" artifact. The
+  four loose top-level specs (`smoke.spec.ts`, `objects.spec.ts`, etc.)
+  were replaced.
+- 10 new test cases in `backend/tests/test_agent_identity.py` lock down
+  the path-traversal fixes.
+
 ### Fixed
 - **Security / correctness**: JWT refresh/reset tokens were bcrypt-hashed, but JWTs exceed bcrypt's 72-byte input limit, so two tokens issued in the same second would collide on verify — a refresh token could be accepted when a different one was expected. Tokens are now HMAC-SHA-256 hashed (no truncation); passwords continue to use bcrypt. Legacy bcrypt-hashed tokens are verified via a fallback path for graceful rollover.
 - `app.middleware.auth.get_optional_user` had a malformed `Annotated[...] | None` signature that caused FastAPI to occasionally parse `HTTPAuthorizationCredentials` as a request body — POST routes using `get_optional_user` (e.g. `POST /api/v1/system/logs`) would return `422` instead of reading JSON. Union moved inside `Annotated`.

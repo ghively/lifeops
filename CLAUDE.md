@@ -4,13 +4,29 @@ Session context and project information for Claude Code development.
 
 ---
 
+## ⚡ Read this first when the user asks "what's broken" / "what needs fixing"
+
+The end-to-end suite at `e2e/` writes a fresh report to `e2e/REPORT.md`
+every time it runs. **Whenever the user asks about e2e results, broken
+features, what to fix, or what the most recent run found — read
+`e2e/REPORT.md` before answering.** Do not re-run the suite, guess, or
+synthesize from memory; the file is the source of truth.
+
+If the user asks you to run the suite yourself, `cd e2e && bash
+scripts/run-suite.sh` regenerates the report. The runner assumes the
+backend (`http://localhost:8000`) and frontend (`http://localhost:5173`)
+are already up; override with `E2E_BACKEND_URL` / `E2E_FRONTEND_URL` if
+they're on different ports.
+
+---
+
 ## Project Overview
 
 **Knowledge OS** is a production-ready knowledge management system with an integrated AI agent runtime.
 
 **Version:** v0.3.0  
 **Status:** ✅ Production Ready  
-**Last Updated:** April 2026  
+**Last Updated:** May 2026  
 **Repository:** https://github.com/ghively/knowledge-os
 
 ---
@@ -22,8 +38,8 @@ Session context and project information for Claude Code development.
 - **Databases:** SQLite + Qdrant (vector DB)
 - **Agents:** ReAct-style with multi-provider LLM support
 - **Real-time:** WebSocket for collaboration & events
-- **Tests:** 23 backend + 13 frontend + E2E tests
-- **Documentation:** 16 comprehensive guides (108 KB)
+- **Tests:** 33 backend test files (~320 test functions) + 21 frontend test files + 4 Playwright E2E specs
+- **Documentation:** 17 comprehensive guides (~190 KB)
 - **API Endpoints:** 86 documented endpoints
 
 ---
@@ -54,7 +70,7 @@ Session context and project information for Claude Code development.
 ### 4. API (86 endpoints)
 - `/api/v1/auth/` — Authentication (7 endpoints)
 - `/api/v1/agents/` — Agent management (5 endpoints)
-- `/api/v1/agent-runtime/` — Agent execution (40+ endpoints)
+- `/api/v1/agents/runtime/` — Agent execution (40+ endpoints; mounted via `agent_chat` router)
 - `/api/v1/objects/` — Content management (7 endpoints)
 - `/api/v1/blocks/` — Editor blocks (6 endpoints)
 - `/api/v1/tasks/` — Task management (6 endpoints)
@@ -93,7 +109,7 @@ backend/
 ```
 frontend/
 ├─ src/
-│  ├─ pages/                       # 9 pages
+│  ├─ pages/                       # 10 pages
 │  ├─ components/                  # 24+ components
 │  ├─ hooks/                       # 6 custom hooks
 │  ├─ stores/                      # 4 Zustand stores (auth, theme, etc)
@@ -233,16 +249,35 @@ cd e2e && npm test
 
 ---
 
-## Recent Changes (April 2026)
+## Recent Changes (May 2026)
 
-✅ Complete documentation rewrite (108 KB)
+✅ Security hardening pass — agent_id path traversal, MCP interpreter
+   flag denylist, rate-limit fingerprint binding for bad tokens, agent
+   loop pre-call budget check, backup filename sanitization, auto
+   `created_by` audit trail.
+✅ LLM SDKs (`openai`, `anthropic`, `google-generativeai`) now pinned in
+   `backend/requirements.txt`; were dynamically imported before.
+✅ Container entrypoint runs `alembic upgrade head` automatically (opt
+   out via `KOS_SKIP_MIGRATIONS=1`).
+✅ Comprehensive Playwright e2e suite (60 tests across 13 files) with
+   auto-generated `e2e/REPORT.md` as the canonical "what's broken"
+   artifact.
+✅ GitHub Actions CI re-added (`backend pytest`, `frontend tsc + vitest +
+   build`, optional Playwright smoke).
+✅ Frontend production Docker image hardened (drops to non-root nginx).
+✅ Documentation refreshed: SECURITY.md "Known Limitations", AUTH.md
+   prefix corrected, ROADMAP.md updated to reflect shipped state, README
+   broken `docs/*` links fixed.
+
+## Earlier Milestones (April 2026)
+
+✅ Documentation rewrite (~190 KB across 17 guides)
 ✅ Full code review (9.3/10 score)
 ✅ All systems production-ready
 ✅ Comprehensive API reference (86 endpoints)
 ✅ Agent system fully functional
 ✅ Logging system unified (backend + frontend + nginx)
 ✅ Security audit passed
-✅ 289 tests passing
 
 ---
 
@@ -278,4 +313,4 @@ cd e2e && npm test
 ---
 
 **Version:** v0.3.0 | **Status:** Production Ready ✅  
-**Last Updated:** April 23, 2026
+**Last Updated:** May 2026
