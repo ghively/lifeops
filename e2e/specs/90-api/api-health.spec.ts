@@ -30,7 +30,9 @@ test.describe('API: read-side health', () => {
   })
 
   test('OpenAPI is exposed', async ({ request }) => {
-    const res = await request.get(`${BACKEND_URL}/openapi.json`, {
+    // FastAPI is configured with openapi_url="/api/v1/openapi.json" (see
+    // backend/app/main.py), not the framework default at the root.
+    const res = await request.get(`${API_BASE}/openapi.json`, {
       failOnStatusCode: false,
     })
     expect([200, 401]).toContain(res.status())

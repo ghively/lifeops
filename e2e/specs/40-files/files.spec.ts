@@ -19,20 +19,26 @@ test.describe('Files page', () => {
   })
 
   test('upload affordance is present', async ({ page }) => {
+    // This product doesn't expose a direct file upload on /files — files are
+    // indexed by watching a folder. Accept any of the three signals.
     const fileInput = page.locator('input[type="file"]').first()
     const uploadButton = page
       .getByRole('button', { name: /upload|add file|choose file/i })
       .first()
+    const addFolderButton = page
+      .getByRole('button', { name: /add folder|watch folder/i })
+      .first()
     const visible =
       (await fileInput.count()) > 0 ||
-      (await uploadButton.isVisible().catch(() => false))
-    expect(visible, 'no upload affordance on /files').toBe(true)
+      (await uploadButton.isVisible().catch(() => false)) ||
+      (await addFolderButton.isVisible().catch(() => false))
+    expect(visible, 'no file-ingestion affordance on /files').toBe(true)
   })
 
   test('upload a small text file (best-effort)', async ({ page }) => {
     const fileInput = page.locator('input[type="file"]').first()
     if ((await fileInput.count()) === 0) {
-      test.skip(true, 'no <input type=file> exposed')
+      test.skip(true, 'no <input type=file> exposed (folder-watch product)')
     }
 
     const dir = mkdtempSync(join(tmpdir(), 'kos-e2e-'))

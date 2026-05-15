@@ -37,27 +37,27 @@ test.describe('Tasks page', () => {
     if (await titleField.isVisible().catch(() => false)) {
       const title = `e2e task ${Date.now()}`
       await titleField.fill(title)
-      const submit = page
-        .getByRole('button', { name: /create|add|save|submit/i })
-        .first()
-      if (await submit.isVisible().catch(() => false)) {
-        await submit.click()
-        await page.waitForTimeout(1500)
-        await expect(page.locator(`text=${title}`).first()).toBeVisible({
-          timeout: 5000,
-        })
-      } else {
-        await titleField.press('Enter')
-        await page.waitForTimeout(1000)
-      }
+      // Submitting via Enter avoids races with the inline "Add" button's
+      // disabled state (it stays disabled until the title is non-empty and
+      // React has re-rendered, which can lag behind fill()).
+      await titleField.press('Enter')
+      await page.waitForTimeout(1500)
+      await expect(page.locator(`text=${title}`).first()).toBeVisible({
+        timeout: 5000,
+      })
     } else {
       test.skip(true, 'no task creation form visible')
     }
   })
 
   test('task list area is rendered', async ({ page }) => {
-    // Loose — accept any list-like container.
-    const listLike = page.locator('ul, [role="list"], [class*="task"]').first()
-    expect(await listLike.count()).toBeGreaterThan(0)
+    // The list is a div container (data-testid="task-row" per row) or, when
+    // empty, the page renders a "No tasks found" empty state. Either is an
+    // acceptable "list area rendered" signal.
+    const taskRow = page.locator('[data-testid="task-row"]')
+    const emptyState = page.getByText(/no tasks found/i)
+    const hasRows = (await taskRow.count()) > 0
+    const hasEmpty = await emptyState.isVisible().catch(() => false)
+    expect(hasRows || hasEmpty).toBe(true)
   })
 })

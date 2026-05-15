@@ -8,12 +8,14 @@ test.describe('Outliner page', () => {
     await page.goto(FRONTEND_URL)
     await page.waitForLoadState('networkidle').catch(() => {})
 
-    // The outliner is a contenteditable Slate surface OR an explicit textarea
-    // depending on how blocks are rendered. Accept either signal.
+    // The root route is the TodayPaper composer (a regular text <input>); a
+    // specific document at /object/:id shows the Slate outliner with a
+    // contenteditable surface. Accept any of these as an editable signal.
     const editorCandidates = [
       page.locator('[contenteditable="true"]').first(),
       page.locator('[role="textbox"]').first(),
       page.locator('textarea').first(),
+      page.locator('input[aria-label="Composer"]').first(),
     ]
     let found = false
     for (const cand of editorCandidates) {
