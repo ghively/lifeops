@@ -716,7 +716,12 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
             }
 
         limiter_enabled = getattr(app.state.limiter, "enabled", True)
+        login_limiter_enabled = getattr(
+            getattr(app.state, "login_limiter", None), "enabled", True
+        )
         app.state.limiter.enabled = False
+        if hasattr(app.state, "login_limiter"):
+            app.state.login_limiter.enabled = False
         app.state.auth_enforcement_enabled = False
         app.dependency_overrides[get_current_user] = fake_current_user
         app.dependency_overrides[get_optional_user] = fake_current_user
@@ -725,6 +730,8 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client, mock_async_qdrant_client._storage
         app.state.limiter.enabled = limiter_enabled
+        if hasattr(app.state, "login_limiter"):
+            app.state.login_limiter.enabled = login_limiter_enabled
         app.state.auth_enforcement_enabled = True
         app.dependency_overrides.clear()
 
@@ -814,7 +821,12 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
             }
 
         limiter_enabled = getattr(app.state.limiter, "enabled", True)
+        login_limiter_enabled = getattr(
+            getattr(app.state, "login_limiter", None), "enabled", True
+        )
         app.state.limiter.enabled = False
+        if hasattr(app.state, "login_limiter"):
+            app.state.login_limiter.enabled = False
         app.state.auth_enforcement_enabled = False
         app.dependency_overrides[get_current_user] = fake_current_user
         app.dependency_overrides[get_optional_user] = fake_current_user
@@ -823,6 +835,8 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
         app.state.limiter.enabled = limiter_enabled
+        if hasattr(app.state, "login_limiter"):
+            app.state.login_limiter.enabled = login_limiter_enabled
         app.state.auth_enforcement_enabled = True
         app.dependency_overrides.clear()
 

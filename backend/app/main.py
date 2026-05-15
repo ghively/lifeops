@@ -14,7 +14,7 @@ from app.database.qdrant_client import qdrant_manager
 from app.database.sqlite import sqlite_manager
 from app.logging_config import AppMetrics, bind_request_context, clear_request_context, configure_logging
 from app.middleware.auth import authenticate_websocket
-from app.middleware.rate_limit import limiter, read_rate_limit
+from app.middleware.rate_limit import limiter, login_limiter, read_rate_limit
 
 # Import routers
 from app.routers import (
@@ -123,6 +123,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.state.limiter = limiter
+app.state.login_limiter = login_limiter
 app.state.metrics = AppMetrics.create()
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

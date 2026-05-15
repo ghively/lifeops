@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.middleware.auth import get_current_user as require_current_user
-from app.middleware.rate_limit import auth_rate_limit, read_rate_limit
+from app.middleware.rate_limit import auth_rate_limit, login_rate_limit, read_rate_limit
 from app.models.user import (
     PasswordResetConfirm,
     PasswordResetRequest,
@@ -61,7 +61,7 @@ async def register(request: Request, data: UserCreate):
 
 
 @router.post("/login", response_model=TokenResponse)
-@auth_rate_limit
+@login_rate_limit
 async def login(request: Request, data: UserLogin):
     """
     Login with email and password.
