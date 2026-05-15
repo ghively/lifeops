@@ -20,8 +20,12 @@ test.describe('Tasks page', () => {
     const createBtn = page
       .getByRole('button', { name: /new task|create|add/i })
       .first()
+    // Match the inline create input specifically. A naive
+    // /title|task|what needs/ selector also grabs the global header search
+    // ("Search notes, tasks, files, agents…"), which is rendered first and
+    // would shadow the real create field.
     const taskInput = page
-      .getByPlaceholder(/title|task|what needs/i)
+      .getByPlaceholder(/create.*task|new task|title|what needs/i)
       .first()
     const visible =
       (await createBtn.isVisible().catch(() => false)) ||
@@ -31,7 +35,7 @@ test.describe('Tasks page', () => {
 
   test('can create a task via the UI (best-effort)', async ({ page }) => {
     const titleField = page
-      .getByPlaceholder(/title|task|what needs/i)
+      .getByPlaceholder(/create.*task|new task|title|what needs/i)
       .first()
 
     if (await titleField.isVisible().catch(() => false)) {
