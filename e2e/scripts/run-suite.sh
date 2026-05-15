@@ -49,9 +49,13 @@ for url in "${E2E_BACKEND_URL}/health" "${E2E_FRONTEND_URL}/"; do
 done
 
 # Run tests. Capture exit but never abort.
+# NOTE: pass reporters via env, not --reporter, so the outputFile values in
+# playwright.config.ts are honored (a CLI --reporter flag would replace the
+# config block entirely and the JSON reporter would stream to stdout).
 echo "[e2e] running tests..."
 set +e
-npx playwright test --reporter=list,json,html
+PLAYWRIGHT_JSON_OUTPUT_NAME=playwright-report/results.json \
+  npx playwright test
 E2E_EXIT_CODE=$?
 set -e
 echo "[e2e] playwright exit=${E2E_EXIT_CODE}"
