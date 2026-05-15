@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 
-const backendPort = process.env.VITE_DEV_BACKEND_PORT || '8010'
+const backendPort = process.env.VITE_DEV_BACKEND_PORT || '8000'
 
 // https://vitejs.dev/config/
 export default defineConfig({
