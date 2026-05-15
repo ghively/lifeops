@@ -37,13 +37,15 @@ test.describe('Tasks page', () => {
     if (await titleField.isVisible().catch(() => false)) {
       const title = `e2e task ${Date.now()}`
       await titleField.fill(title)
-      // Submitting via Enter avoids races with the inline "Add" button's
-      // disabled state (it stays disabled until the title is non-empty and
-      // React has re-rendered, which can lag behind fill()).
-      await titleField.press('Enter')
-      await page.waitForTimeout(1500)
+      // The inline "Add" button is disabled until React re-renders with the
+      // new title state. Wait for it to enable, then click — this is more
+      // reliable than press('Enter'), whose handler closure can read a stale
+      // newTaskTitle if the state update hasn't flushed.
+      const addBtn = page.getByRole('button', { name: /^add$/i }).first()
+      await expect(addBtn).toBeEnabled({ timeout: 5_000 })
+      await addBtn.click()
       await expect(page.locator(`text=${title}`).first()).toBeVisible({
-        timeout: 5000,
+        timeout: 5_000,
       })
     } else {
       test.skip(true, 'no task creation form visible')
