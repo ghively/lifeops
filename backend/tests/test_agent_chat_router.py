@@ -287,7 +287,15 @@ class TestMCPServers:
             )
 
         assert response.status_code == 400
-        assert "forbidden" in response.json()["detail"].lower() or "metachar" in response.json()["detail"].lower()
+        detail = response.json()["detail"].lower()
+        # The router may reject at the metachar check or the binary-allowlist check;
+        # both are valid security rejections.
+        assert (
+            "forbidden" in detail
+            or "metachar" in detail
+            or "allowed" in detail
+            or "not permitted" in detail
+        )
 
     async def test_create_mcp_server_shell_semicolon_rejected(self, test_client):
         """Commands containing ; must be rejected with 400."""
