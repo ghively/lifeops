@@ -860,6 +860,18 @@ export const settingsApi = {
 
   triggerBackup: (type: 'snapshot' | 'markdown' | 'git') =>
     api.post('/settings/backup', { type }).then((r) => r.data),
+
+  getPreferences: <T extends Record<string, unknown> = Record<string, unknown>>() =>
+    api.get<T>('/settings/preferences').then((r) => r.data),
+
+  updatePreferences: <T extends Record<string, unknown> = Record<string, unknown>>(
+    data: Record<string, unknown>,
+  ) => api.put<T>('/settings/preferences', data).then((r) => r.data),
+
+  deletePreference: (key: string) =>
+    api.delete<{ message: string; key: string }>(
+      `/settings/preferences/${encodeURIComponent(key)}`,
+    ).then((r) => r.data),
 }
 
 export interface SmokeTestResult {
