@@ -206,3 +206,118 @@ class TestWebSocketErrorHandling:
         """Test client reconnect logic."""
         # Should handle reconnections
         pass
+
+
+@pytest.mark.asyncio
+class TestChannelAuthorization:
+    """Direct exercise of WebSocketManager._authorize_channel and the
+    subscribe handler (regression for issue #176)."""
+
+    async def _make_ws(self):
+        ws = AsyncMock()
+        ws.accept = AsyncMock()
+        ws.send_json = AsyncMock()
+        return ws
+
+    async def _connect(self, manager, user):
+        ws = await self._make_ws()
+        await manager.connect(ws, user=user)
+        return ws
+
+    async def test_public_channels_allowed_without_user(self):
+        from app.services.websocket_manager import (
+            PUBLIC_CHANNELS,
+            WebSocketManager,
+        )
+
+        manager = WebSocketManager()
+        for channel in PUBLIC_CHANNELS:
+            assert await manager._authorize_channel(None, channel) is True
+
+    async def test_namespaced_channels_denied_without_user(self):
+        from app.services.websocket_manager import WebSocketManager
+
+        manager = WebSocketManager()
+        for channel in (
+            "object:abc",
+            "collab:abc",
+            "agent-approval:other-user",
+            "made-up-namespace:x",
+        ):
+            assert await manager._authorize_channel(None, channel) is False
+
+    async def test_agent_approval_locked_to_authenticated_user(self):
+        from app.services.websocket_manager import WebSocketManager
+
+        manager = WebSocketManager()
+        me = {"id": "user-self"}
+        assert await manager._authorize_channel(me, "agent-approval:user-self") is True
+        assert await manager._authorize_channel(me, "agent-approval:somebody-else") is False
+
+    async def test_collab_and_object_channels_check_object_owner(self, monkeypatch):
+        from app.services import access as access_module
+        from app.services.websocket_manager import WebSocketManager
+
+        async def fake_access(user_id, object_id):
+            return user_id == "owner" and object_id == "doc-1"
+
+        monkeypatch.setattr(access_module, "user_can_access_object", fake_access)
+
+        manager = WebSocketManager()
+        owner = {"id": "owner"}
+        intruder = {"id": "intruder"}
+
+        assert await manager._authorize_channel(owner, "object:doc-1") is True
+        assert await manager._authorize_channel(owner, "collab:doc-1") is True
+        assert await manager._authorize_channel(intruder, "object:doc-1") is False
+        assert await manager._authorize_channel(intruder, "collab:doc-1") is False
+
+    async def test_unknown_namespace_denied(self):
+        from app.services.websocket_manager import WebSocketManager
+
+        manager = WebSocketManager()
+        assert await manager._authorize_channel({"id": "u"}, "future-feature:42") is False
+
+    async def test_subscribe_handler_reports_denied_channels(self, monkeypatch):
+        from app.services import access as access_module
+        from app.services.websocket_manager import WebSocketManager
+
+        async def fake_access(user_id, object_id):
+            return False
+
+        monkeypatch.setattr(access_module, "user_can_access_object", fake_access)
+
+        manager = WebSocketManager()
+        ws = await self._connect(manager, {"id": "u1"})
+        payload = '{"type":"subscribe","data":{"channels":["system","collab:secret"]}}'
+        await manager.handle_message(ws, payload)
+
+        ws.send_json.assert_awaited_once()
+        sent = ws.send_json.await_args.args[0]
+        assert sent["type"] == "subscribed"
+        assert "collab:secret" in sent["data"]["denied"]
+        assert "collab:secret" not in sent["data"]["channels"]
+        assert "system" in sent["data"]["channels"]
+        assert manager.subscriptions[ws] == {"system"}
+
+    async def test_subscribe_handler_grants_public_channel(self):
+        from app.services.websocket_manager import WebSocketManager
+
+        manager = WebSocketManager()
+        ws = await self._connect(manager, {"id": "u1"})
+        payload = '{"type":"subscribe","data":{"channels":["logs"]}}'
+        await manager.handle_message(ws, payload)
+
+        sent = ws.send_json.await_args.args[0]
+        assert sent["data"]["granted"] == ["logs"]
+        assert "logs" in manager.subscriptions[ws]
+        assert "denied" not in sent["data"]
+
+    async def test_disconnect_clears_user_mapping(self):
+        from app.services.websocket_manager import WebSocketManager
+
+        manager = WebSocketManager()
+        ws = await self._connect(manager, {"id": "u1"})
+        assert ws in manager.connection_users
+        manager.disconnect(ws)
+        assert ws not in manager.connection_users
