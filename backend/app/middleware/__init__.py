@@ -1,7 +1,13 @@
 """Middleware package"""
 
 from .auth import authenticate_websocket, get_current_user, get_optional_user
-from .rate_limit import auth_rate_limit, limiter, read_rate_limit, write_rate_limit
+from .rate_limit import (
+    auth_rate_limit,
+    limiter,
+    login_rate_limit,
+    read_rate_limit,
+    write_rate_limit,
+)
 
 __all__ = [
     "authenticate_websocket",
@@ -9,6 +15,7 @@ __all__ = [
     "get_current_user",
     "get_optional_user",
     "limiter",
+    "login_rate_limit",
     "read_rate_limit",
     "write_rate_limit",
 ]

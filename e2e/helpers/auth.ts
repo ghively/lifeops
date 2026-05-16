@@ -13,12 +13,12 @@ export async function ensureTestUser(): Promise<boolean> {
         email: TEST_USER.email,
         username: TEST_USER.username,
         password: TEST_USER.password,
-        full_name: TEST_USER.full_name,
+        display_name: TEST_USER.display_name,
       },
       failOnStatusCode: false,
     })
-    // 200/201 = created; 400/409 = already exists; we accept anything that's
-    // not a server error.
+    // 200/201 = created; 400/409 = already exists; 422 = duplicate/validation.
+    // We accept anything that's not a server error.
     return res.status() < 500
   } catch {
     return false

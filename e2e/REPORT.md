@@ -1,50 +1,89 @@
 # Knowledge OS — End-to-End Suite Report
 
-🟡 **Suite has not been run yet on this branch.** This file is regenerated
-on every run of `e2e/scripts/run-suite.sh`. Until the first run, no
-results are available.
+This file is **regenerated on every run** of `e2e/scripts/run-suite.sh`.
+It is the canonical source of "what is broken in the running system" — 
+when the user asks about e2e failures, what to fix, or what to look at,
+this is the file to read.
 
-## How to populate this report
+- **Started:** 2026-05-15T21:34:09.789Z
+- **Duration:** 74.5s
+- **Total:** 61 | **Passed:** 57 | **Failed:** 0 | **Flaky:** 0 | **Skipped:** 4
+- **Playwright exit code:** 0
 
-```bash
-# 1. Bring up the stack:
-#    - Backend at http://localhost:8000 (or set E2E_BACKEND_URL)
-#    - Frontend at http://localhost:5173 (or set E2E_FRONTEND_URL)
-#    - Qdrant on the configured port
+## What Needs to Be Fixed
 
-# 2. Run the suite (always exits 0):
-cd e2e
-bash scripts/run-suite.sh
+🎉 No failing tests. No punch list this run.
+## Per-Spec Breakdown
 
-# 3. This file will be overwritten with the real results.
-```
+| Spec | Pass | Fail | Skip | File |
+|---|---:|---:|---:|---|
+| register and authenticate test user | 1 | 0 | 0 | `../global-setup.spec.ts` |
+| login page renders email/password fields and CTA | 1 | 0 | 0 | `00-anonymous/auth.spec.ts` |
+| protected route bounces to /login when unauthenticated | 1 | 0 | 0 | `00-anonymous/auth.spec.ts` |
+| reset password page is reachable from login | 1 | 0 | 0 | `00-anonymous/auth.spec.ts` |
+| register flow accepts a new user (or surfaces a clear duplicate error) | 1 | 0 | 0 | `00-anonymous/auth.spec.ts` |
+| app shell loads with the expected title | 1 | 0 | 0 | `00-anonymous/landing.spec.ts` |
+| backend /health returns healthy | 1 | 0 | 0 | `00-anonymous/landing.spec.ts` |
+| unknown protected route does not throw an uncaught error | 1 | 0 | 0 | `00-anonymous/landing.spec.ts` |
+| / renders without uncaught errors | 1 | 0 | 0 | `10-navigation/sidebar.spec.ts` |
+| /tasks renders without uncaught errors | 1 | 0 | 0 | `10-navigation/sidebar.spec.ts` |
+| /files renders without uncaught errors | 1 | 0 | 0 | `10-navigation/sidebar.spec.ts` |
+| /agents renders without uncaught errors | 1 | 0 | 0 | `10-navigation/sidebar.spec.ts` |
+| /search renders without uncaught errors | 1 | 0 | 0 | `10-navigation/sidebar.spec.ts` |
+| /settings renders without uncaught errors | 1 | 0 | 0 | `10-navigation/sidebar.spec.ts` |
+| /logs renders without uncaught errors | 1 | 0 | 0 | `10-navigation/sidebar.spec.ts` |
+| sidebar links navigate between pages | 1 | 0 | 0 | `10-navigation/sidebar.spec.ts` |
+| renders the editor surface | 1 | 0 | 0 | `20-outliner/outliner.spec.ts` |
+| typing into a block does not throw | 1 | 0 | 0 | `20-outliner/outliner.spec.ts` |
+| Enter creates a new block (best-effort assertion) | 0 | 0 | 1 | `20-outliner/outliner.spec.ts` |
+| renders the tasks page without throwing | 1 | 0 | 0 | `30-tasks/tasks.spec.ts` |
+| task creation control is reachable | 1 | 0 | 0 | `30-tasks/tasks.spec.ts` |
+| can create a task via the UI (best-effort) | 1 | 0 | 0 | `30-tasks/tasks.spec.ts` |
+| task list area is rendered | 1 | 0 | 0 | `30-tasks/tasks.spec.ts` |
+| renders without throwing | 4 | 0 | 0 | `40-files/files.spec.ts` |
+| upload affordance is present | 1 | 0 | 0 | `40-files/files.spec.ts` |
+| upload a small text file (best-effort) | 0 | 0 | 1 | `40-files/files.spec.ts` |
+| renders the search input | 1 | 0 | 0 | `50-search/search.spec.ts` |
+| submitting a query does not throw | 1 | 0 | 0 | `50-search/search.spec.ts` |
+| exposes a way to create or open an agent | 1 | 0 | 0 | `60-agents/agents.spec.ts` |
+| agent creation flow is reachable (best-effort) | 1 | 0 | 0 | `60-agents/agents.spec.ts` |
+| open agents page and follow the first chat link if present | 0 | 0 | 1 | `61-agent-chat/agent-chat.spec.ts` |
+| chat input is interactive | 0 | 0 | 1 | `61-agent-chat/agent-chat.spec.ts` |
+| exposes at least one setting control (theme/profile/integration) | 1 | 0 | 0 | `70-settings/settings.spec.ts` |
+| toggling theme (if present) does not throw | 1 | 0 | 0 | `70-settings/settings.spec.ts` |
+| shows log content area | 1 | 0 | 0 | `80-logs/logs.spec.ts` |
+| backend /health is up | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| OpenAPI is exposed | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /auth/me responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /objects responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /blocks responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /tasks responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /files responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /search?q=hello responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /agents responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /agents/runtime/sessions responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /system/status responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /relations responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /settings responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| GET /webhooks responds (auth=true) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| unauthenticated read of protected endpoint returns 401 | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| agent_id path-traversal is rejected (regression for the audit fix) | 1 | 0 | 0 | `90-api/api-health.spec.ts` |
+| / is free of pageerrors and failed requests | 1 | 0 | 0 | `95-cross/console-errors.spec.ts` |
+| /tasks is free of pageerrors and failed requests | 1 | 0 | 0 | `95-cross/console-errors.spec.ts` |
+| /files is free of pageerrors and failed requests | 1 | 0 | 0 | `95-cross/console-errors.spec.ts` |
+| /agents is free of pageerrors and failed requests | 1 | 0 | 0 | `95-cross/console-errors.spec.ts` |
+| /search is free of pageerrors and failed requests | 1 | 0 | 0 | `95-cross/console-errors.spec.ts` |
+| /settings is free of pageerrors and failed requests | 1 | 0 | 0 | `95-cross/console-errors.spec.ts` |
+| /logs is free of pageerrors and failed requests | 1 | 0 | 0 | `95-cross/console-errors.spec.ts` |
 
-## What this file will contain after a real run
+## Skipped (feature not present or precondition not met)
 
-- A "What Needs to Be Fixed" punch list — every failing test, with file
-  path, error message, and links to screenshots / traces / videos.
-- A per-spec pass/fail/skip breakdown.
-- A list of skipped tests with the reasons they were skipped (feature
-  gated, precondition unmet, etc.).
-- Total duration and the Playwright exit code.
-
-## Spec coverage (60 tests across 13 files)
-
-| Group | Files | Coverage |
-|---|---|---|
-| Anonymous surface | `00-anonymous/` | Login, register, reset-password, protected-route bounce, /health |
-| Navigation | `10-navigation/` | Every primary route loads; sidebar links navigate |
-| Outliner | `20-outliner/` | Editor surface, typing, Enter behavior |
-| Tasks | `30-tasks/` | List, create affordance, create flow |
-| Files | `40-files/` | Upload affordance, file upload |
-| Search | `50-search/` | Input, query submit |
-| Agents | `60-agents/` | List, create, agent affordances |
-| Agent chat | `61-agent-chat/` | Chat surface, message input wiring |
-| Settings | `70-settings/` | Settings controls, theme toggle |
-| Logs | `80-logs/` | Log viewer |
-| API | `90-api/` | /health, OpenAPI, every read endpoint, 401 enforcement, agent_id traversal regression |
-| Cross-cutting | `95-cross/` | Per-page browser console errors / failed requests |
+- **no reason given**
+  - Enter creates a new block (best-effort assertion) → undefined
+  - upload a small text file (best-effort) → undefined
+  - open agents page and follow the first chat link if present → undefined
+  - chat input is interactive → undefined
 
 ---
 
-_Run the suite to replace this placeholder with real results._
+_Regenerate with `cd e2e && bash scripts/run-suite.sh`. Last run: 2026-05-15T21:35:24.957Z._

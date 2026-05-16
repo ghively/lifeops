@@ -20,8 +20,12 @@ test.describe('Tasks page', () => {
     const createBtn = page
       .getByRole('button', { name: /new task|create|add/i })
       .first()
+    // Match the inline create input specifically. A naive
+    // /title|task|what needs/ selector also grabs the global header search
+    // ("Search notes, tasks, files, agents…"), which is rendered first and
+    // would shadow the real create field.
     const taskInput = page
-      .getByPlaceholder(/title|task|what needs/i)
+      .getByPlaceholder(/create.*task|new task|title|what needs/i)
       .first()
     const visible =
       (await createBtn.isVisible().catch(() => false)) ||
@@ -31,33 +35,35 @@ test.describe('Tasks page', () => {
 
   test('can create a task via the UI (best-effort)', async ({ page }) => {
     const titleField = page
-      .getByPlaceholder(/title|task|what needs/i)
+      .getByPlaceholder(/create.*task|new task|title|what needs/i)
       .first()
 
     if (await titleField.isVisible().catch(() => false)) {
       const title = `e2e task ${Date.now()}`
       await titleField.fill(title)
-      const submit = page
-        .getByRole('button', { name: /create|add|save|submit/i })
-        .first()
-      if (await submit.isVisible().catch(() => false)) {
-        await submit.click()
-        await page.waitForTimeout(1500)
-        await expect(page.locator(`text=${title}`).first()).toBeVisible({
-          timeout: 5000,
-        })
-      } else {
-        await titleField.press('Enter')
-        await page.waitForTimeout(1000)
-      }
+      // The inline "Add" button is disabled until React re-renders with the
+      // new title state. Wait for it to enable, then click — this is more
+      // reliable than press('Enter'), whose handler closure can read a stale
+      // newTaskTitle if the state update hasn't flushed.
+      const addBtn = page.getByRole('button', { name: /^add$/i }).first()
+      await expect(addBtn).toBeEnabled({ timeout: 5_000 })
+      await addBtn.click()
+      await expect(page.locator(`text=${title}`).first()).toBeVisible({
+        timeout: 5_000,
+      })
     } else {
       test.skip(true, 'no task creation form visible')
     }
   })
 
   test('task list area is rendered', async ({ page }) => {
-    // Loose — accept any list-like container.
-    const listLike = page.locator('ul, [role="list"], [class*="task"]').first()
-    expect(await listLike.count()).toBeGreaterThan(0)
+    // The list is a div container (data-testid="task-row" per row) or, when
+    // empty, the page renders a "No tasks found" empty state. Either is an
+    // acceptable "list area rendered" signal.
+    const taskRow = page.locator('[data-testid="task-row"]')
+    const emptyState = page.getByText(/no tasks found/i)
+    const hasRows = (await taskRow.count()) > 0
+    const hasEmpty = await emptyState.isVisible().catch(() => false)
+    expect(hasRows || hasEmpty).toBe(true)
   })
 })

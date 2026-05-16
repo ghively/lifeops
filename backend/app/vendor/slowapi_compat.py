@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import time
 from collections import defaultdict, deque
 from functools import wraps
@@ -95,6 +96,10 @@ class Limiter:
 
                 now = time.time()
                 key = self.key_func(request)
+                # Allow async key functions (e.g. ones that need to read
+                # the request body to derive a per-resource key).
+                if inspect.iscoroutine(key):
+                    key = await key
                 bucket_key = (func.__module__, request.url.path, key)
                 bucket = self._buckets[bucket_key]
 

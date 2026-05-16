@@ -22,6 +22,15 @@ const READ_ENDPOINTS = [
 ] as const
 
 test.describe('API: read-side health', () => {
+  // Acquire a single auth token for the whole spec. /auth/login is
+  // rate-limited (~5 req/min) — calling loginViaApi() inside each test
+  // blows past the limit and skips the rest with "could not obtain
+  // auth token". Caching once keeps the suite within the budget.
+  let sharedToken: string | null = null
+  test.beforeAll(async () => {
+    sharedToken = await loginViaApi()
+  })
+
   test('backend /health is up', async ({ request }) => {
     const res = await request.get(`${BACKEND_URL}/health`, {
       failOnStatusCode: false,
@@ -30,7 +39,9 @@ test.describe('API: read-side health', () => {
   })
 
   test('OpenAPI is exposed', async ({ request }) => {
-    const res = await request.get(`${BACKEND_URL}/openapi.json`, {
+    // FastAPI is configured with openapi_url="/api/v1/openapi.json" (see
+    // backend/app/main.py), not the framework default at the root.
+    const res = await request.get(`${API_BASE}/openapi.json`, {
       failOnStatusCode: false,
     })
     expect([200, 401]).toContain(res.status())
@@ -40,9 +51,8 @@ test.describe('API: read-side health', () => {
     test(`GET ${ep.path} responds (auth=${ep.auth})`, async ({ request }) => {
       const headers: Record<string, string> = {}
       if (ep.auth) {
-        const token = await loginViaApi()
-        if (!token) test.skip(true, 'could not obtain auth token')
-        headers['Authorization'] = `Bearer ${token}`
+        if (!sharedToken) test.skip(true, 'could not obtain auth token')
+        headers['Authorization'] = `Bearer ${sharedToken}`
       }
       const res = await request.get(`${API_BASE}${ep.path}`, {
         headers,
@@ -66,12 +76,11 @@ test.describe('API: read-side health', () => {
   test('agent_id path-traversal is rejected (regression for the audit fix)', async ({
     request,
   }) => {
-    const token = await loginViaApi()
-    if (!token) test.skip(true, 'could not obtain auth token')
+    if (!sharedToken) test.skip(true, 'could not obtain auth token')
     const res = await request.get(
       `${API_BASE}/agents/runtime/${encodeURIComponent('../escape')}/files/AGENT.md`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${sharedToken}` },
         failOnStatusCode: false,
       },
     )
