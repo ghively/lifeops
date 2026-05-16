@@ -48,10 +48,9 @@ class AuthService:
         if configured_path:
             return Path(configured_path)
 
-        database_url = getattr(settings, "database_url", "")
-        if database_url.startswith("sqlite:///"):
-            return Path(database_url.removeprefix("sqlite:///")).resolve().parent / ".jwt_secret"
-
+        # Anchor on the configured data_dir (volume-mounted in container deployments)
+        # rather than deriving from DATABASE_URL — a relative sqlite URL ("sqlite:///foo")
+        # resolves against CWD and would silently land on ephemeral storage.
         return Path(getattr(settings, "data_dir")).resolve() / ".jwt_secret"
 
     def _load_or_create_persisted_secret(self) -> str:
