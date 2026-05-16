@@ -100,8 +100,12 @@ export function MainLayout({ children }: MainLayoutProps) {
       return
     }
     if (Notification.permission === 'default') {
-      const result = await Notification.requestPermission()
-      setNotifStatus(result === 'granted' ? 'enabled' : 'denied')
+      try {
+        const result = await Notification.requestPermission()
+        setNotifStatus(result === 'granted' ? 'enabled' : 'denied')
+      } catch {
+        setNotifStatus('blocked')
+      }
     } else if (Notification.permission === 'granted') {
       setNotifStatus('already')
     } else {
@@ -109,6 +113,14 @@ export function MainLayout({ children }: MainLayoutProps) {
     }
     clearNotifTimer()
     notifTimerRef.current = setTimeout(() => setNotifStatus(null), 3000)
+  }
+
+  const NOTIF_STATUS_LABELS: Record<string, string> = {
+    enabled: 'Notifications enabled',
+    already: 'Notifications already on',
+    denied: 'Notifications denied',
+    blocked: 'Notifications blocked — enable them in browser settings',
+    unsupported: 'Notifications not supported in this browser',
   }
 
   const crumbs = resolveCrumbs(location.pathname, location.search)
@@ -217,12 +229,30 @@ export function MainLayout({ children }: MainLayoutProps) {
             <button
               type="button"
               aria-label="Notifications"
+              data-testid="header-notifications-btn"
               className={cn('kos-icon-btn', notifsOn && 'kos-dot-badge')}
               onClick={() => void handleNotificationsClick()}
               title="Notifications"
             >
               <Bell size={16} />
             </button>
+            {notifStatus && NOTIF_STATUS_LABELS[notifStatus] && (
+              <span
+                role="status"
+                aria-live="polite"
+                data-testid="notif-status"
+                style={{
+                  fontSize: 12,
+                  opacity: 0.75,
+                  padding: '2px 8px',
+                  borderRadius: 999,
+                  background: 'var(--surface, rgba(0,0,0,0.06))',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {NOTIF_STATUS_LABELS[notifStatus]}
+              </span>
+            )}
             <button
               type="button"
               aria-label="Tweaks"
