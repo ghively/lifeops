@@ -47,6 +47,12 @@ def _read_gateway_token_from_config() -> Optional[str]:
 class OpenClawService:
     """Service for communicating with OpenClaw gateway using /tools/invoke."""
 
+    def __init__(self) -> None:
+        # Avoid logging the "no token configured" warning more than once per
+        # process — by default OpenClaw is not wired up and we don't want
+        # the log to fill with the same message on every agent invocation.
+        self._missing_token_warned = False
+
     async def _runtime_settings(self) -> Dict[str, Any]:
         url = await sqlite_manager.get_setting("openclaw_url", settings.openclaw_url)
         token = await sqlite_manager.get_setting("openclaw_token", "")
@@ -67,6 +73,22 @@ class OpenClawService:
         runtime = await self._runtime_settings()
         if not runtime["openclaw_enabled"]:
             return {"status": "disabled", "content": "OpenClaw integration disabled"}
+
+        # Short-circuit when no gateway token is configured anywhere — the
+        # gateway will always reply 401 in that case and the retry loop just
+        # produces noise. Surfacing "not configured" lets callers and the
+        # health endpoint show a clear setup instruction (issue #152).
+        if not runtime["openclaw_token"]:
+            if not self._missing_token_warned:
+                logger.warning(
+                    "OpenClaw token is not configured (set OPENCLAW_TOKEN or the "
+                    "openclaw_token setting); skipping gateway calls"
+                )
+                self._missing_token_warned = True
+            return {
+                "status": "not_configured",
+                "content": "OpenClaw token is not configured",
+            }
 
         base_url = f"{runtime['openclaw_url'].rstrip('/')}/tools/invoke"
         payload = {
@@ -225,6 +247,12 @@ class OpenClawService:
         runtime = await self._runtime_settings()
         if not runtime["openclaw_enabled"]:
             return {"status": "disabled", "reachable": False}
+        if not runtime["openclaw_token"]:
+            return {
+                "status": "not_configured",
+                "reachable": False,
+                "error": "OpenClaw token is not configured",
+            }
 
         try:
             result = await self._invoke_tool("session_status", args={})

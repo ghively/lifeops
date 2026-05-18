@@ -33,7 +33,7 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - DATA_DIR=/app/data
-      - DATABASE_URL=sqlite:///app/data/knowledge_os.db
+      - DATABASE_URL=sqlite:////app/data/knowledge_os.db
       - OPENCLAW_URL=${OPENCLAW_URL:-http://host.docker.internal:18789}
       - OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
       - BACKUP_PATH=/app/backups

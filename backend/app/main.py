@@ -306,11 +306,11 @@ async def root(request: Request):
 async def websocket_endpoint(websocket: WebSocket, agent_name: str = "system"):
     """Shared WebSocket endpoint for live updates."""
     try:
-        await authenticate_websocket(websocket)
+        authenticated_user = await authenticate_websocket(websocket)
     except HTTPException:
         await websocket.close(code=1008)
         return
-    await websocket_manager.connect(websocket)
+    await websocket_manager.connect(websocket, user=authenticated_user)
     try:
         while True:
             data = await websocket.receive_text()

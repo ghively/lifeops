@@ -629,6 +629,79 @@ Content-Type: application/json
 
 ---
 
+## Settings Endpoints
+
+### Get Settings
+
+```http
+GET /settings
+Authorization: Bearer {access_token}
+```
+
+**Response (200):** Typed system settings (sensitive values are stripped).
+
+### Update Settings
+
+```http
+PUT /settings
+Authorization: Bearer {access_token}
+Content-Type: application/json
+
+{ "backup_snapshots": true, "embedding_model": "all-MiniLM-L6-v2" }
+```
+
+Only the predefined keys defined in `SettingsUpdate` are accepted; unknown
+keys on this endpoint are silently ignored. Use the **Preferences** endpoints
+below if you need arbitrary user-scoped key/value storage.
+
+### Get User Preferences
+
+```http
+GET /settings/preferences
+Authorization: Bearer {access_token}
+```
+
+Returns the authenticated user's preference bag as a flat `{key: value}`
+object. Values may be any JSON-serializable type (strings, numbers, booleans,
+arrays, objects, `null`).
+
+**Response (200):**
+```json
+{ "theme": "dark", "sidebar_width": 280, "experimental": { "agents_v2": true } }
+```
+
+### Update User Preferences
+
+```http
+PUT /settings/preferences
+Authorization: Bearer {access_token}
+Content-Type: application/json
+
+{ "theme": "dark", "sidebar_width": 280 }
+```
+
+Merges the provided keys into the user's existing bag (existing keys not
+present in the body are left untouched). Returns the full bag after the
+update. Constraints:
+
+- Keys must match `^[A-Za-z0-9_.-]{1,64}$`.
+- Each value must serialize to ≤ 16 KB of JSON.
+- A user may store at most 200 keys.
+
+Returns `400` if any constraint is violated.
+
+### Delete a User Preference
+
+```http
+DELETE /settings/preferences/{key}
+Authorization: Bearer {access_token}
+```
+
+**Response (200):** `{ "message": "Preference removed", "key": "theme" }`
+**Response (404):** key was not stored for this user.
+
+---
+
 ## WebSocket Endpoints
 
 ### General WebSocket

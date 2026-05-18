@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import uuid
 from typing import Any, Dict, Optional
 
@@ -84,6 +85,96 @@ async def update_settings(data: SettingsUpdate, request: Request, current_user: 
         await sqlite_manager.upsert_setting(key, value)
     logger.info("Settings updated")
     return current
+
+
+# ---- Per-user preferences ---------------------------------------------------
+# Arbitrary {key: value} bag scoped to the authenticated user. Distinct from
+# the typed system settings above.
+
+PREFERENCE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+MAX_PREFERENCE_VALUE_BYTES = 16 * 1024  # JSON-serialized
+MAX_PREFERENCES_PER_USER = 200
+
+
+def _validate_preference_key(key: str) -> None:
+    if not isinstance(key, str) or not PREFERENCE_KEY_PATTERN.match(key):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid preference key. Must be 1-64 chars of "
+                "[A-Za-z0-9_.-]."
+            ),
+        )
+
+
+def _validate_preference_value(key: str, value: Any) -> None:
+    try:
+        encoded = json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Preference value for '{key}' is not JSON-serializable",
+        ) from exc
+    if len(encoded.encode("utf-8")) > MAX_PREFERENCE_VALUE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Preference value for '{key}' exceeds "
+                f"{MAX_PREFERENCE_VALUE_BYTES} bytes when JSON-encoded"
+            ),
+        )
+
+
+@router.get("/preferences")
+@read_rate_limit
+async def get_preferences(request: Request, current_user: dict = Depends(get_current_user)):
+    """Return the authenticated user's preference bag."""
+    return await sqlite_manager.list_user_preferences(current_user["id"])
+
+
+@router.put("/preferences")
+@write_rate_limit
+async def update_preferences(
+    data: Dict[str, Any],
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Merge arbitrary key/value pairs into the user's preference bag."""
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+
+    for key, value in data.items():
+        _validate_preference_key(key)
+        _validate_preference_value(key, value)
+
+    if data:
+        existing_keys = set(
+            (await sqlite_manager.list_user_preferences(current_user["id"])).keys()
+        )
+        added_keys = [k for k in data if k not in existing_keys]
+        if len(existing_keys) + len(added_keys) > MAX_PREFERENCES_PER_USER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot store more than {MAX_PREFERENCES_PER_USER} preference keys per user",
+            )
+
+    await sqlite_manager.upsert_user_preferences(current_user["id"], data)
+    return await sqlite_manager.list_user_preferences(current_user["id"])
+
+
+@router.delete("/preferences/{key}")
+@write_rate_limit
+async def delete_preference(
+    key: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove a single preference key for the authenticated user."""
+    _validate_preference_key(key)
+    removed = await sqlite_manager.delete_user_preference(current_user["id"], key)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Preference not found")
+    return {"message": "Preference removed", "key": key}
 
 
 @router.get("/watched-folders")
