@@ -9,7 +9,7 @@ import jwt
 import pytest
 
 from app.middleware.auth import get_current_user, get_optional_user
-from app.services.auth import auth_service
+from app.services.auth import AuthService, auth_service
 
 
 def _user_payload(
@@ -242,3 +242,30 @@ class TestAuthRouter:
         data = response.json()
         assert data["message"]
         assert "_dev_token" not in data
+
+
+class TestSecretFilePath:
+    """Regression: JWT secret must land in the volume-mounted data_dir, not on
+    ephemeral container storage (issue #175)."""
+
+    def test_jwt_secret_path_anchored_on_data_dir(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JWT_SECRET_FILE", raising=False)
+        monkeypatch.setattr("app.services.auth.settings.data_dir", str(tmp_path))
+        # A relative sqlite URL would previously resolve against CWD and place
+        # the secret on ephemeral storage — the resolution must ignore it.
+        monkeypatch.setattr(
+            "app.services.auth.settings.database_url",
+            "sqlite:///app/data/knowledge_os.db",
+        )
+
+        resolved = AuthService.__new__(AuthService)._resolve_secret_file_path()
+
+        assert resolved == (tmp_path / ".jwt_secret").resolve()
+
+    def test_jwt_secret_file_env_overrides(self, monkeypatch, tmp_path):
+        explicit = tmp_path / "custom.secret"
+        monkeypatch.setenv("JWT_SECRET_FILE", str(explicit))
+
+        resolved = AuthService.__new__(AuthService)._resolve_secret_file_path()
+
+        assert resolved == explicit

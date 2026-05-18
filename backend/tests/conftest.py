@@ -279,6 +279,9 @@ def mock_async_qdrant_client():
     return mock_client
 
 
+_MISSING = object()
+
+
 @pytest.fixture
 def mock_sqlite_manager():
     """Mock SQLite database manager."""
@@ -299,6 +302,7 @@ def mock_sqlite_manager():
         "users": {},
         "refresh_tokens": {},
         "password_reset_tokens": {},
+        "user_preferences": {},  # {user_id: {key: value}}
     }
 
     async def mock_execute(query, params=None):
@@ -506,6 +510,20 @@ def mock_sqlite_manager():
     async def mock_delete_agent_webhook(webhook_id):
         storage["agent_webhooks"].pop(webhook_id, None)
 
+    async def mock_list_user_preferences(user_id):
+        return dict(storage["user_preferences"].get(user_id, {}))
+
+    async def mock_upsert_user_preferences(user_id, prefs):
+        if not prefs:
+            return
+        bag = storage["user_preferences"].setdefault(user_id, {})
+        for key, value in prefs.items():
+            bag[key] = value
+
+    async def mock_delete_user_preference(user_id, key):
+        bag = storage["user_preferences"].get(user_id, {})
+        return bag.pop(key, _MISSING) is not _MISSING
+
     mock_manager.execute = mock_execute
     mock_manager.executemany = mock_executemany
     mock_manager.fetchone = mock_fetchone
@@ -525,6 +543,9 @@ def mock_sqlite_manager():
     mock_manager.get_agent_webhook = mock_get_agent_webhook
     mock_manager.get_agent_webhook_by_path = mock_get_agent_webhook_by_path
     mock_manager.delete_agent_webhook = mock_delete_agent_webhook
+    mock_manager.list_user_preferences = mock_list_user_preferences
+    mock_manager.upsert_user_preferences = mock_upsert_user_preferences
+    mock_manager.delete_user_preference = mock_delete_user_preference
     mock_manager._storage = storage
 
     return mock_manager
@@ -690,6 +711,15 @@ async def test_client_with_store(mock_async_qdrant_client, mock_embedding_servic
         )
         stack.enter_context(patch.object(sqlite_manager, "delete_agent_webhook", mock_sqlite_manager.delete_agent_webhook))
         stack.enter_context(
+            patch.object(sqlite_manager, "list_user_preferences", mock_sqlite_manager.list_user_preferences)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "upsert_user_preferences", mock_sqlite_manager.upsert_user_preferences)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "delete_user_preference", mock_sqlite_manager.delete_user_preference)
+        )
+        stack.enter_context(
             patch.object(
                 openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})
             )
@@ -794,6 +824,15 @@ async def test_client(mock_async_qdrant_client, mock_embedding_service, mock_sql
             patch.object(sqlite_manager, "get_agent_webhook_by_path", mock_sqlite_manager.get_agent_webhook_by_path)
         )
         stack.enter_context(patch.object(sqlite_manager, "delete_agent_webhook", mock_sqlite_manager.delete_agent_webhook))
+        stack.enter_context(
+            patch.object(sqlite_manager, "list_user_preferences", mock_sqlite_manager.list_user_preferences)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "upsert_user_preferences", mock_sqlite_manager.upsert_user_preferences)
+        )
+        stack.enter_context(
+            patch.object(sqlite_manager, "delete_user_preference", mock_sqlite_manager.delete_user_preference)
+        )
         stack.enter_context(
             patch.object(
                 openclaw_service, "send_message", AsyncMock(return_value={"content": "Mock response", "metadata": {}})

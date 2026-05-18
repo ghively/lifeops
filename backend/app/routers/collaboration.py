@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSo
 
 from app.middleware.auth import authenticate_websocket, get_current_user
 from app.middleware.rate_limit import read_rate_limit
+from app.services.access import user_can_access_object
 from app.services.collaboration import (
     MSG_AWARENESS,
     MSG_CURSOR,
@@ -80,7 +81,19 @@ async def collaboration_ws(websocket: WebSocket, object_id: str):
 
             # --- JOIN ---
             if msg_type == MSG_JOIN:
-                user_id = authenticated_user["id"]
+                requester_id = str(authenticated_user["id"])
+                if not await user_can_access_object(requester_id, object_id):
+                    logger.warning(
+                        "Denied collab join user_id=%s object_id=%s",
+                        requester_id,
+                        object_id,
+                    )
+                    await websocket.send_json(
+                        {"type": MSG_ERROR, "data": {"message": "Not authorized for this document"}}
+                    )
+                    await websocket.close(code=1008)
+                    break
+                user_id = requester_id
                 display_name = data.get("display_name") or default_display_name
                 await collaboration_manager.join_room(object_id, user_id, display_name, websocket)
 

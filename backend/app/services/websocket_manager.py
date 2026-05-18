@@ -5,12 +5,23 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from typing import DefaultDict, List, Set
+from typing import Any, DefaultDict, Dict, List, Optional, Set
 
 from fastapi import WebSocket
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
+
+
+# Channels broadcast to every authenticated user — app-wide events such as
+# "an object was created" or "an agent went idle".
+PUBLIC_CHANNELS = frozenset({"system", "logs", "objects", "tasks", "agents", "files"})
+
+# Channels namespaced by a free-form identifier (e.g. agent name). We do not
+# track per-agent ownership today, so these stay readable by any authenticated
+# user. The `agent-approval:` channel is treated specially below because it
+# is user-scoped by design.
+PUBLIC_PREFIXES = ("agent:",)
 
 
 class WebSocketMessage(BaseModel):
@@ -154,19 +165,25 @@ class WebSocketManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
         self.subscriptions: DefaultDict[WebSocket, Set[str]] = defaultdict(set)
+        # Track the authenticated user behind each socket so channel
+        # subscriptions can be authorized (issue #176).
+        self.connection_users: Dict[WebSocket, Dict[str, Any]] = {}
 
     @property
     def active_connection_count(self) -> int:
         return len(self.active_connections)
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, user: Optional[Dict[str, Any]] = None):
         await websocket.accept()
         self.active_connections.add(websocket)
         self.subscriptions[websocket].add("system")
+        if user is not None:
+            self.connection_users[websocket] = user
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.discard(websocket)
         self.subscriptions.pop(websocket, None)
+        self.connection_users.pop(websocket, None)
 
     async def broadcast(self, message: dict):
         disconnected = set()
@@ -181,6 +198,40 @@ class WebSocketManager:
                 disconnected.add(websocket)
         for websocket in disconnected:
             self.disconnect(websocket)
+
+    async def _authorize_channel(self, user: Optional[Dict[str, Any]], channel: str) -> bool:
+        """Return True if *user* may subscribe to *channel*.
+
+        Anonymous sockets (no authenticated user) only get the public
+        broadcast channels — anything namespaced is denied. See
+        ``PUBLIC_CHANNELS`` / ``PUBLIC_PREFIXES`` for the unrestricted set.
+        """
+        if not isinstance(channel, str) or not channel:
+            return False
+        if channel in PUBLIC_CHANNELS:
+            return True
+        if any(channel.startswith(prefix) for prefix in PUBLIC_PREFIXES):
+            return True
+
+        user_id = (user or {}).get("id")
+        if not user_id:
+            return False
+
+        if channel.startswith("agent-approval:"):
+            target = channel.split(":", 1)[1]
+            return target == str(user_id)
+
+        if channel.startswith(("object:", "collab:")):
+            object_id = channel.split(":", 1)[1]
+            # Local import avoids a startup cycle: access.py depends on the
+            # qdrant client which is initialized after this module is loaded.
+            from app.services.access import user_can_access_object
+
+            return await user_can_access_object(str(user_id), object_id)
+
+        # Unknown namespaced channel — deny by default. New channel types
+        # must opt in to this allow-list before clients can subscribe.
+        return False
 
     async def handle_message(self, websocket: WebSocket, data: str):
         try:
@@ -198,10 +249,28 @@ class WebSocketManager:
             return
 
         if message.type == "subscribe":
-            channels = message.data.get("channels", [])
-            for channel in channels:
-                self.subscriptions[websocket].add(channel)
-            await websocket.send_json({"type": "subscribed", "data": {"channels": sorted(self.subscriptions[websocket])}})
+            requested = message.data.get("channels", [])
+            user = self.connection_users.get(websocket)
+            granted: List[str] = []
+            denied: List[str] = []
+            for channel in requested:
+                if await self._authorize_channel(user, channel):
+                    self.subscriptions[websocket].add(channel)
+                    granted.append(channel)
+                else:
+                    denied.append(channel)
+            payload: Dict[str, Any] = {
+                "channels": sorted(self.subscriptions[websocket]),
+                "granted": granted,
+            }
+            if denied:
+                payload["denied"] = denied
+                logger.warning(
+                    "Denied channel subscription user_id=%s channels=%s",
+                    (user or {}).get("id"),
+                    denied,
+                )
+            await websocket.send_json({"type": "subscribed", "data": payload})
             return
 
         if message.type == "unsubscribe":

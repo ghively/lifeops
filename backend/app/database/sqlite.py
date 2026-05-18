@@ -270,6 +270,20 @@ class SQLiteManager:
                 )
             """)
 
+            # Per-user preference bag (arbitrary key/value, scoped per user).
+            # Distinct from the global `settings` table, which stores typed
+            # system configuration shared across users.
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    user_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, key),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+
             await self.connection.commit()
         except Exception:
             await self.connection.execute("ROLLBACK")
@@ -285,6 +299,7 @@ class SQLiteManager:
             "CREATE INDEX IF NOT EXISTS idx_agent_messages_session_id ON agent_messages(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_scheduled_tasks_agent_id ON agent_scheduled_tasks(agent_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_audit_log_timestamp ON agent_audit_log(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_user_preferences_user_id ON user_preferences(user_id)",
         ]
         for idx_sql in indexes:
             try:
@@ -370,6 +385,48 @@ class SQLiteManager:
             return json.loads(row["value"])
         except json.JSONDecodeError:
             return row["value"]
+
+    async def list_user_preferences(self, user_id: str) -> dict[str, Any]:
+        """Return the full preference bag for a user as a {key: value} dict."""
+        rows = await self.fetchall(
+            "SELECT key, value FROM user_preferences WHERE user_id = ?",
+            (user_id,),
+        )
+        prefs: dict[str, Any] = {}
+        for row in rows:
+            raw = row.get("value")
+            if raw is None:
+                prefs[row["key"]] = None
+                continue
+            try:
+                prefs[row["key"]] = json.loads(raw)
+            except json.JSONDecodeError:
+                prefs[row["key"]] = raw
+        return prefs
+
+    async def upsert_user_preferences(self, user_id: str, prefs: dict[str, Any]) -> None:
+        """Bulk upsert preference values for a user. Empty input is a no-op."""
+        if not prefs:
+            return
+        rows = [(user_id, key, json.dumps(value)) for key, value in prefs.items()]
+        await self.executemany(
+            """
+            INSERT INTO user_preferences (user_id, key, value, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            rows,
+        )
+
+    async def delete_user_preference(self, user_id: str, key: str) -> bool:
+        """Delete one preference key. Returns True if a row was removed."""
+        cursor = await self.execute(
+            "DELETE FROM user_preferences WHERE user_id = ? AND key = ?",
+            (user_id, key),
+        )
+        return getattr(cursor, "rowcount", 0) > 0
 
     async def list_mcp_server_configs(self):
         """Fetch all persisted MCP server configs."""
