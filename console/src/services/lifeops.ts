@@ -11,8 +11,13 @@
 
 import axios, { type AxiosInstance } from 'axios'
 
+import { getToken, handleUnauthorized } from '@/lib/auth'
+
 const BASE_URL: string =
   (import.meta.env.VITE_LIFEOPS_URL as string | undefined) ?? 'http://127.0.0.1:8080'
+
+/** Base URL with the HTTP scheme swapped for its WebSocket equivalent. */
+export const WS_BASE_URL: string = BASE_URL.replace(/^http/, 'ws')
 
 export const lifeops: AxiosInstance = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
@@ -44,10 +49,26 @@ export class LifeOpsError extends Error {
   }
 }
 
+lifeops.interceptors.request.use((config) => {
+  const token = getToken()
+  if (token) {
+    config.headers.set('Authorization', `Bearer ${token}`)
+  }
+  return config
+})
+
 lifeops.interceptors.response.use(
   (response) => response,
   (error) => {
     const body = error?.response?.data as LifeOpsErrorBody | undefined
+    // A 401 anywhere except the login attempt itself means the session is
+    // gone: drop the token and route the whole app to the login screen. The
+    // login endpoint's own 401 is a wrong password and must surface to the
+    // form instead.
+    const url = (error?.config?.url as string | undefined) ?? ''
+    if (error?.response?.status === 401 && !url.includes('/auth/login')) {
+      handleUnauthorized()
+    }
     if (body?.code) {
       return Promise.reject(
         new LifeOpsError(body.code, body.message, error.response?.status, body.details),
@@ -229,7 +250,63 @@ export interface SystemStatus {
   }
 }
 
+// --- auth / activity / log types ----------------------------------------------
+
+/** Who the server believes this session is (GET /auth/me). */
+export interface AuthIdentity {
+  client_id: string
+  display_name: string
+  auth_enabled: boolean
+}
+
+/**
+ * One entry in the server's ephemeral activity ring buffer
+ * (BUILD_SPEC section 21): a semantic operation with its outcome.
+ * Durable audit is Phase 4; this feed resets when LifeOps Core restarts.
+ */
+export interface ActivityEntry {
+  ts: string
+  operation: string
+  result: string
+  duration_ms: number | null
+  client_id?: string
+  task_id?: string
+  person_id?: string
+  subject_id?: string
+  key?: string
+}
+
+/** A frontend log record accepted by POST /system/logs. */
+export interface RemoteLogEntry {
+  level: 'debug' | 'info' | 'warn' | 'error'
+  message: string
+  context?: Record<string, unknown>
+  ts: string
+}
+
+export interface SearchResults {
+  people: Person[]
+  preferences: Preference[]
+  tasks: Task[]
+}
+
 // --- API surface -------------------------------------------------------------
+
+export const authApi = {
+  login: (password: string) =>
+    lifeops.post<{ token: string }>('/auth/login', { password }).then((r) => r.data),
+
+  me: () => lifeops.get<AuthIdentity>('/auth/me').then((r) => r.data),
+
+  /** First setup needs no current password; changes do (BUILD_SPEC §22). */
+  setPassword: (newPassword: string, currentPassword?: string) =>
+    lifeops
+      .post<{ auth_enabled: boolean }>('/auth/password', {
+        current_password: currentPassword,
+        new_password: newPassword,
+      })
+      .then((r) => r.data),
+}
 
 export const tasksApi = {
   list: (params?: { state?: TaskState[]; limit?: number; offset?: number }) =>
@@ -333,6 +410,11 @@ export const configApi = {
     lifeops.put<SystemConfig>('/config/system', values).then((r) => r.data),
 }
 
+export const searchApi = {
+  search: (q: string) =>
+    lifeops.get<SearchResults>('/search', { params: { q } }).then((r) => r.data),
+}
+
 export const systemApi = {
   status: () => lifeops.get<SystemStatus>('/system/status').then((r) => r.data),
   health: () =>
@@ -341,6 +423,30 @@ export const systemApi = {
         '/health',
       )
       .then((r) => r.data),
+
+  /**
+   * The state machine's transition table, served by LifeOps Core so the UI
+   * offers only what the machine currently permits (SECURITY.md: the Console
+   * must not mirror the table locally). Display only — the server still
+   * re-validates every transition.
+   */
+  getTransitions: () =>
+    lifeops
+      .get<{ transitions: Record<TaskState, TaskState[]> }>('/tasks/transitions')
+      .then((r) => r.data.transitions),
+
+  /** Ephemeral activity ring buffer (BUILD_SPEC section 21). */
+  getActivity: () =>
+    lifeops
+      .get<{ entries: ActivityEntry[] }>('/system/activity')
+      .then((r) => r.data.entries),
+
+  /**
+   * Ship frontend logs to the server. Fire-and-forget by contract — callers
+   * (the logger sink) swallow failures so logging never breaks the app.
+   */
+  postLogs: (entries: RemoteLogEntry[]) =>
+    lifeops.post('/system/logs', { entries }).then(() => undefined),
 }
 
 // --- display helpers ---------------------------------------------------------
@@ -359,41 +465,9 @@ export const TASK_STATE_LABELS: Record<TaskState, string> = {
   CANCELLED: 'Cancelled',
 }
 
-/**
- * Which states a task may legally move to next.
- *
- * This mirrors the server's transition table so the UI can offer only valid
- * choices. LifeOps Core remains the authority — it re-validates every
- * transition and rejects an illegal one with `invalid_transition`.
- */
-export const TASK_TRANSITIONS: Record<TaskState, TaskState[]> = {
-  CAPTURED: ['PLANNED', 'READY', 'BLOCKED', 'CANCELLED'],
-  PLANNED: ['READY', 'CAPTURED', 'BLOCKED', 'CANCELLED'],
-  READY: ['EXECUTING', 'PLANNED', 'BLOCKED', 'CANCELLED'],
-  EXECUTING: [
-    'WAITING_EXTERNAL',
-    'NEEDS_APPROVAL',
-    'VERIFYING',
-    'COMPLETED',
-    'BLOCKED',
-    'FAILED',
-    'CANCELLED',
-  ],
-  WAITING_EXTERNAL: [
-    'EXECUTING',
-    'NEEDS_APPROVAL',
-    'VERIFYING',
-    'BLOCKED',
-    'FAILED',
-    'CANCELLED',
-  ],
-  NEEDS_APPROVAL: ['EXECUTING', 'BLOCKED', 'FAILED', 'CANCELLED'],
-  VERIFYING: ['COMPLETED', 'WAITING_EXTERNAL', 'BLOCKED', 'FAILED'],
-  BLOCKED: ['READY', 'PLANNED', 'EXECUTING', 'FAILED', 'CANCELLED'],
-  FAILED: ['READY', 'PLANNED', 'CANCELLED'],
-  COMPLETED: [],
-  CANCELLED: [],
-}
+// --- display helpers ---------------------------------------------------------
+
+
 
 /**
  * Turn any thrown value into something worth showing a human.

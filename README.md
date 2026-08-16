@@ -65,8 +65,6 @@ tests/            unit, policy, integration, persistence, and the Phase 0 exit t
 scripts/          build, run, and health scripts
 deploy/           systemd units and container compose
 changes/requests/ code change requests raised by Hermes (Phase 11)
-legacy/           the pre-LifeOps Knowledge-OS backend and frontend, kept for
-                  reference; nothing here runs or is built
 ```
 
 ---
@@ -76,7 +74,7 @@ legacy/           the pre-LifeOps Knowledge-OS backend and frontend, kept for
 | Phase | Scope | State |
 |------:|-------|-------|
 | 0 | Core spine: Hermes → LifeOps MCP → LifeOps Core → NornicDB | **Complete** |
-| 1 | Console foundation: Today, Needs Attention, Waiting, Search, Activity | Not started |
+| 1 | Console foundation: Today, Needs Attention, Waiting, Search, Activity | **Complete** |
 | 2 | Hermes memory provider backed by NornicDB | Not started |
 | 3 | World graph and entity inspector | Not started |
 | 4 | Durable work: waiting items, due-work worker, verification | Not started |
@@ -103,6 +101,25 @@ legacy/           the pre-LifeOps Knowledge-OS backend and frontend, kept for
   ElevenLabs, Telegram, Calendar, Email, Browser, and Telephony — all disabled
   and unconfigured on a fresh deployment.
 - LifeOps Console booting on Today, Tasks, Configuration, and System.
+
+### What Phase 1 adds
+
+- The full Console navigation working: Today, Needs Attention, Waiting, Tasks,
+  Search, Configuration, System, and Activity.
+- Optional Console authentication: set a console password and every API route
+  requires a bearer token; leave it unset and loopback stays open (see
+  [SECURITY.md](SECURITY.md)).
+- The task transition table served from the API — the Console no longer
+  mirrors it.
+- MCP resources `lifeops://me`, `lifeops://today`, and `lifeops://waiting`
+  alongside the five tools (BUILD_SPEC section 48).
+- A WebSocket event stream (`/api/v1/events`) so the Console updates live
+  instead of only polling.
+- Universal search across people, preferences, and tasks, an ephemeral
+  activity feed (`/api/v1/system/activity`; the durable audit log is Phase 4),
+  and a frontend log sink (`/api/v1/system/logs`).
+- The pre-LifeOps `legacy/` tree is deleted; its patterns are ported or in git
+  history.
 
 ### What Phase 0 deliberately does not deliver
 

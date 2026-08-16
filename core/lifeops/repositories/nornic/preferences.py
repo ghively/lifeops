@@ -146,6 +146,22 @@ class NornicPreferenceRepository:
         )
         return _row_to_preference(rows[0]) if rows else None
 
+    async def search(self, query: str, *, limit: int = 25) -> list[Preference]:
+        rows = await self._client.read(
+            f"""
+            MATCH (p:Preference)
+            WHERE p.valid_to IS NULL
+              AND (toLower(p.key) CONTAINS $needle
+                   OR toLower(p.value) CONTAINS $needle)
+            RETURN {_RETURN}
+            ORDER BY p.key ASC
+            LIMIT $limit
+            """,
+            needle=query.strip().lower(),
+            limit=limit,
+        )
+        return [_row_to_preference(r) for r in rows]
+
     async def list_history(self, subject_id: str, key: str) -> list[Preference]:
         rows = await self._client.read(
             f"""

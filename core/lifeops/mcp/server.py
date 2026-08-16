@@ -9,7 +9,10 @@ Tools are narrow and semantic. There is no ``run_cypher``, no ``create_node``,
 and no ``do_action``: a raw graph write cannot carry authorization, state
 validity, approval, idempotency, or verification, and LifeOps can (section 7).
 
-Phase 0 exposes exactly five operations and nothing more (section 49).
+Phase 0 exposed exactly five tools and nothing more (section 49). Phase 1
+adds read-only resources — ``lifeops://me``, ``lifeops://today``,
+``lifeops://waiting`` — because read-oriented context belongs to resources,
+not tools (section 48).
 
 Client identity
 ---------------
@@ -35,6 +38,7 @@ from lifeops.container import Container
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
 from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState
 from lifeops.errors import LifeOpsError
+from lifeops.mcp.resources import register_resources
 from lifeops.observability.logging import configure_logging, trace_context
 from lifeops.policy import ClientIdentity, UnknownClientPolicy, resolve_client
 from lifeops.settings import get_settings
@@ -335,6 +339,8 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                 }
             except LifeOpsError as exc:
                 return _fail(exc)
+
+    register_resources(server, core=container.core, client=client, clock=container.clock)
 
     return server
 

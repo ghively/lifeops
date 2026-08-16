@@ -224,12 +224,11 @@ than adding a container runtime to satisfy one dependency.
 that starts in Phase 2 with memory. Loading a model now would be capacity held
 against a problem that does not exist yet.
 
-**No auth on the Console yet.** Phase 0 has no login. LifeOps Core binds to
-loopback and holds no external-write capability, so the exposure is a local
-process on a personal machine. This is a real gap, recorded in
-[SECURITY.md](SECURITY.md), and Phase 1 closes it.
+**Console auth is opt-in.** Phase 1 added bearer-token authentication, enabled
+only once a console password is set. Until then loopback binding is the whole
+boundary, so a fresh deployment behaves exactly as Phase 0 did. Details in
+[SECURITY.md](SECURITY.md).
 
-**Legacy code moved, not deleted.** The Knowledge-OS backend and unmigrated
-screens sit in `legacy/`. They are excluded from every build and test, so
-nothing there can become a second source of truth, but they remain readable
-while later phases port their patterns.
+**Legacy code deleted in Phase 1.** The Knowledge-OS backend and unmigrated
+screens lived in `legacy/` through Phase 0 so their patterns stayed readable
+while being ported. Phase 1 removed the tree; git history remains the archive.

@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # later phases inherit it rather than bolting it on.
     safe_mode: bool = False
 
+    # --- Console authentication (SECURITY.md debt #1) ------------------------
+    # Master switch for bearer-token auth on the Console API. Auth only
+    # *applies* when a console password has also been set via the SecretStore
+    # (core/lifeops/auth.py): with no password configured, a loopback-only
+    # deployment stays open so first-run setup and tests work without a token.
+    console_auth_enabled: bool = True
+
     @property
     def secrets_dir(self) -> Path:
         return self.state_dir / "secrets"

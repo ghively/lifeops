@@ -12,6 +12,7 @@ is a migration of one repository rather than a change to the domain.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from lifeops.domain.tasks import Task, TaskPriority, TaskState, VerificationState
@@ -156,6 +157,21 @@ class NornicTaskRepository:
             "MATCH (t:Task) RETURN t.state AS state, count(*) AS total"
         )
         return {row["state"]: int(row["total"]) for row in rows if row.get("state")}
+
+    async def search(self, query: str, *, limit: int = 25) -> Sequence[Task]:
+        rows = await self._client.read(
+            f"""
+            MATCH (t:Task)
+            WHERE toLower(t.title) CONTAINS $needle
+               OR toLower(coalesce(t.description, '')) CONTAINS $needle
+            RETURN {_RETURN}
+            ORDER BY t.created_at DESC
+            LIMIT $limit
+            """,
+            needle=query.strip().lower(),
+            limit=limit,
+        )
+        return [_row_to_task(r) for r in rows]
 
     async def create(self, task: Task) -> Task:
         statements: list[tuple[str, dict[str, Any]]] = [(_WRITE, _write_params(task))]

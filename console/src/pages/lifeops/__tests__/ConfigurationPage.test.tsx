@@ -12,7 +12,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConfigurationPage } from '../ConfigurationPage'
-import { configApi, type ProviderEntry } from '@/services/lifeops'
+import { authApi, configApi, type ProviderEntry } from '@/services/lifeops'
 
 vi.mock('@/services/lifeops', async () => {
   const actual = await vi.importActual<typeof import('@/services/lifeops')>(
@@ -20,6 +20,11 @@ vi.mock('@/services/lifeops', async () => {
   )
   return {
     ...actual,
+    authApi: {
+      me: vi.fn(),
+      login: vi.fn(),
+      setPassword: vi.fn(),
+    },
     configApi: {
       listProviders: vi.fn(),
       getProvider: vi.fn(),
@@ -117,9 +122,15 @@ function renderPage() {
 }
 
 const mockedConfig = vi.mocked(configApi)
+const mockedAuth = vi.mocked(authApi)
 
 beforeEach(() => {
   mockedConfig.listProviders.mockResolvedValue([deepseek])
+  mockedAuth.me.mockResolvedValue({
+    client_id: 'lifeops-console',
+    display_name: 'LifeOps Console',
+    auth_enabled: false,
+  })
 })
 
 afterEach(() => {
@@ -211,6 +222,63 @@ describe('LifeOps Configuration', () => {
     renderPage()
     expect(
       await screen.findByText(/never written to NornicDB/i),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('Console access', () => {
+  it('offers first setup without a current password when auth is off', async () => {
+    renderPage()
+    expect(
+      await screen.findByText(/Authentication is off/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText('Current password')).not.toBeInTheDocument()
+
+    mockedAuth.setPassword.mockResolvedValue({ auth_enabled: true })
+    await userEvent.type(screen.getByLabelText('Console password'), 'correct horse')
+    await userEvent.click(screen.getByRole('button', { name: 'Set password' }))
+
+    await waitFor(() =>
+      expect(mockedAuth.setPassword).toHaveBeenCalledWith('correct horse', undefined),
+    )
+  })
+
+  it('requires the current password once auth is on', async () => {
+    mockedAuth.me.mockResolvedValue({
+      client_id: 'lifeops-console',
+      display_name: 'LifeOps Console',
+      auth_enabled: true,
+    })
+    renderPage()
+    expect(await screen.findByText(/Authentication is on/i)).toBeInTheDocument()
+
+    mockedAuth.setPassword.mockResolvedValue({ auth_enabled: true })
+    await userEvent.type(screen.getByLabelText('Current password'), 'old password')
+    await userEvent.type(screen.getByLabelText('New password'), 'new password')
+    await userEvent.click(screen.getByRole('button', { name: 'Change password' }))
+
+    await waitFor(() =>
+      expect(mockedAuth.setPassword).toHaveBeenCalledWith('new password', 'old password'),
+    )
+  })
+
+  it('shows the server reason when a change is refused', async () => {
+    const { LifeOpsError } = await vi.importActual<
+      typeof import('@/services/lifeops')
+    >('@/services/lifeops')
+    mockedAuth.setPassword.mockRejectedValue(
+      new LifeOpsError(
+        'invalid_credentials',
+        'the current console password did not match',
+        401,
+      ),
+    )
+    renderPage()
+    await userEvent.type(await screen.findByLabelText('Console password'), 'correct horse')
+    await userEvent.click(screen.getByRole('button', { name: 'Set password' }))
+
+    expect(
+      await screen.findByText('the current console password did not match'),
     ).toBeInTheDocument()
   })
 })

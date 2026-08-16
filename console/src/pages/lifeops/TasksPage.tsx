@@ -2,9 +2,9 @@
  * Tasks — LifeOps durable tasks (BUILD_SPEC section 14).
  *
  * The Knowledge-OS task UI is adapted to the canonical LifeOps state machine.
- * The state dropdown offers only transitions the machine permits, and LifeOps
- * Core re-validates every one: the UI narrows the choices, it does not decide
- * them.
+ * The dropdown choices come from the server (GET /tasks/transitions), and
+ * LifeOps Core re-validates every one: the UI narrows the choices, it does not
+ * decide them.
  */
 
 import { useMemo, useState } from 'react'
@@ -19,7 +19,7 @@ import {
   LifeOpsError,
   TASK_STATE_LABELS,
   errorMessage,
-  TASK_TRANSITIONS,
+  systemApi,
   tasksApi,
   type Task,
   type TaskState,
@@ -58,17 +58,18 @@ const CLOSED: TaskState[] = ['COMPLETED', 'CANCELLED']
 
 function TaskCard({
   task,
+  nextStates,
   onTransition,
   pending,
   error,
 }: {
   task: Task
+  /** States the server-served machine permits from here; null when unknown. */
+  nextStates: TaskState[] | null
   onTransition: (state: TaskState) => void
   pending: boolean
   error: string | null
 }) {
-  const nextStates = TASK_TRANSITIONS[task.state]
-
   return (
     <div
       className={cn(
@@ -97,7 +98,7 @@ function TaskCard({
           </div>
         </div>
 
-        {nextStates.length > 0 && (
+        {nextStates !== null && nextStates.length > 0 && (
           <select
             className="shrink-0 rounded-md border border-border bg-background px-2 py-1 text-xs"
             value=""
@@ -136,6 +137,15 @@ export function LifeOpsTasksPage() {
   const tasksQuery = useQuery({
     queryKey: ['lifeops', 'tasks'],
     queryFn: () => tasksApi.list({ limit: 200 }),
+  })
+
+  // The transition table comes from the server (GET /tasks/transitions) so the
+  // UI offers what the machine currently permits instead of mirroring a
+  // hardcoded copy. Display only — the server still validates every change.
+  const transitionsQuery = useQuery({
+    queryKey: ['lifeops', 'task-transitions'],
+    queryFn: () => systemApi.getTransitions(),
+    staleTime: 60_000,
   })
 
   const createTask = useMutation({
@@ -251,10 +261,32 @@ export function LifeOpsTasksPage() {
         </p>
       ) : (
         <div className="space-y-2">
+          {transitionsQuery.isLoading && (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading allowed transitions…
+            </p>
+          )}
+          {transitionsQuery.isError && (
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <span>
+                Could not load the allowed transitions, so state changes are
+                unavailable. {errorMessage(transitionsQuery.error)}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 underline"
+                onClick={() => void transitionsQuery.refetch()}
+              >
+                Retry
+              </button>
+            </div>
+          )}
           {visible.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
+              nextStates={transitionsQuery.data?.[task.state] ?? null}
               pending={transition.isPending && transition.variables?.id === task.id}
               error={transitionErrors[task.id] ?? null}
               onTransition={(state) => transition.mutate({ id: task.id, state })}

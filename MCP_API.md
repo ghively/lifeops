@@ -4,8 +4,34 @@ The portable agent interface. Hermes is the primary consumer; any trusted MCP
 client can connect to the same server and operate on the same personal state,
 subject to its own permissions.
 
-**Phase 0 exposes exactly five tools.** Nothing more until the spine is proven
-(BUILD_SPEC section 49).
+**Phase 1 exposes five tools and three resources.** The tools are the Phase 0
+set (BUILD_SPEC section 49); the resources are the read views of section 48.
+
+---
+
+## Resources
+
+Read-only context, fetched as MCP resources rather than called as tools.
+Failures come back as the same `{"ok": false, "error": ...}` data shape the
+tools use, honouring the connecting client's capabilities.
+
+### `lifeops://me`
+
+The person the assistant is acting for — the primary user. Consult at session
+start instead of asking who you are talking to.
+
+### `lifeops://today`
+
+The current operating picture: open tasks, the subset already due, and the
+standing preferences in effect right now. Read this before planning the day's
+work; do not treat it as a license to act — actions still go through the tools
+and their capability checks.
+
+### `lifeops://waiting`
+
+Tasks in `WAITING_EXTERNAL` with their waiting context — what was attempted and
+when. Use it to decide whether to follow up; full waiting items and follow-up
+automation arrive in Phase 4.
 
 ---
 
@@ -245,7 +271,6 @@ policy into a model's judgement, which is exactly the wrong place for it.
 
 | Phase | Additions |
 |---|---|
-| 1 | Resources: `lifeops://me`, `lifeops://today`, `lifeops://waiting` |
 | 2 | `search_memory`, memory write and invalidate |
 | 3 | `find_person`, `get_provider`, `get_related_entities`, `get_entity_history` |
 | 4 | `update_task`, `create_waiting_item`, `list_waiting_items` |

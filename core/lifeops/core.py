@@ -21,6 +21,7 @@ from lifeops.domain.preferences import (
     PreferenceDraft,
     normalise_key,
 )
+from lifeops.domain.search import SearchResults
 from lifeops.domain.tasks import (
     Task,
     TaskDraft,
@@ -30,6 +31,7 @@ from lifeops.domain.tasks import (
     apply_transition,
 )
 from lifeops.errors import ConflictError, NotFoundError, ValidationError
+from lifeops.events import PERSON_CHANGED, PREFERENCE_CHANGED, TASK_CHANGED, EventBus
 from lifeops.ids import PREFIX_PERSON, slug_id
 from lifeops.observability.logging import operation
 from lifeops.policy import Capability, ClientIdentity, require
@@ -52,15 +54,26 @@ class LifeOpsCore:
         tasks: TaskRepository,
         clock: Clock | None = None,
         safe_mode: bool = False,
+        events: EventBus | None = None,
     ) -> None:
         self._people = people
         self._preferences = preferences
         self._tasks = tasks
         self._clock = clock or SystemClock()
         self.safe_mode = safe_mode
+        self._events = events
 
     def _require(self, client: ClientIdentity, capability: Capability) -> None:
         require(client, capability, safe_mode=self.safe_mode)
+
+    def _publish(self, event_type: str, **fields: object) -> None:
+        """Notify Console subscribers after a successful mutation.
+
+        Best-effort by design: a missed event costs one refetch, so a broker
+        failure must never fail the mutation that triggered it (events.py).
+        """
+        if self._events is not None:
+            self._events.publish({"type": event_type, **fields})
 
     # --- people -------------------------------------------------------------
 
@@ -123,7 +136,9 @@ class LifeOpsCore:
             updated_at=now,
         )
         with operation("person.create", person_id=person_id, client_id=client.client_id):
-            return await self._people.upsert(person)
+            created = await self._people.upsert(person)
+        self._publish(PERSON_CHANGED, person_id=created.id)
+        return created
 
     async def ensure_primary_person(self, display_name: str) -> Person:
         """Create the primary person if none exists yet.
@@ -250,9 +265,11 @@ class LifeOpsCore:
             client_id=client.client_id,
             supersedes=current.id if current else None,
         ):
-            return await self._preferences.save_superseding(
+            saved = await self._preferences.save_superseding(
                 preference, supersedes=current
             )
+        self._publish(PREFERENCE_CHANGED, key=key, subject_id=resolved)
+        return saved
 
     async def invalidate_preference(
         self, client: ClientIdentity, *, preference_id: str
@@ -267,6 +284,7 @@ class LifeOpsCore:
             raise NotFoundError(
                 f"no such preference: {preference_id}", preference_id=preference_id
             )
+        self._publish(PREFERENCE_CHANGED, key=updated.key, subject_id=updated.subject_id)
         return updated
 
     # --- tasks --------------------------------------------------------------
@@ -305,7 +323,9 @@ class LifeOpsCore:
         )
 
         with operation("task.create", task_id=task.id, client_id=client.client_id):
-            return await self._tasks.create(task)
+            created = await self._tasks.create(task)
+        self._publish(TASK_CHANGED, task_id=created.id)
+        return created
 
     async def get_task(self, client: ClientIdentity, *, task_id: str) -> Task:
         self._require(client, Capability.READ_TASKS)
@@ -393,4 +413,24 @@ class LifeOpsCore:
                     actor_client=client.client_id,
                 )
 
-        return await self._tasks.update(working)
+        updated = await self._tasks.update(working)
+        self._publish(TASK_CHANGED, task_id=updated.id)
+        return updated
+
+    # --- search -------------------------------------------------------------
+
+    async def search(
+        self, client: ClientIdentity, *, query: str, limit: int = 10
+    ) -> SearchResults:
+        """Universal search over people, preferences, and tasks (section 19).
+
+        Phase 1 is a case-insensitive substring match; ranking and semantic
+        retrieval arrive with the memory layer (Phase 2).
+        """
+        self._require(client, Capability.READ_WORLD)
+        with operation("search.query", client_id=client.client_id):
+            return SearchResults(
+                people=await self._people.find_by_name(query),
+                preferences=await self._preferences.search(query, limit=limit),
+                tasks=list(await self._tasks.search(query, limit=limit)),
+            )

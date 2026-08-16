@@ -102,6 +102,8 @@ export default defineConfig({
       '/api': {
         target: `http://127.0.0.1:${lifeopsPort}`,
         changeOrigin: true,
+        // The /api/v1/events stream is a WebSocket (BUILD_SPEC section 4).
+        ws: true,
       },
     },
   },

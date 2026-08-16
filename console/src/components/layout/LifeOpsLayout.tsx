@@ -10,12 +10,16 @@ import { PanelLeft } from 'lucide-react'
 
 import { LifeOpsSidebar } from './LifeOpsSidebar'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { useLifeOpsEvents } from '@/lib/useLifeOpsEvents'
 import { cn } from '@/lib/utils'
 
 export function LifeOpsLayout({ children }: { children: React.ReactNode }) {
   const isMobile = useMediaQuery('(max-width: 1023px)')
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  // Live server events keep every mounted page's caches fresh.
+  useLifeOpsEvents()
 
   useEffect(() => {
     if (!isMobile) setMobileOpen(false)
