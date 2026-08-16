@@ -12,6 +12,7 @@ concerns leak straight back into the domain.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from lifeops.domain.people import Person
@@ -43,6 +44,10 @@ class PreferenceRepository(Protocol):
         ...
 
     async def get_current_by_key(self, subject_id: str, key: str) -> Preference | None: ...
+
+    async def search(self, query: str, *, limit: int = 25) -> list[Preference]:
+        """Case-insensitive substring match over key and value, current only."""
+        ...
 
     async def list_history(self, subject_id: str, key: str) -> list[Preference]:
         """Every record for a key, newest first, including closed windows."""
@@ -76,6 +81,10 @@ class TaskRepository(Protocol):
     ) -> list[Task]: ...
 
     async def count_by_state(self) -> dict[str, int]: ...
+
+    async def search(self, query: str, *, limit: int = 25) -> Sequence[Task]:
+        """Case-insensitive substring match over title and description."""
+        ...
 
     async def create(self, task: Task) -> Task: ...
 

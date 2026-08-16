@@ -187,17 +187,22 @@ without anyone holding the user's keys.
 
 Recorded rather than hidden. Each has a phase.
 
-### The Console has no authentication (Phase 1)
+### Console authentication (added in Phase 1, off until configured)
 
-Phase 0 ships no login. Anyone with access to `127.0.0.1:5173` — or to any
-process on the machine — can read and modify LifeOps state through the Console.
+The Console and API ship with optional bearer-token authentication. It is
+**disabled until a console password is set**: with no password configured,
+every route answers without a token, which is acceptable only because LifeOps
+binds to loopback and no client holds an external-action capability.
 
-The exposure is bounded: loopback-only binding, and no client holds an
-external-action capability, so the worst case is local disclosure and corruption
-of personal state, not action taken in the user's name.
+Once a password exists in the secret store, all `/api/v1` routes except
+`/health` and `/auth/login` require `Authorization: Bearer <token>`; the
+Console shows a login screen. Tokens live in memory with a 12-hour expiry and
+never touch NornicDB. The password itself is stored only in the encrypted
+secret store and is never returned or logged. `LIFEOPS_CONSOLE_AUTH_ENABLED=false`
+forces auth off even if a password exists.
 
 Do not port-forward or reverse-proxy LifeOps Core or the Console to a routable
-address until Phase 1 lands.
+address with auth disabled.
 
 ### The MCP server trusts its launch configuration (by design)
 
@@ -210,19 +215,17 @@ access. Revisit if LifeOps ever moves to a networked MCP transport.
 
 ### There is no audit log yet (Phase 4)
 
-Semantic operations are logged with trace IDs and durations, but there is no
-durable, queryable audit trail in NornicDB, and no Activity screen. "Why did
-Hermes do that?" is currently answerable only from log files.
+Semantic operations are logged with trace IDs and durations, and the Activity
+screen shows an ephemeral in-memory feed of recent operations, but there is no
+durable, queryable audit trail in NornicDB. "Why did Hermes do that?" beyond
+the current process lifetime is answerable only from log files.
 
-### The Console's transition list duplicates the server's (accepted)
+### WebSocket events carry no payload beyond the type (accepted)
 
-`TASK_TRANSITIONS` in the Console mirrors the server's table so the UI offers
-only valid choices. They could drift.
-
-The consequence of drift is bounded: the server re-validates every transition
-and rejects an illegal one, so a stale UI shows a choice that then fails with a
-clear error. It never permits an illegal write. Phase 1 should serve the table
-from the API instead.
+`/api/v1/events` publishes change notifications (`task_changed`,
+`preference_changed`, and so on) so the Console can invalidate and refetch.
+The events name what changed, not its contents; clients always read the data
+back through the authenticated API.
 
 ---
 

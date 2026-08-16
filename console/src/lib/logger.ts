@@ -1,3 +1,19 @@
+/**
+ * Frontend logger.
+ *
+ * Keeps an in-memory ring for inspection and mirrors warn/error entries to
+ * LifeOps Core (`POST /system/logs`) so the server sees what the Console
+ * suffered. The remote sink is batched and best-effort: it never throws,
+ * never awaits in the caller's path, and never logs its own failures (a
+ * logging loop is worse than a lost log).
+ *
+ * Secret hygiene: context values whose keys look like credentials are
+ * redacted before leaving the browser. The auth token never appears here —
+ * it lives only in the axios interceptor.
+ */
+
+import { systemApi, type RemoteLogEntry } from '@/services/lifeops'
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 export interface FrontendLogEntry {
@@ -15,10 +31,19 @@ export interface FrontendLogEntry {
 type LogListener = (entry: FrontendLogEntry) => void
 
 const MAX_LOG_ENTRIES = 1000
-const API_BASE_URL = import.meta.env.VITE_API_URL || ''
+const FLUSH_INTERVAL_MS = 5_000
+const FLUSH_BATCH_SIZE = 10
+const MAX_BATCH = 50
+
+/** Keys that must never leave the browser in a log payload. */
+const SENSITIVE_KEY = /password|secret|token|authorization|api[-_]?key|credential/i
 
 const entries: FrontendLogEntry[] = []
 const listeners = new Set<LogListener>()
+
+const remoteQueue: RemoteLogEntry[] = []
+let flushTimer: ReturnType<typeof setTimeout> | null = null
+let flushing = false
 
 function notify(entry: FrontendLogEntry) {
   for (const listener of listeners) {
@@ -58,96 +83,70 @@ function writeConsole(entry: FrontendLogEntry) {
   console[method](...payload)
 }
 
-function sendToBackend(entry: FrontendLogEntry) {
+function redact(context: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(context)) {
+    clean[key] = SENSITIVE_KEY.test(key) ? '[redacted]' : value
+  }
+  return clean
+}
+
+function toRemoteEntry(entry: FrontendLogEntry): RemoteLogEntry {
+  return {
+    level: entry.level,
+    message: entry.message,
+    ts: entry.timestamp,
+    context: redact({
+      component: entry.component,
+      url: entry.url,
+      user_agent: entry.userAgent,
+      ...entry.extra,
+    }),
+  }
+}
+
+/**
+ * Send the queued batch. Failures are dropped on purpose: the queue is a
+ * convenience, not a guarantee, and retrying an unreachable server on every
+ * warning would amplify an outage into request spam.
+ */
+async function flushRemote() {
+  if (flushing || remoteQueue.length === 0) {
+    return
+  }
+  flushing = true
+  const batch = remoteQueue.splice(0, MAX_BATCH)
+  try {
+    await systemApi.postLogs(batch)
+  } catch {
+    // best-effort — see the docstring above
+  } finally {
+    flushing = false
+    if (remoteQueue.length > 0) {
+      scheduleFlush()
+    }
+  }
+}
+
+function scheduleFlush() {
+  if (flushTimer !== null) {
+    return
+  }
+  flushTimer = setTimeout(() => {
+    flushTimer = null
+    void flushRemote()
+  }, FLUSH_INTERVAL_MS)
+}
+
+function enqueueRemote(entry: FrontendLogEntry) {
   if (entry.level !== 'warn' && entry.level !== 'error') {
     return
   }
-
-  // LifeOps Core has no frontend-log sink in Phase 0. Shipping logs to an
-  // endpoint that does not exist would turn every warning into a second,
-  // failed request — so the remote sink stays off until a backend advertises
-  // one via VITE_API_URL. Logs remain in memory and in the browser console.
-  if (!API_BASE_URL) {
-    return
-  }
-
-  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
-
-  void fetch(`${API_BASE_URL}/api/v1/system/logs`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
-      timestamp: entry.timestamp,
-      level: entry.level,
-      source: entry.source,
-      component: entry.component,
-      message: entry.message,
-      url: entry.url,
-      user_agent: entry.userAgent,
-      extra: entry.extra,
-    }),
-  }).catch(() => {
-    // Backend unreachable — persist to localStorage so logs aren't lost
-    try {
-      const key = 'kos_pending_logs'
-      const pending: unknown[] = JSON.parse(localStorage.getItem(key) || '[]')
-      pending.push(entry)
-      // Keep last 200 to avoid filling storage
-      if (pending.length > 200) pending.splice(0, pending.length - 200)
-      localStorage.setItem(key, JSON.stringify(pending))
-    } catch {
-      // localStorage full or unavailable — give up
-    }
-  })
-}
-
-/** Retry sending any queued logs from localStorage. */
-export function flushPendingLogs(): void {
-  try {
-    const key = 'kos_pending_logs'
-    const raw = localStorage.getItem(key)
-    if (!raw) return
-    const pending: FrontendLogEntry[] = JSON.parse(raw)
-    if (!pending.length) return
-    localStorage.removeItem(key)
-
-    const token = localStorage.getItem('access_token')
-    const batch = pending.slice(0, 50) // Send in batches
-    const remaining = pending.slice(50)
-    if (remaining.length) {
-      localStorage.setItem(key, JSON.stringify(remaining))
-    }
-
-    void fetch(`${API_BASE_URL}/api/v1/system/logs`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
-        batch: batch.map((e) => ({
-          timestamp: e.timestamp,
-          level: e.level,
-          source: e.source,
-          component: e.component,
-          message: e.message,
-          url: e.url,
-          user_agent: e.userAgent,
-          extra: e.extra,
-        })),
-      }),
-    }).catch(() => {
-      // Still unreachable — put back
-      const existing: unknown[] = JSON.parse(localStorage.getItem(key) || '[]')
-      existing.push(...batch)
-      if (existing.length > 200) existing.splice(0, existing.length - 200)
-      localStorage.setItem(key, JSON.stringify(existing))
-    })
-  } catch {
-    // ignore
+  remoteQueue.push(toRemoteEntry(entry))
+  if (remoteQueue.length >= FLUSH_BATCH_SIZE) {
+    void flushRemote()
+  } else {
+    scheduleFlush()
   }
 }
 
@@ -171,7 +170,7 @@ function log(level: LogLevel, component: string, message: string, extra?: Record
   const entry = createEntry(level, component, message, extra)
   pushEntry(entry)
   writeConsole(entry)
-  sendToBackend(entry)
+  enqueueRemote(entry)
   return entry
 }
 
@@ -187,4 +186,13 @@ export const logger = {
       listeners.delete(listener)
     }
   },
+}
+
+/** Test hook: flush the remote queue immediately and reset timers. */
+export function _flushRemoteForTest(): Promise<void> {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  return flushRemote()
 }

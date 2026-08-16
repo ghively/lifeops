@@ -1,7 +1,8 @@
 /**
  * System health (BUILD_SPEC section 77).
  *
- * Shows component health, provider state, and client permissions. Deliberately
+ * Shows overall API health, component health, provider state, this console's
+ * resolved client identity, and every client's permissions. Deliberately
  * offers no arbitrary shell execution — the spec rules that out, and a health
  * screen is exactly where such a thing would look reasonable.
  */
@@ -18,6 +19,7 @@ import {
   errorMessage,
   systemApi,
   type ComponentHealth,
+  type SystemStatus,
 } from '@/services/lifeops'
 
 const COMPONENT_LABELS: Record<string, string> = {
@@ -30,12 +32,43 @@ function isHealth(value: unknown): value is ComponentHealth {
   return typeof value === 'object' && value !== null && 'healthy' in value
 }
 
+type ClientGrant = SystemStatus['clients'][number]
+
+function ClientCard({ client }: { client: ClientGrant }) {
+  return (
+    <div className="rounded-lg border border-border/60 px-4 py-3">
+      <div className="flex items-center justify-between">
+        <p className="font-medium">{client.display_name}</p>
+        <code className="text-xs text-muted-foreground">{client.client_id}</code>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">{client.description}</p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {client.capabilities.map((capability) => (
+          <span
+            key={capability}
+            className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+          >
+            {capability}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function SystemPage() {
   const queryClient = useQueryClient()
 
   const statusQuery = useQuery({
     queryKey: ['lifeops', 'system-status'],
     queryFn: systemApi.status,
+    refetchInterval: 20_000,
+  })
+
+  // Lighter-weight liveness signal (GET /health) alongside the full status.
+  const healthQuery = useQuery({
+    queryKey: ['lifeops', 'system-health'],
+    queryFn: systemApi.health,
     refetchInterval: 20_000,
   })
 
@@ -70,11 +103,28 @@ export function SystemPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             Component health and connected clients.
           </p>
+          {healthQuery.data && (
+            <p
+              className={cn(
+                'mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium',
+                healthQuery.data.status === 'ok'
+                  ? 'bg-green-100 text-green-800'
+                  : 'bg-red-100 text-red-800',
+              )}
+            >
+              {healthQuery.data.status === 'ok'
+                ? 'LifeOps Core is healthy'
+                : 'LifeOps Core reports a problem'}
+            </p>
+          )}
         </div>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => void statusQuery.refetch()}
+          onClick={() => {
+            void statusQuery.refetch()
+            void healthQuery.refetch()
+          }}
           disabled={statusQuery.isFetching}
         >
           <RefreshCw
@@ -146,6 +196,17 @@ export function SystemPage() {
 
           <section className="space-y-3">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              This console
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              The identity LifeOps resolved for this Console session and what it
+              is permitted to do.
+            </p>
+            <ClientCard client={status.requesting_client} />
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
               Client access
             </h2>
             <p className="text-sm text-muted-foreground">
@@ -154,30 +215,7 @@ export function SystemPage() {
             </p>
             <div className="space-y-2">
               {status.clients.map((client) => (
-                <div
-                  key={client.client_id}
-                  className="rounded-lg border border-border/60 px-4 py-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="font-medium">{client.display_name}</p>
-                    <code className="text-xs text-muted-foreground">
-                      {client.client_id}
-                    </code>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {client.description}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {client.capabilities.map((capability) => (
-                      <span
-                        key={capability}
-                        className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-                      >
-                        {capability}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                <ClientCard key={client.client_id} client={client} />
               ))}
             </div>
           </section>

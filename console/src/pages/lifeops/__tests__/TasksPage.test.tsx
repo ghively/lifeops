@@ -13,7 +13,13 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LifeOpsTasksPage } from '../TasksPage'
-import { LifeOpsError, tasksApi, type Task } from '@/services/lifeops'
+import {
+  LifeOpsError,
+  systemApi,
+  tasksApi,
+  type Task,
+  type TaskState,
+} from '@/services/lifeops'
 
 vi.mock('@/services/lifeops', async () => {
   const actual = await vi.importActual<typeof import('@/services/lifeops')>(
@@ -27,8 +33,30 @@ vi.mock('@/services/lifeops', async () => {
       create: vi.fn(),
       update: vi.fn(),
     },
+    systemApi: {
+      getTransitions: vi.fn(),
+    },
   }
 })
+
+/**
+ * The table the tests pretend the server returned. Deliberately differs from
+ * any client-side copy: CAPTURED may only move to PLANNED or CANCELLED here,
+ * which is how the tests prove the page follows the server, not a constant.
+ */
+const SERVER_TRANSITIONS: Record<TaskState, TaskState[]> = {
+  CAPTURED: ['PLANNED', 'CANCELLED'],
+  PLANNED: ['READY', 'CAPTURED', 'BLOCKED', 'CANCELLED'],
+  READY: ['EXECUTING', 'PLANNED', 'BLOCKED', 'CANCELLED'],
+  EXECUTING: ['COMPLETED', 'FAILED', 'CANCELLED'],
+  WAITING_EXTERNAL: ['EXECUTING', 'FAILED', 'CANCELLED'],
+  NEEDS_APPROVAL: ['EXECUTING', 'CANCELLED'],
+  VERIFYING: ['COMPLETED', 'FAILED'],
+  BLOCKED: ['READY', 'CANCELLED'],
+  FAILED: ['READY', 'CANCELLED'],
+  COMPLETED: [],
+  CANCELLED: [],
+}
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -69,6 +97,7 @@ function renderPage() {
 }
 
 const mockedTasks = vi.mocked(tasksApi)
+const mockedSystem = vi.mocked(systemApi)
 
 beforeEach(() => {
   mockedTasks.list.mockResolvedValue({
@@ -76,6 +105,7 @@ beforeEach(() => {
     total: 1,
     by_state: { CAPTURED: 1 },
   })
+  mockedSystem.getTransitions.mockResolvedValue(SERVER_TRANSITIONS)
 })
 
 afterEach(() => {
@@ -94,20 +124,56 @@ describe('LifeOps Tasks', () => {
     expect(await screen.findByText('via hermes-personal')).toBeInTheDocument()
   })
 
-  it('offers only transitions the state machine allows', async () => {
+  it('offers only transitions the server-served table allows', async () => {
     renderPage()
     await screen.findByText('Call dentist')
 
-    const select = screen.getByLabelText('Change state of Call dentist')
+    const select = await screen.findByLabelText('Change state of Call dentist')
     const options = Array.from(select.querySelectorAll('option'))
       .map((option) => option.getAttribute('value'))
       .filter(Boolean)
 
-    // From CAPTURED the machine permits exactly these.
-    expect(options.sort()).toEqual(
-      ['BLOCKED', 'CANCELLED', 'PLANNED', 'READY'].sort(),
-    )
+    // The mocked server permits exactly these from CAPTURED — notably not
+    // READY or BLOCKED, which a hardcoded client-side copy would have offered.
+    expect(options.sort()).toEqual(['CANCELLED', 'PLANNED'])
+    expect(options).not.toContain('READY')
     expect(options).not.toContain('COMPLETED')
+    expect(mockedSystem.getTransitions).toHaveBeenCalled()
+  })
+
+  it('shows an honest loading state while transitions are fetched', async () => {
+    mockedSystem.getTransitions.mockReturnValue(new Promise(() => {}))
+    renderPage()
+    await screen.findByText('Call dentist')
+
+    expect(screen.getByText(/loading allowed transitions/i)).toBeInTheDocument()
+    // No dropdown until the choices are known — guessing is worse than waiting.
+    expect(
+      screen.queryByLabelText('Change state of Call dentist'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('explains when transitions cannot be loaded and offers retry', async () => {
+    mockedSystem.getTransitions.mockRejectedValueOnce(
+      new LifeOpsError('internal', 'transition table unavailable', 500),
+    )
+    renderPage()
+    await screen.findByText('Call dentist')
+
+    expect(
+      await screen.findByText(/could not load the allowed transitions/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/transition table unavailable/)).toBeInTheDocument()
+    expect(
+      screen.queryByLabelText('Change state of Call dentist'),
+    ).not.toBeInTheDocument()
+
+    mockedSystem.getTransitions.mockResolvedValue(SERVER_TRANSITIONS)
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }))
+
+    expect(
+      await screen.findByLabelText('Change state of Call dentist'),
+    ).toBeInTheDocument()
   })
 
   it('offers no transitions from a terminal state', async () => {
@@ -130,7 +196,7 @@ describe('LifeOps Tasks', () => {
     mockedTasks.update.mockRejectedValue(
       new LifeOpsError(
         'invalid_transition',
-        'cannot move task from CAPTURED to COMPLETED',
+        'cannot move task from CAPTURED to PLANNED',
         409,
       ),
     )
@@ -138,12 +204,12 @@ describe('LifeOps Tasks', () => {
     await screen.findByText('Call dentist')
 
     await userEvent.selectOptions(
-      screen.getByLabelText('Change state of Call dentist'),
-      'READY',
+      await screen.findByLabelText('Change state of Call dentist'),
+      'PLANNED',
     )
 
     expect(
-      await screen.findByText('cannot move task from CAPTURED to COMPLETED'),
+      await screen.findByText('cannot move task from CAPTURED to PLANNED'),
     ).toBeInTheDocument()
   })
 

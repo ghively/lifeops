@@ -11,6 +11,7 @@ LifeOps deployment — nothing here survives a process restart.
 from __future__ import annotations
 
 import copy
+from collections.abc import Sequence
 
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
@@ -85,6 +86,17 @@ class FakePreferenceRepository:
         matches.sort(key=lambda p: p.valid_from, reverse=True)
         return copy.deepcopy(matches[0])
 
+    async def search(self, query: str, *, limit: int = 25) -> list[Preference]:
+        needle = query.strip().lower()
+        matches = [
+            p
+            for p in self._prefs.values()
+            if p.valid_to is None
+            and (needle in p.key.lower() or needle in p.value.lower())
+        ]
+        matches.sort(key=lambda p: p.key)
+        return [copy.deepcopy(p) for p in matches[:limit]]
+
     async def list_history(self, subject_id: str, key: str) -> list[Preference]:
         matches = [
             p
@@ -143,6 +155,17 @@ class FakeTaskRepository:
         for task in self._tasks.values():
             counts[str(task.state)] = counts.get(str(task.state), 0) + 1
         return counts
+
+    async def search(self, query: str, *, limit: int = 25) -> Sequence[Task]:
+        needle = query.strip().lower()
+        matches = [
+            t
+            for t in self._tasks.values()
+            if needle in t.title.lower()
+            or (t.description is not None and needle in t.description.lower())
+        ]
+        matches.sort(key=lambda t: (t.created_at, t.id), reverse=True)
+        return [copy.deepcopy(t) for t in matches[:limit]]
 
     async def create(self, task: Task) -> Task:
         self._tasks[task.id] = copy.deepcopy(task)

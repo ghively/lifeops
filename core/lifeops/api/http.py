@@ -17,15 +17,22 @@ from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from lifeops.api.events import router as events_router
 from lifeops.api.schemas import (
+    ConsoleLogBatch,
     CreatePersonRequest,
     CreateTaskRequest,
     DiscoverResponse,
     ErrorResponse,
+    LoginRequest,
+    LoginResponse,
+    MeResponse,
     PersonResponse,
     PreferenceListResponse,
     PreferenceResponse,
     SavePreferenceRequest,
+    SetPasswordRequest,
+    SetPasswordResponse,
     TaskListResponse,
     TaskResponse,
     TestProviderResponse,
@@ -33,13 +40,15 @@ from lifeops.api.schemas import (
     UpdateSystemRequest,
     UpdateTaskRequest,
 )
+from lifeops.auth import InvalidCredentialsError
 from lifeops.config.provider_registry import all_providers, get_provider
 from lifeops.container import Container
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
-from lifeops.domain.tasks import Task, TaskDraft, TaskState, TaskUpdate
-from lifeops.errors import LifeOpsError, NotFoundError
-from lifeops.observability.logging import configure_logging, trace_context
+from lifeops.domain.tasks import Task, TaskDraft, TaskState, TaskUpdate, transition_table
+from lifeops.errors import LifeOpsError, NotFoundError, ValidationError
+from lifeops.events import CONFIG_CHANGED
+from lifeops.observability.logging import configure_logging, redact, trace_context
 from lifeops.policy import CapabilityGrant, ClientIdentity, all_clients, resolve_client
 from lifeops.policy.capabilities import CONSOLE
 from lifeops.settings import Settings, get_settings
@@ -89,6 +98,18 @@ def _task_out(task: Task) -> TaskResponse:
     return TaskResponse(**task.model_dump(), needs_attention=task.needs_attention)
 
 
+def _publish_config_changed(container: Container, **fields: Any) -> None:
+    """Notify Console subscribers that configuration changed.
+
+    Configuration mutations go through ConfigurationService rather than
+    LifeOpsCore today, so the adapter publishes the notification; this is
+    fan-out, not a business rule.
+    """
+    events = getattr(container, "events", None)
+    if events is not None:
+        events.publish({"type": CONFIG_CHANGED, **fields})
+
+
 # --- routes ------------------------------------------------------------------
 
 router = APIRouter(prefix=API_PREFIX)
@@ -97,6 +118,55 @@ router = APIRouter(prefix=API_PREFIX)
 @router.get("/health", tags=["system"])
 async def health(container: ContainerDep) -> dict[str, Any]:
     return {"status": "ok", "components": await container.health()}
+
+
+# --- console authentication (SECURITY.md debt #1) ----------------------------
+
+
+@router.post("/auth/login", response_model=LoginResponse, tags=["auth"])
+async def login(payload: LoginRequest, request: Request) -> LoginResponse:
+    """Exchange the console password for a bearer token.
+
+    When no console password is configured, auth is disabled and the response
+    says so instead of issuing a token — the Console then skips its login
+    screen entirely.
+    """
+    auth = getattr(request.app.state.container, "auth", None)
+    if auth is None or not auth.enabled:
+        return LoginResponse(auth_enabled=False)
+    token, expires_at = auth.login(payload.password)
+    return LoginResponse(auth_enabled=True, token=token, expires_at=expires_at)
+
+
+@router.get("/auth/me", response_model=MeResponse, tags=["auth"])
+async def auth_me(request: Request, client: ClientDep) -> MeResponse:
+    """The identity behind the current session, for the Console's header."""
+    auth = getattr(request.app.state.container, "auth", None)
+    return MeResponse(
+        client_id=client.client_id,
+        display_name=client.display_name,
+        auth_enabled=bool(auth is not None and auth.enabled),
+    )
+
+
+@router.post("/auth/password", response_model=SetPasswordResponse, tags=["auth"])
+async def set_password(payload: SetPasswordRequest, request: Request) -> SetPasswordResponse:
+    """Set or change the console password — the only way auth gets turned on.
+
+    Once a password exists, changing it requires the current one; the bearer
+    middleware additionally requires a valid session whenever auth is enabled,
+    so this route can never be driven by an anonymous caller. First setup (no
+    password yet) is intentionally open on loopback, matching login.
+    """
+    auth = getattr(request.app.state.container, "auth", None)
+    if auth is None:
+        raise ValidationError("console authentication is not available")
+    if auth.enabled and not (
+        payload.current_password and auth.check_password(payload.current_password)
+    ):
+        raise InvalidCredentialsError("the current console password did not match")
+    auth.set_password(payload.new_password)
+    return SetPasswordResponse(auth_enabled=auth.enabled)
 
 
 @router.get("/system/status", tags=["system"])
@@ -110,6 +180,57 @@ async def system_status(container: ContainerDep, client: ClientDep) -> dict[str,
         "clients": [CapabilityGrant.of(c).model_dump() for c in all_clients()],
         "requesting_client": CapabilityGrant.of(client).model_dump(),
     }
+
+
+@router.get("/system/activity", tags=["system"])
+async def system_activity(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> dict[str, Any]:
+    """Recent semantic operations, newest first.
+
+    Ephemeral by design: an in-memory ring buffer that dies with the process.
+    This is the Activity screen's "what just happened", NOT the durable audit
+    log — that arrives in Phase 4 (BUILD_SPEC section 62).
+    """
+    activity = getattr(request.app.state.container, "activity", None)
+    entries = activity.recent(limit=limit) if activity is not None else []
+    return {"entries": entries, "ephemeral": True}
+
+
+@router.post("/system/logs", status_code=202, tags=["system"])
+async def accept_console_logs(payload: ConsoleLogBatch) -> dict[str, int]:
+    """Sink for the Console's client-side logger.
+
+    Entries are re-logged through the server logger under the ``lifeops.console``
+    component with context redacted, so a console UI error shows up in the same
+    JSON stream as everything else (BUILD_SPEC section 78). The batch size is
+    bounded by the schema.
+    """
+    console_logger = logging.getLogger("lifeops.console")
+    for entry in payload.entries:
+        level = _LOG_LEVELS.get(entry.level.lower(), logging.INFO)
+        console_logger.log(
+            level,
+            "%s",
+            entry.message,
+            extra={
+                "source": "console",
+                "console_ts": entry.ts,
+                "context": redact(entry.context) if entry.context else {},
+            },
+        )
+    return {"accepted": len(payload.entries)}
+
+
+#: Browser log levels that map onto server log levels; anything else is INFO.
+_LOG_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warn": logging.WARNING,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+}
 
 
 # --- people ---
@@ -245,6 +366,16 @@ async def list_tasks(
     )
 
 
+@router.get("/tasks/transitions", tags=["tasks"])
+async def task_transitions() -> dict[str, Any]:
+    """The authoritative task state machine, for the Console to render.
+
+    Served from the domain so the Console no longer duplicates a table that
+    can drift from the server's enforcement (kimi.md Phase 1 debts).
+    """
+    return {"transitions": transition_table()}
+
+
 @router.get("/tasks/{task_id}", response_model=TaskResponse, tags=["tasks"])
 async def get_task(
     task_id: str, container: ContainerDep, client: ClientDep
@@ -273,6 +404,25 @@ async def update_task(
         update=TaskUpdate(**payload.model_dump(exclude_unset=True)),
     )
     return _task_out(task)
+
+
+# --- search (BUILD_SPEC section 19) ------------------------------------------
+
+
+@router.get("/search", tags=["search"])
+async def universal_search(
+    container: ContainerDep,
+    client: ClientDep,
+    q: Annotated[str, Query(min_length=1, max_length=200)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+) -> dict[str, Any]:
+    """Case-insensitive substring search across people, preferences, tasks."""
+    results = await container.core.search(client, query=q, limit=limit)
+    return {
+        "people": [_person_out(p).model_dump() for p in results.people],
+        "preferences": [_preference_out(p).model_dump() for p in results.preferences],
+        "tasks": [_task_out(t).model_dump() for t in results.tasks],
+    }
 
 
 # --- configuration ---
@@ -320,6 +470,7 @@ async def update_provider_config(
     echoed back — the response reports only ``configured`` and a fingerprint.
     """
     status = container.config.update_provider(provider_id, payload.model_dump())
+    _publish_config_changed(container, provider=provider_id)
     return {"status": status.model_dump()}
 
 
@@ -401,6 +552,7 @@ async def update_system_config(
     # Safe mode has to take effect immediately, not on next restart.
     if "safe_mode" in changes:
         container.core.safe_mode = updated.safe_mode
+    _publish_config_changed(container, scope="system")
     return updated.model_dump()
 
 
@@ -455,6 +607,35 @@ def create_app(container: Container | None = None, settings: Settings | None = N
             response.headers["x-trace-id"] = trace_id
             return response
 
+    @app.middleware("http")
+    async def require_console_auth(request: Request, call_next: Any) -> Any:
+        """Bearer-token gate for the Console API (SECURITY.md debt #1).
+
+        Applies only when a console password is configured; a fresh
+        loopback-bound deployment stays open so first-run setup works. The
+        liveness probes and the login route itself stay reachable either way.
+        """
+        path = request.url.path
+        open_routes = (f"{API_PREFIX}/health", f"{API_PREFIX}/auth/login")
+        # CORS preflights carry no credentials; they must reach the CORS
+        # middleware (which sits inside this one) unchallenged.
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        if path.startswith(API_PREFIX) and path not in open_routes:
+            auth = getattr(request.app.state.container, "auth", None)
+            if auth is not None and auth.enabled:
+                header = request.headers.get("authorization", "")
+                token = header[7:].strip() if header.lower().startswith("bearer ") else None
+                if not auth.validate(token):
+                    return JSONResponse(
+                        status_code=401,
+                        content=ErrorResponse(
+                            code="authentication_required",
+                            message="a valid console bearer token is required",
+                        ).model_dump(),
+                    )
+        return await call_next(request)
+
     @app.exception_handler(LifeOpsError)
     async def lifeops_error_handler(_: Request, exc: LifeOpsError) -> JSONResponse:
         # Domain errors are expected outcomes, not server faults. They carry a
@@ -469,6 +650,7 @@ def create_app(container: Container | None = None, settings: Settings | None = N
         )
 
     app.include_router(router)
+    app.include_router(events_router, prefix=API_PREFIX)
 
     @app.get("/health", tags=["system"])
     async def root_health() -> dict[str, str]:

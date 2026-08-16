@@ -19,6 +19,7 @@ import {
   Folder,
   Globe,
   Home,
+  Search,
   Settings,
   Settings2,
   ShieldCheck,
@@ -45,8 +46,9 @@ const SECTIONS: NavSection[] = [
     label: null,
     items: [
       { label: 'Today', href: '/', icon: Home, phase: 0 },
-      { label: 'Needs Attention', href: '/needs-attention', icon: AlertCircle, phase: 1 },
-      { label: 'Waiting', href: '/waiting', icon: Clock, phase: 4 },
+      { label: 'Needs Attention', href: '/needs-attention', icon: AlertCircle, phase: 0 },
+      { label: 'Waiting', href: '/waiting', icon: Clock, phase: 0 },
+      { label: 'Search', href: '/search', icon: Search, phase: 0 },
     ],
   },
   {
@@ -69,7 +71,7 @@ const SECTIONS: NavSection[] = [
     label: 'Hermes',
     items: [
       { label: 'Hermes', href: '/hermes', icon: Bot, phase: 1 },
-      { label: 'Activity', href: '/activity', icon: Activity, phase: 1 },
+      { label: 'Activity', href: '/activity', icon: Activity, phase: 0 },
     ],
   },
   {
@@ -157,7 +159,7 @@ export function LifeOpsSidebar({
 
       {!collapsed && (
         <div className="border-t border-border/60 px-4 py-3 text-[11px] text-muted-foreground">
-          Phase 0 · NornicDB spine
+          Phase 1 · Console foundation
         </div>
       )}
     </nav>
