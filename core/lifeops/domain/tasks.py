@@ -150,6 +150,19 @@ def allowed_transitions(state: TaskState) -> frozenset[TaskState]:
     return _TRANSITIONS[state]
 
 
+def transition_table() -> dict[str, list[str]]:
+    """The full transition map, serialised for the Console.
+
+    This is the authoritative copy of the table the Tasks screen renders; the
+    Console must not keep its own (kimi.md Phase 1 debts — the duplicated table
+    in ``console/src/services/lifeops.ts`` was free to drift).
+    """
+    return {
+        str(state): sorted(str(target) for target in targets)
+        for state, targets in _TRANSITIONS.items()
+    }
+
+
 def can_transition(current: TaskState, target: TaskState) -> bool:
     return target in _TRANSITIONS[current]
 

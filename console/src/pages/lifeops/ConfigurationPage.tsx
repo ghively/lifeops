@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import {
   LifeOpsError,
   PROVIDER_STATE_LABELS,
+  authApi,
   configApi,
   errorMessage,
   type ProviderEntry,
@@ -332,6 +333,104 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
   )
 }
 
+/**
+ * Console access — the password that turns API authentication on
+ * (SECURITY.md). Without one, the loopback API answers anyone on this
+ * machine; setting one is the whole point of this card.
+ */
+function ConsoleAccessCard() {
+  const queryClient = useQueryClient()
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  const meQuery = useQuery({ queryKey: ['lifeops', 'auth', 'me'], queryFn: authApi.me })
+  const authEnabled = meQuery.data?.auth_enabled ?? false
+
+  const save = useMutation({
+    mutationFn: () =>
+      authApi.setPassword(newPassword, authEnabled ? currentPassword : undefined),
+    onSuccess: () => {
+      setSaved(true)
+      setCurrentPassword('')
+      setNewPassword('')
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'auth'] })
+    },
+  })
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+        Console access
+      </h2>
+      <div className="space-y-3 rounded-lg border border-border/60 bg-card px-4 py-3">
+        <p className="text-sm text-muted-foreground">
+          {authEnabled
+            ? 'Authentication is on. Every API route requires the console password.'
+            : 'Authentication is off — any process on this machine can use the API. Set a password to require it.'}
+        </p>
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            setSaved(false)
+            save.mutate()
+          }}
+        >
+          {authEnabled && (
+            <div className="space-y-1">
+              <label className="text-sm font-medium" htmlFor="console-current-password">
+                Current password
+              </label>
+              <Input
+                id="console-current-password"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+              />
+            </div>
+          )}
+          <div className="space-y-1">
+            <label className="text-sm font-medium" htmlFor="console-new-password">
+              {authEnabled ? 'New password' : 'Console password'}
+            </label>
+            <Input
+              id="console-new-password"
+              type="password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              At least 8 characters. Stored encrypted outside the database and never
+              returned by the API.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={save.isPending || newPassword.length < 8}
+            >
+              {save.isPending ? 'Saving…' : authEnabled ? 'Change password' : 'Set password'}
+            </Button>
+            {saved && !save.isPending && (
+              <span className="inline-flex items-center gap-1 text-sm text-green-700">
+                <Check className="h-4 w-4" />
+                {authEnabled ? 'Password updated.' : 'Authentication is now on.'}
+              </span>
+            )}
+          </div>
+          {save.isError && (
+            <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
+          )}
+        </form>
+      </div>
+    </section>
+  )
+}
+
 export function ConfigurationPage() {
   const providersQuery = useQuery({
     queryKey: ['lifeops', 'providers'],
@@ -381,6 +480,8 @@ export function ConfigurationPage() {
           never written to NornicDB or returned by the API.
         </p>
       </div>
+
+      <ConsoleAccessCard />
 
       {providersQuery.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

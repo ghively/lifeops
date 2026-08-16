@@ -18,6 +18,68 @@ class ErrorResponse(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+# --- console authentication --------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: str = Field(min_length=1, max_length=500)
+
+
+class LoginResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # False when no console password is configured: the API is open and no
+    # token is needed (or issued).
+    auth_enabled: bool
+    token: str | None = None
+    expires_at: str | None = None
+
+
+class MeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str
+    display_name: str
+    auth_enabled: bool
+
+
+class SetPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Required once a password exists — proving the current one is what
+    # authorises replacing it. Absent on first setup only.
+    current_password: str | None = Field(default=None, max_length=500)
+    new_password: str = Field(min_length=8, max_length=500)
+
+
+class SetPasswordResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    auth_enabled: bool
+
+
+# --- system logs sink ----------------------------------------------------------
+
+
+class ConsoleLogEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    level: str = Field(default="info", max_length=10)
+    message: str = Field(min_length=1, max_length=2000)
+    context: dict[str, Any] | None = None
+    ts: str | None = None
+
+
+class ConsoleLogBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Bounded so a runaway Console tab cannot stream unbounded log volume into
+    # the server.
+    entries: list[ConsoleLogEntry] = Field(max_length=100)
+
+
 # --- people ------------------------------------------------------------------
 
 

@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import logging
 
+from lifeops.auth import ConsoleAuth
 from lifeops.clock import Clock, SystemClock
 from lifeops.config.service import ConfigurationService
 from lifeops.core import LifeOpsCore
+from lifeops.events import EventBus
+from lifeops.observability.activity import attach_activity_buffer, detach_activity_buffer
 from lifeops.repositories.nornic.client import NornicClient
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
@@ -37,6 +40,13 @@ class Container:
             secret_store=self.secret_store,
             clock=self.clock,
         )
+        self.auth = ConsoleAuth(
+            secret_store=self.secret_store, settings=self.settings, clock=self.clock
+        )
+        self.events = EventBus()
+        # Ephemeral view of recent semantic operations for the Activity screen.
+        # Not the audit log — it dies with the process (observability/activity.py).
+        self.activity = attach_activity_buffer()
 
         self.nornic = NornicClient(self.settings)
         self.people = NornicPersonRepository(self.nornic)
@@ -53,6 +63,7 @@ class Container:
             tasks=self.tasks,
             clock=self.clock,
             safe_mode=safe_mode,
+            events=self.events,
         )
 
     async def startup(self) -> None:
@@ -74,6 +85,7 @@ class Container:
         logger.info("LifeOps Core started", extra={"safe_mode": self.core.safe_mode})
 
     async def shutdown(self) -> None:
+        detach_activity_buffer(self.activity)
         await self.nornic.close()
 
     async def health(self) -> dict[str, object]:
