@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Report the health of every LifeOps component.
+#
+# Exits non-zero if anything required is unhealthy, so it can gate a deploy or
+# drive a monitor.
+set -uo pipefail
+
+LIFEOPS_HOME="${LIFEOPS_HOME:-$HOME/.local/share/lifeops}"
+CORE_URL="${LIFEOPS_CORE_URL:-http://127.0.0.1:8080}"
+BOLT_PORT="${LIFEOPS_NORNIC_BOLT_PORT:-7687}"
+
+failed=0
+
+check() {
+  local name="$1" ok="$2" detail="${3:-}"
+  if [[ "$ok" == "0" ]]; then
+    printf '  %-18s OK      %s\n' "$name" "$detail"
+  else
+    printf '  %-18s FAILED  %s\n' "$name" "$detail"
+    failed=1
+  fi
+}
+
+echo "LifeOps health"
+echo
+
+(exec 3<>"/dev/tcp/127.0.0.1/$BOLT_PORT") 2>/dev/null
+check "NornicDB (bolt)" "$?" "127.0.0.1:$BOLT_PORT"
+exec 3>&- 2>/dev/null || true
+
+core_body="$(curl -sf --max-time 5 "$CORE_URL/health" 2>/dev/null)"
+check "LifeOps Core" "$?" "$CORE_URL"
+
+if [[ -n "$core_body" ]]; then
+  # Component detail comes from LifeOps itself, so this reflects what the
+  # Console shows rather than a second, drifting definition of health.
+  component_report="$(curl -sf --max-time 5 "$CORE_URL/api/v1/health" 2>/dev/null | python3 -c '
+import json, sys
+
+try:
+    components = json.load(sys.stdin).get("components", {})
+except Exception:
+    sys.exit(1)
+
+unhealthy = 0
+for name, value in components.items():
+    if isinstance(value, dict):
+        detail = value.get("detail", "")
+        if value.get("healthy"):
+            state = "OK     "
+        else:
+            state = "FAILED "
+            unhealthy = 1
+        print("  {:<18} {} {}".format(name, state, detail))
+    else:
+        print("  {:<18} {}".format(name, value))
+sys.exit(unhealthy)
+')"
+  component_status=$?
+  [[ -n "$component_report" ]] && printf '%s\n' "$component_report"
+  [[ "$component_status" == "0" ]] || failed=1
+fi
+
+if [[ -f "$LIFEOPS_HOME/secrets/master.key" ]]; then
+  mode="$(stat -c '%a' "$LIFEOPS_HOME/secrets/master.key")"
+  [[ "$mode" == "600" ]]
+  check "Secret master key" "$?" "mode $mode (expected 600)"
+fi
+
+echo
+if [[ "$failed" == "0" ]]; then
+  echo "All checks passed."
+else
+  echo "One or more checks failed." >&2
+fi
+exit "$failed"

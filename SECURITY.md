@@ -1,91 +1,232 @@
-# Security Policy
+# Security
 
-## Supported Versions
+What LifeOps protects, how, and what is still open.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+---
 
-## Reporting a Vulnerability
+## Threat model
 
-We take the security of Knowledge OS seriously. If you believe you have found a security vulnerability, please report it to us as described below.
+LifeOps holds a person's private world: who they know, what they prefer, what
+they owe, and eventually the authority to act on their behalf. The concerns that
+follow from that, in priority order:
 
-### Please do not report security vulnerabilities through public GitHub issues.
+1. **An agent exceeding its authority.** Models are influenceable. The system
+   must not rely on any model choosing correctly.
+2. **Credential exposure.** Provider keys, once leaked, are leverage over
+   accounts LifeOps does not control.
+3. **Untrusted content becoming authority.** Email and web pages are inputs. A
+   web page must never be able to rewrite what the user said.
+4. **Unverified external commitments.** A booking or payment that "probably
+   happened" is worse than one that clearly failed.
 
-Instead, please report them via email to: **security@knowledge-os.local** (replace with your actual security email)
+---
 
-Please include the following information in your report:
+## Client identity
 
-- Type of issue (e.g., buffer overflow, SQL injection, cross-site scripting, etc.)
-- Full paths of source file(s) related to the manifestation of the issue
-- The location of the affected source code (tag/branch/commit or direct URL)
-- Any special configuration required to reproduce the issue
-- Step-by-step instructions to reproduce the issue
-- Proof-of-concept or exploit code (if possible)
-- Impact of the issue, including how an attacker might exploit it
+Authority never comes from a model or provider name. Every request resolves to a
+declared client identity, and policy consults that.
 
-### Response Timeline
+Identity is bound **per connection**:
 
-We will acknowledge receipt of your vulnerability report within 48 hours and will send you a more detailed response within 72 hours indicating the next steps in handling your report.
+- **MCP** — `--client` on the server process, set in the launch configuration
+  the user writes.
+- **HTTP** — the `X-LifeOps-Client` header; absent, the caller is treated as the
+  Console, which is that API's purpose.
 
-After the initial reply to your report, we will endeavor to keep you informed of the progress towards a fix and full announcement, and may ask for additional information or guidance.
+A tool argument would be model-controlled, letting any agent name itself
+`hermes-personal`. An unrecognised `--client` exits non-zero rather than falling
+back, so a typo is loud rather than a silent downgrade. A missing identity
+resolves to the *least* privileged interactive default, never to Hermes.
 
-### Disclosure Policy
+---
 
-When we receive a security bug report, we will:
+## Capabilities
 
-1. Confirm the problem and determine the affected versions
-2. Audit code to find any similar problems
-3. Prepare fixes for all supported versions
-4. Release new versions and announce the issue
+| Capability | Hermes | Interactive | Coding agent | Console |
+|---|:---:|:---:|:---:|:---:|
+| `read_world` | ● | ● | ● | ● |
+| `read_preferences` | ● | ● | ● | ● |
+| `read_tasks` | ● | ● | ● | ● |
+| `create_task` | ● | ● | ● | ● |
+| `update_task` | ● | ● | — | ● |
+| `write_preference` | ● | ● | — | ● |
+| `manage_configuration` | — | — | — | ● |
+| `approve_action` | — | — | — | ● |
+| `send_external_message` | — | — | — | — |
+| `book_appointment` | — | — | — | — |
+| `shopping_checkout` | — | — | — | — |
+| `financial_payment` | — | — | — | — |
 
-### Security Best Practices
+Enforced server-side in `LifeOpsCore`, before any repository call. A client
+cannot grant itself more, and the grants are immutable at runtime.
 
-When deploying Knowledge OS:
+**No client holds any external-action capability in Phase 0.** Those enums exist
+so that audit records and configuration have a stable vocabulary before the
+adapters land; nothing can exercise them.
 
-1. **Use HTTPS** - Always use HTTPS in production
-2. **Keep dependencies updated** - Regularly update all dependencies
-3. **Use strong passwords** - If authentication is enabled, use strong passwords
-4. **Limit network exposure** - Don't expose Qdrant directly to the internet
-5. **Regular backups** - Enable automatic backups
-6. **Monitor logs** - Regularly check application logs for suspicious activity
+Two deliberate asymmetries:
 
-### Security Features
+- **The coding agent cannot write preferences or update tasks.** Its job is the
+  repository, not the user's life. It can read the world and file a task.
+- **Only the Console configures and approves.** An agent approving its own
+  action would defeat the gate; approval requires the surface where a human is
+  actually present.
 
-Knowledge OS includes several security features:
+---
 
-- Input validation on all API endpoints
-- CORS configuration
-- Security headers in nginx
-- Docker security best practices
-- Dependency scanning in CI/CD
+## Secrets
 
-### Known Limitations
+Secrets never enter NornicDB. The database holds the world model, which agents
+read broadly and the Console renders; credentials have no business in that blast
+radius.
 
-**Tenancy model.** Knowledge OS is designed as a **single-tenant** system —
-one instance per user or trusted team. Authentication is enforced on every
-endpoint, but content objects (`objects`, `blocks`, `tasks`, `files`) are not
-filtered by `user_id` at the data layer. Every authenticated user can read,
-update, and delete every other user's content. The `created_by` field is
-populated for audit purposes but is **not** enforced for access control.
+`LocalEncryptedSecretStore` is the default backend:
 
-If you need true multi-tenant isolation, run one Knowledge OS instance per
-tenant (separate SQLite + Qdrant volumes), or fork the project and add
-`user_id` filtering to every Qdrant query in `backend/app/routers/`.
+| Property | Choice | Why |
+|---|---|---|
+| Cipher | AES-256-GCM | Tampering is detected, not decrypted into garbage |
+| Key | 32 random bytes, generated on first use | |
+| Key location | `~/.local/share/lifeops/secrets/master.key`, mode 0600, created with `O_EXCL` | Outside the repository; no default-umask window |
+| Nonce | Fresh 12 bytes per write | Nonce reuse under one GCM key is a break |
+| AAD | The secret's name | A ciphertext cannot be relabelled to another field |
+| Storage | `secrets.json`, mode 0600, written then renamed | An interrupted write cannot truncate the vault |
 
-**Tokens in localStorage.** The web client stores JWTs in `localStorage` so
-they survive reloads. This is XSS-exposed — any successful XSS gives the
-attacker a long-lived token. We mitigate by sanitizing user-supplied content
-(`backend/app/utils/sanitize.py`) and shipping a strict CSP via nginx, but
-defense-in-depth recommends moving to HttpOnly refresh cookies if you operate
-a hostile environment.
+Reads return `{"configured": true, "fingerprint": "a1b2c3d4e5f6"}` — never the
+value. The fingerprint is a salted SHA-256 prefix, so a human can confirm *which*
+key is installed without it being readable.
 
-**Rate limiter is per-process.** The default in-memory rate limiter does not
-share state across Uvicorn workers. With N workers, the effective rate cap is
-N×. If you need a hard cap, run a single worker behind a reverse proxy that
-enforces rate limits, or wire a Redis-backed limiter.
+`rotate_master_key()` re-encrypts every secret under a fresh key.
 
-**MCP server creation is privileged.** Authenticated users can register MCP
-server commands that execute local binaries (`node`, `python`, etc.). The
-allowed binaries and flags are restricted (`backend/app/routers/agent_chat.py`),
-but treat MCP server creation as an admin-equivalent capability.
+The master key is the entire security boundary: anyone who can read it can read
+every secret. Back it up **separately** from the vault.
+
+### Never logged
+
+API keys, tokens, cookies, passwords, card data, and MFA codes are redacted
+from every structured log line by field name, recursively, at all levels.
+
+---
+
+## Trust hierarchy
+
+```
+user_explicit  >  system  >  calendar  >  document  >  email / phone_call
+               >  conversation  >  website  >  user_inferred  >  agent
+```
+
+A weaker source cannot supersede a stronger one. An inference that tries to
+overwrite what the user said directly is refused with `conflict`.
+
+Equal authority *may* supersede — the user restating a preference, or a calendar
+re-sync, is a legitimate update.
+
+External content creates evidence. It does not create user authority. This is
+the structural answer to prompt injection in email and web content: a message
+can persuade a model to *call* `save_preference`, but it cannot make the
+resulting record outrank the user, and it cannot reach a capability the client
+does not hold.
+
+---
+
+## Verification
+
+A task marked `verification_required` reaches `COMPLETED` only through
+`VERIFYING`, and only with evidence attached. Both conditions are checked in the
+domain layer, so the HTTP and MCP paths get the same gate.
+
+An external action is not complete because a model says so.
+
+---
+
+## Safe mode
+
+Blocks external communication, bookings, shopping checkout, and payments while
+leaving conversation, reads, memory search, and tasks working. Checked *before*
+the capability grant, so it cannot be defeated by a client that happens to hold
+the capability.
+
+Toggle it from Console → System.
+
+Phase 0 has no external write paths, so it currently changes nothing observable.
+It exists now so later phases inherit it rather than bolting it on.
+
+---
+
+## Network exposure
+
+| Service | Binds | Reachable from |
+|---|---|---|
+| NornicDB Bolt | `127.0.0.1:7687` | localhost |
+| NornicDB HTTP | `127.0.0.1:7474` | localhost |
+| LifeOps Core | `127.0.0.1:8080` | localhost |
+| Console (dev) | `127.0.0.1:5173` | localhost |
+
+Nothing listens on a routable interface by default. NornicDB's own admin UI is
+disabled (`--headless`) — LifeOps Console is the only interface LifeOps offers,
+and a second administrative surface on the same data is a second thing to
+secure.
+
+The NornicDB admin password is generated at first initialisation, stored 0600 in
+`~/.local/share/lifeops/nornicdb.env`, and never committed or typed by a human.
+
+---
+
+## Repository hygiene
+
+`.gitignore` excludes `.venv/`, `*.key`, `secrets.json`, and `.env`. The Phase 0
+exit test asserts that no `master.key` or `secrets.json` is tracked, so this is
+checked rather than assumed.
+
+No provider credential appears anywhere in the repository. A fresh checkout
+boots with every provider unconfigured, which is what lets development proceed
+without anyone holding the user's keys.
+
+---
+
+## Known gaps
+
+Recorded rather than hidden. Each has a phase.
+
+### The Console has no authentication (Phase 1)
+
+Phase 0 ships no login. Anyone with access to `127.0.0.1:5173` — or to any
+process on the machine — can read and modify LifeOps state through the Console.
+
+The exposure is bounded: loopback-only binding, and no client holds an
+external-action capability, so the worst case is local disclosure and corruption
+of personal state, not action taken in the user's name.
+
+Do not port-forward or reverse-proxy LifeOps Core or the Console to a routable
+address until Phase 1 lands.
+
+### The MCP server trusts its launch configuration (by design)
+
+Any local process that can execute `lifeops-mcp --client hermes-personal` gets
+Hermes's capabilities. This is inherent to stdio MCP: the transport has no
+authentication layer, and the launch configuration is the trust anchor.
+
+Mitigated by the fact that such a process already has the user's filesystem
+access. Revisit if LifeOps ever moves to a networked MCP transport.
+
+### There is no audit log yet (Phase 4)
+
+Semantic operations are logged with trace IDs and durations, but there is no
+durable, queryable audit trail in NornicDB, and no Activity screen. "Why did
+Hermes do that?" is currently answerable only from log files.
+
+### The Console's transition list duplicates the server's (accepted)
+
+`TASK_TRANSITIONS` in the Console mirrors the server's table so the UI offers
+only valid choices. They could drift.
+
+The consequence of drift is bounded: the server re-validates every transition
+and rejects an illegal one, so a stale UI shows a choice that then fails with a
+clear error. It never permits an illegal write. Phase 1 should serve the table
+from the API instead.
+
+---
+
+## Reporting
+
+This is a personal system with a single operator. If you are that operator and
+find a problem, file it in `changes/requests/`.

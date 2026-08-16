@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lifeops"
+version = "0.1.0"
+description = "LifeOps Core — portable personal domain/API layer, safety boundary, and MCP server for Hermes"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "neo4j>=5.20",
+    "cryptography>=42",
+    "mcp>=1.2",
+    "python-ulid>=2.2",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "asgi-lifespan>=2.1",
+    "httpx>=0.27",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+lifeops = "lifeops.main:main"
+lifeops-mcp = "lifeops.mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["core"]
+include = ["lifeops*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires a running NornicDB instance",
+    "persistence: verifies durability across restarts",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["core"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "core"
+packages = ["lifeops"]
+ignore_missing_imports = true
+warn_unused_ignores = true

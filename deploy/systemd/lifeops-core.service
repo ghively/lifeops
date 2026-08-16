@@ -1,0 +1,27 @@
+[Unit]
+Description=LifeOps Core
+After=network.target lifeops-nornicdb.service
+Requires=lifeops-nornicdb.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/project/lifeops
+EnvironmentFile=%h/.local/share/lifeops/nornicdb.env
+ExecStart=%h/project/lifeops/.venv/bin/python -m lifeops.main
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Needs the state directory for secrets and configuration, and the repository
+# for its own code.
+ReadWritePaths=%h/.local/share/lifeops
+ReadOnlyPaths=%h/project/lifeops
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=default.target

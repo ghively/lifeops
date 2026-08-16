@@ -1,0 +1,28 @@
+{
+  "//": [
+    "LifeOps MCP server registration for Hermes.",
+    "",
+    "Copy the `lifeops` entry into your Hermes MCP server configuration.",
+    "",
+    "Client identity is declared per connection via --client, not per tool",
+    "call. A tool argument would be model-controlled, which would let an agent",
+    "name itself Hermes and inherit Hermes's capabilities (BUILD_SPEC 34).",
+    "",
+    "No provider credential appears here. LifeOps needs only the NornicDB",
+    "connection, which scripts/nornicdb.sh generates into nornicdb.env; every",
+    "other provider is configured by the user in LifeOps Console."
+  ],
+  "mcpServers": {
+    "lifeops": {
+      "command": "/ABSOLUTE/PATH/TO/lifeops/.venv/bin/python",
+      "args": ["-m", "lifeops.mcp.server", "--client", "hermes-personal"],
+      "cwd": "/ABSOLUTE/PATH/TO/lifeops",
+      "env": {
+        "LIFEOPS_NORNIC_URI": "bolt://127.0.0.1:7687",
+        "LIFEOPS_NORNIC_USER": "admin",
+        "LIFEOPS_NORNIC_PASSWORD": "${LIFEOPS_NORNIC_PASSWORD}",
+        "LIFEOPS_LOG_LEVEL": "WARNING"
+      }
+    }
+  }
+}
