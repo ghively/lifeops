@@ -1,20 +1,35 @@
-.DS_Store
-.env
+# Python
 .venv/
 venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
 node_modules/
 dist/
-__pycache__/
-*.pyc
+dist-ssr/
+*.local
 
-backend/venv/
-backend/data/
-backend/backups/
+# Secrets — these must never be committed.
+# The real ones live outside the repository under ~/.local/share/lifeops,
+# but a stray copy here would be a disclosure.
+*.key
+secrets.json
+.env
+.env.*
+!.env.example
+nornicdb.env
 
-frontend/node_modules/
-frontend/dist/
-frontend/e2e/.auth-storage.json
-frontend/e2e/screenshots/
-frontend/test-results/
-backups/
-.claude/
+# LifeOps runtime state, if a state dir is ever pointed inside the repo
+lifeops.config.json
+nornicdb-data/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

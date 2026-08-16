@@ -1,0 +1,41 @@
+# NornicDB for hosts that have Docker.
+#
+# LifeOps Core and the Console run as ordinary processes (see scripts/dev.sh) —
+# containerising a single-user local application would add a runtime to manage
+# without solving a problem that exists.
+#
+#   docker compose -f deploy/compose.yaml up -d
+#
+# Then point LifeOps at it:
+#   LIFEOPS_NORNIC_PASSWORD=<the value below> make dev
+
+services:
+  nornicdb:
+    # CPU image. For an NVIDIA host use timothyswt/nornicdb-amd64-cuda-bge,
+    # for Vulkan timothyswt/nornicdb-amd64-vulkan-bge.
+    image: timothyswt/nornicdb-amd64-cpu-bge:1.2.2
+    container_name: lifeops-nornicdb
+    restart: unless-stopped
+    # Loopback only. LifeOps holds a person's private world; it does not belong
+    # on a routable interface (BUILD_SPEC section 82).
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - nornicdb-data:/data
+    environment:
+      NORNICDB_DATA_DIR: /data
+      # Set this before first start. NornicDB writes the credential into the
+      # data volume on initialisation, so changing it later has no effect
+      # without recreating the volume.
+      NORNICDB_ADMIN_PASSWORD: ${LIFEOPS_NORNIC_PASSWORD:?set LIFEOPS_NORNIC_PASSWORD}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7474/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  nornicdb-data:
+    name: lifeops-nornicdb-data

@@ -1,549 +1,171 @@
-# Configuration Guide
+# Configuration
 
-All configuration options for Knowledge OS backend and frontend.
+LifeOps separates two things that are usually conflated.
 
----
+| | Deployment settings | Runtime configuration |
+|---|---|---|
+| Examples | Ports, data directories, NornicDB URI | DeepSeek key, ElevenLabs voice, Telegram token, calendar account |
+| Source | Environment variables / `.env` | LifeOps Console |
+| Owner | Whoever installs LifeOps | The user, after deployment |
+| Code | `core/lifeops/settings.py` | `core/lifeops/config/` |
+| Storage | Process environment | Config document + SecretStore |
 
-## Backend Configuration
-
-Configuration via environment variables in `.env` file.
-
-### Database
-
-**DATABASE_URL** (Required)
-```bash
-# SQLite (development/small deployments)
-DATABASE_URL=sqlite:///./knowledge_os.db
-
-# PostgreSQL (production)
-DATABASE_URL=postgresql://user:password@localhost:5432/knowledge_os
-DATABASE_URL=postgresql://user:password@localhost:5432/knowledge_os?sslmode=require
-```
-
-### Logging
-
-**LOG_LEVEL**
-```bash
-DEBUG      # Verbose, includes all messages
-INFO       # Standard (default)
-WARNING    # Only warnings and errors
-ERROR      # Only errors
-CRITICAL   # Only critical errors
-```
-
-**LOG_FILE**
-```bash
-# Default: ./logs/app.log
-LOG_FILE=./logs/app.log
-
-# Rotating handler: max 10MB, 5 backups
-# Auto-archived to logs/app.log.1, .2, etc.
-```
-
-### Agent System
-
-**AGENTS_ROOT** (Required)
-```bash
-# Path to agents directory
-AGENTS_ROOT=./agents
-```
-
-**LLM_PROVIDER**
-```bash
-# Available: ollama, openai, anthropic, google
-LLM_PROVIDER=ollama  # Default
-```
-
-**OLLAMA_BASE_URL**
-```bash
-# Ollama server endpoint
-OLLAMA_BASE_URL=http://localhost:11434
-```
-
-**OPENAI_API_KEY**
-```bash
-# OpenAI API key (if using OpenAI)
-OPENAI_API_KEY=sk-...
-```
-
-**ANTHROPIC_API_KEY**
-```bash
-# Anthropic API key (if using Claude)
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-**GOOGLE_API_KEY**
-```bash
-# Google API key (if using Gemini)
-GOOGLE_API_KEY=...
-```
-
-### Agent Limits
-
-**DAILY_TOKEN_LIMIT**
-```bash
-# Tokens per agent per day (default: 100000)
-DAILY_TOKEN_LIMIT=100000
-```
-
-**DAILY_REQUEST_LIMIT**
-```bash
-# Requests per agent per day (default: 1000)
-DAILY_REQUEST_LIMIT=1000
-```
-
-**MINUTE_REQUEST_LIMIT**
-```bash
-# Requests per agent per minute (default: 10)
-MINUTE_REQUEST_LIMIT=10
-```
-
-**MAX_EXECUTION_TIME**
-```bash
-# Max seconds per agent execution (default: 300)
-MAX_EXECUTION_TIME=300
-```
-
-### Backup & Export
-
-**SNAPSHOT_INTERVAL_HOURS**
-```bash
-# Qdrant snapshot frequency (default: 24)
-SNAPSHOT_INTERVAL_HOURS=24
-
-# Set to 0 to disable
-SNAPSHOT_INTERVAL_HOURS=0
-```
-
-**MARKDOWN_EXPORT_ENABLED**
-```bash
-# Enable markdown export (default: true)
-MARKDOWN_EXPORT_ENABLED=true
-```
-
-**GIT_BACKUP_ENABLED**
-```bash
-# Enable git sync (default: false)
-GIT_BACKUP_ENABLED=false
-```
-
-**GIT_BACKUP_REPO**
-```bash
-# Git repository for backups (if enabled)
-GIT_BACKUP_REPO=https://github.com/user/backup
-```
-
-### OpenClaw Integration
-
-**OPENCLAW_GATEWAY_URL**
-```bash
-# OpenClaw gateway endpoint (optional)
-OPENCLAW_GATEWAY_URL=http://localhost:18789
-```
-
-**OPENCLAW_TOKEN**
-```bash
-# OpenClaw authentication token (if required)
-OPENCLAW_TOKEN=...
-```
-
-### Security
-
-**JWT_SECRET_KEY** (Required for production)
-```bash
-# Used to sign JWTs. Backend refuses to start without it unless DEBUG=true.
-# Generate: python -c "import secrets; print(secrets.token_urlsafe(64))"
-JWT_SECRET_KEY=your-secret-key-min-32-chars
-```
-
-**JWT_SECRET_FILE** (Optional)
-```bash
-# In dev (DEBUG=true), if JWT_SECRET_KEY is unset the backend persists a
-# generated secret to <data_dir>/.jwt_secret. Override the path here.
-JWT_SECRET_FILE=/var/lib/knowledge-os/.jwt_secret
-```
-
-**DEBUG**
-```bash
-# Development/debugging mode. Never set to true in production!
-DEBUG=false
-```
-
-**CORS_ORIGINS**
-```bash
-# Comma-separated origins allowed for CORS.
-CORS_ORIGINS=http://localhost:5173,https://app.example.com
-```
-
-**KOS_SKIP_MIGRATIONS** (Docker only)
-```bash
-# When the backend container starts, backend/entrypoint.sh runs
-# `alembic upgrade head` automatically. Set this to 1 to skip — useful if
-# you run migrations from a separate job (Kubernetes init container,
-# CI pre-deploy step, etc.).
-KOS_SKIP_MIGRATIONS=0
-```
-
-### Email (Optional)
-
-**SMTP_HOST**
-```bash
-SMTP_HOST=smtp.gmail.com
-```
-
-**SMTP_PORT**
-```bash
-SMTP_PORT=587
-```
-
-**SMTP_USERNAME**
-```bash
-SMTP_USERNAME=your-email@gmail.com
-```
-
-**SMTP_PASSWORD**
-```bash
-SMTP_PASSWORD=your-app-password
-```
-
-**SMTP_FROM**
-```bash
-SMTP_FROM=noreply@knowledge-os.local
-```
-
-### Example .env File
-
-```bash
-# Database
-DATABASE_URL=sqlite:///./knowledge_os.db
-
-# Logging
-LOG_LEVEL=INFO
-LOG_FILE=./logs/app.log
-
-# Agents
-AGENTS_ROOT=./agents
-LLM_PROVIDER=ollama
-OLLAMA_BASE_URL=http://localhost:11434
-
-# Agent Limits
-DAILY_TOKEN_LIMIT=100000
-DAILY_REQUEST_LIMIT=1000
-MINUTE_REQUEST_LIMIT=10
-
-# Backup
-SNAPSHOT_INTERVAL_HOURS=24
-MARKDOWN_EXPORT_ENABLED=true
-GIT_BACKUP_ENABLED=false
-
-# Security
-JWT_SECRET_KEY=your-secret-key-here-min-32-chars
-DEBUG=false
-CORS_ORIGINS=http://localhost:5173
-```
+The split exists so that **no developer is ever blocked waiting for a user's
+credential** (BUILD_SPEC sections 5 and 88). Adapters, schemas, validation,
+health checks, and Console forms are all buildable without a single real key.
 
 ---
 
-## Frontend Configuration
+## Deployment settings
 
-Configuration via environment variables in `.env.local` file.
+Environment variables, prefixed `LIFEOPS_`. A `.env` file in the repository root
+is read if present.
 
-### API Configuration
+| Variable | Default | Purpose |
+|---|---|---|
+| `LIFEOPS_NORNIC_URI` | `bolt://127.0.0.1:7687` | NornicDB Bolt endpoint |
+| `LIFEOPS_NORNIC_USER` | `admin` | |
+| `LIFEOPS_NORNIC_PASSWORD` | — | Generated into `nornicdb.env` |
+| `LIFEOPS_NORNIC_DATABASE` | — | Named database, if used |
+| `LIFEOPS_HTTP_HOST` | `127.0.0.1` | Core bind address |
+| `LIFEOPS_HTTP_PORT` | `8080` | |
+| `LIFEOPS_CORS_ORIGINS` | `["http://localhost:5173"]` | Console origin |
+| `LIFEOPS_STATE_DIR` | `~/.local/share/lifeops` | Durable state root |
+| `LIFEOPS_LOG_LEVEL` | `INFO` | |
+| `LIFEOPS_LOG_JSON` | `true` | |
+| `LIFEOPS_SAFE_MODE` | `false` | Boot in safe mode |
 
-**VITE_API_URL** (Required)
-```bash
-# Backend API base URL
-VITE_API_URL=http://localhost:8000
-# In production:
-VITE_API_URL=https://api.example.com
-```
+MCP server:
 
-### Feature Flags
+| Variable | Default | Purpose |
+|---|---|---|
+| `LIFEOPS_MCP_CLIENT_ID` | — | Client identity; `--client` overrides |
+| `LIFEOPS_MCP_TRANSPORT` | `stdio` | |
 
-**VITE_ENABLE_AGENTS**
-```bash
-# Enable agent features (default: true)
-VITE_ENABLE_AGENTS=true
-```
+Console (build time):
 
-**VITE_ENABLE_COLLABORATION**
-```bash
-# Enable real-time collaboration (default: true)
-VITE_ENABLE_COLLABORATION=true
-```
-
-**VITE_ENABLE_SEARCH**
-```bash
-# Enable semantic search (default: true)
-VITE_ENABLE_SEARCH=true
-```
-
-**VITE_ENABLE_FILE_UPLOAD**
-```bash
-# Enable file uploads (default: true)
-VITE_ENABLE_FILE_UPLOAD=true
-```
-
-### UI Configuration
-
-**VITE_THEME**
-```bash
-# Theme: light, dark, auto (default: auto)
-VITE_THEME=auto
-```
-
-**VITE_MAX_BLOCK_DEPTH**
-```bash
-# Maximum nesting level for blocks (default: 10)
-VITE_MAX_BLOCK_DEPTH=10
-```
-
-**VITE_PAGE_SIZE**
-```bash
-# Default page size for lists (default: 50)
-VITE_PAGE_SIZE=50
-```
-
-### Analytics (Optional)
-
-**VITE_ANALYTICS_ID**
-```bash
-# Google Analytics ID
-VITE_ANALYTICS_ID=G-XXXXXXXXXX
-```
-
-### Example .env.local File
-
-```bash
-# API
-VITE_API_URL=http://localhost:8000
-
-# Features
-VITE_ENABLE_AGENTS=true
-VITE_ENABLE_COLLABORATION=true
-VITE_ENABLE_SEARCH=true
-
-# UI
-VITE_THEME=auto
-VITE_MAX_BLOCK_DEPTH=10
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_LIFEOPS_URL` | `http://127.0.0.1:8080` | Core base URL |
+| `VITE_LIFEOPS_PORT` | `8080` | Dev-server proxy target |
 
 ---
 
-## Docker Compose Configuration
+## Runtime configuration
 
-Environment variables for docker-compose.yml:
+Set entirely in **Console → Configuration**. Every form is generated from a
+provider's own field schema, served by the API — so adding a provider requires
+no frontend change.
 
-```yaml
-services:
-  backend:
-    environment:
-      - DATABASE_URL=postgresql://knowledge:password@postgres:5432/knowledge_os
-      - LOG_LEVEL=INFO
-      - AGENTS_ROOT=/app/agents
-      - LLM_PROVIDER=ollama
-      - JWT_SECRET_KEY=your-secret-key-here
-      - DEBUG=false
-      # Skip auto-migrations if you run them from a separate job:
-      # - KOS_SKIP_MIGRATIONS=1
+### Provider states
 
-  frontend:
-    environment:
-      - VITE_API_URL=http://backend:8000
+| State | Meaning |
+|---|---|
+| `not_configured` | Required fields are still missing |
+| `disabled` | Complete, but switched off |
+| `configured` | Complete and enabled, never health-checked |
+| `healthy` | Last health check passed |
+| `unhealthy` | Last health check failed |
 
-  postgres:
-    environment:
-      - POSTGRES_DB=knowledge_os
-      - POSTGRES_USER=knowledge
-      - POSTGRES_PASSWORD=password
+`not_configured` and `disabled` are distinct on purpose: "I have not set this up
+yet" and "I set it up and turned it off" mean different things to a human
+reading the System screen. Missing settings outrank the enabled flag, because a
+provider that cannot work should not merely read as "off".
 
-  qdrant:
-    # No environment variables needed
-    ports:
-      - "6333:6333"
+### A fresh deployment
 
-  ollama:
-    # Models loaded at runtime
-    ports:
-      - "11434:11434"
 ```
+DeepSeek        Not configured
+ElevenLabs      Not configured
+Telegram        Not configured
+Calendar        Disabled
+Email           Disabled
+Browser         Disabled
+Telephony       Disabled
+Local ASR/TTS   Disabled
+```
+
+The Console is fully reachable in this state, and Today, Tasks, and System all
+work. This is asserted by the Phase 0 exit test, not just intended.
 
 ---
 
-## Production Configuration
+## How secrets are handled
 
-Recommended settings for production deployment:
+Submitting a provider form routes secret fields straight to the SecretStore.
+They never enter the configuration document and never enter NornicDB.
 
-```bash
-# Database: Use PostgreSQL
-DATABASE_URL=postgresql://user:pass@host:5432/knowledge_os?sslmode=require
+Reads return only:
 
-# Logging: Higher level
-LOG_LEVEL=WARNING
-
-# LLM: Use API-based provider
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-
-# Security
-DEBUG=false
-JWT_SECRET_KEY=<strong-random-32-chars>
-CORS_ORIGINS=https://example.com,https://www.example.com
-
-# Backup: Enable
-SNAPSHOT_INTERVAL_HOURS=12
-MARKDOWN_EXPORT_ENABLED=true
-GIT_BACKUP_ENABLED=true
-GIT_BACKUP_REPO=https://github.com/user/backup
-
-# Agent Limits: Adjust for your usage
-DAILY_TOKEN_LIMIT=50000
-DAILY_REQUEST_LIMIT=500
+```json
+{ "api_key": { "configured": true, "fingerprint": "a1b2c3d4e5f6" } }
 ```
+
+The fingerprint lets a human confirm *which* key is installed without it being
+readable. Submitting an empty string clears the secret.
+
+Updates are partial: only changed fields are sent, so editing a timeout never
+requires re-entering an API key.
+
+Details in [SECURITY.md](SECURITY.md).
 
 ---
 
-## Advanced Configuration
+## Configuration API
 
-### Database Connection Pooling
-
-For PostgreSQL with multiple workers:
-
-```bash
-# Set connection pool size (default: 5)
-DATABASE_URL=postgresql://...?pool_size=10
+```
+GET    /api/v1/config/providers                  schemas + status
+GET    /api/v1/config/providers/{id}
+PUT    /api/v1/config/providers/{id}             partial update
+POST   /api/v1/config/providers/{id}/test        health check
+POST   /api/v1/config/providers/{id}/discover    dynamic options (voices, models)
+GET    /api/v1/config/system
+PUT    /api/v1/config/system
+GET    /api/v1/config/clients                    permissions per client
 ```
 
-### Qdrant Configuration
+In Phase 0, `test` and `discover` report honestly that no adapter exists yet and
+name the phase it arrives in. A Test button that fakes success is worse than one
+that says "not yet" — and that behaviour is asserted in the test suite.
 
-Custom Qdrant settings in `qdrant/config/production.yaml`:
+---
 
-```yaml
-storage:
-  snapshots_path: ./snapshots
+## Where configuration lives
 
-service:
-  api_key: optional-api-key
-  max_request_size_mb: 200
-```
+Non-secret settings go to `~/.local/share/lifeops/config/lifeops.config.json`,
+not to NornicDB.
 
-### Rate Limiting Customization
+They have to be readable *before* a database connection exists: the Console must
+be able to render "NornicDB: unreachable" without first reaching NornicDB.
 
-Defaults live in `backend/app/middleware/rate_limit.py`:
+Writes are atomic — written to a temporary file, fsynced, then renamed — so an
+interrupted write cannot truncate the document.
+
+---
+
+## Adding a provider
+
+Define it in `core/lifeops/config/provider_registry.py`:
 
 ```python
-auth_rate_limit  = limiter.limit("5/minute")    # tighter for /auth/*
-read_rate_limit  = limiter.limit("60/minute")
-write_rate_limit = limiter.limit("30/minute")
+MY_PROVIDER = ProviderDefinition(
+    id="my_provider",
+    category=ProviderCategory.MESSAGING,
+    display_name="My Provider",
+    summary="What it does, in one line the user will read.",
+    available_in_phase=7,
+    fields=[
+        BooleanField("enabled", "Enabled", default=False),
+        SecretField("api_key", "API key", required=True),
+        SelectField("channel", "Channel", options_from="channels"),
+    ],
+    capabilities=["send_message", "health_check"],
+)
 ```
 
-The user-keyed limiter (`user_limiter`) keys requests by:
-- `user:<sub>` for valid Bearer tokens
-- `badtoken:<ip>:<sha256(token)[:16]>` for malformed/expired tokens — so
-  rotating IPs while reusing a bad token cannot dodge the per-user cap
-- `<ip>` for purely unauthenticated requests
+Register it in `_REGISTRY`. The Console picks it up with no frontend change:
+form fields, validation, state badge, and Test button all follow from the
+schema.
 
-Rate limiter storage is **in-memory per process**. With multiple Uvicorn
-workers each enforces its own bucket, so the effective cap is N × the
-configured limit. For a hard cap, run a single worker behind a proxy or
-swap `storage_uri="memory://"` for `storage_uri="redis://..."` on lines
-18 and 40 of `rate_limit.py`.
-
----
-
-## Configuration Validation
-
-Verify configuration on startup:
-
-```bash
-# Backend logs on startup:
-INFO: Database: sqlite://./knowledge_os.db
-INFO: LLM Provider: ollama (http://localhost:11434)
-INFO: Log Level: INFO
-INFO: Agents Root: ./agents
-
-# If configuration is invalid:
-RuntimeError: JWT_SECRET_KEY is not set and DEBUG is not 'true'.
-```
-
----
-
-## Troubleshooting Configuration
-
-### Port Already in Use
-
-```bash
-# Change port
-uvicorn app.main:app --port 8001
-
-# Or in docker-compose.yml
-ports:
-  - "8001:8000"
-```
-
-### Database Connection Failed
-
-```bash
-# Check connection string
-DATABASE_URL=postgresql://user:password@host:5432/db
-
-# Common issues:
-# - Wrong password
-# - Host not reachable
-# - Database not created
-# - SSL mode mismatch
-```
-
-### LLM Provider Not Found
-
-```bash
-# Verify provider is running
-curl http://localhost:11434/api/tags  # Ollama
-curl https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"
-```
-
-### Memory Issues
-
-If running out of memory:
-
-```bash
-# Reduce Qdrant batch size
-# Reduce page sizes
-# Limit concurrent sessions
-```
-
----
-
-## Environment-Specific Files
-
-Use multiple .env files:
-
-```bash
-# Development
-.env.development
-VITE_API_URL=http://localhost:8000
-DEBUG=true
-
-# Staging
-.env.staging
-VITE_API_URL=https://api-staging.example.com
-DEBUG=false
-
-# Production
-.env.production
-VITE_API_URL=https://api.example.com
-DEBUG=false
-```
-
-Load with:
-```bash
-export $(cat .env.production | xargs)
-python -m uvicorn app.main:app
-```
-
----
-
-**See also:**
-- [INSTALLATION.md](INSTALLATION.md) - Setup instructions
-- [DEPLOYMENT.md](DEPLOYMENT.md) - Production deployment
-- [Architecture](ARCHITECTURE.md) - Technical details
+`available_in_phase` is shown in the UI, so a provider that is visible but not
+yet functional reads as planned work rather than as a bug.
