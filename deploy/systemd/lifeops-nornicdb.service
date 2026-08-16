@@ -1,0 +1,30 @@
+[Unit]
+Description=NornicDB for LifeOps
+Documentation=https://github.com/orneryd/NornicDB
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.local/share/lifeops/nornicdb.env
+ExecStart=%h/.local/lib/lifeops/nornicdb serve \
+  --data-dir %h/.local/share/lifeops/nornicdb-data \
+  --address 127.0.0.1 \
+  --http-port 7474 \
+  --bolt-port 7687 \
+  --headless \
+  --admin-password ${LIFEOPS_NORNIC_PASSWORD}
+Restart=on-failure
+RestartSec=5
+
+# The database needs its own state directory and nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/lifeops
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=default.target

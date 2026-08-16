@@ -1,316 +1,133 @@
-# Knowledge OS - Claude Code Context
+# Hermes LifeOps — session context
 
-Session context and project information for Claude Code development.
+A personal operating system built around the Hermes assistant.
 
----
-
-## ⚡ Read this first when the user asks "what's broken" / "what needs fixing"
-
-The end-to-end suite at `e2e/` writes a fresh report to `e2e/REPORT.md`
-every time it runs. **Whenever the user asks about e2e results, broken
-features, what to fix, or what the most recent run found — read
-`e2e/REPORT.md` before answering.** Do not re-run the suite, guess, or
-synthesize from memory; the file is the source of truth.
-
-If the user asks you to run the suite yourself, `cd e2e && bash
-scripts/run-suite.sh` regenerates the report. The runner assumes the
-backend (`http://localhost:8000`) and frontend (`http://localhost:5173`)
-are already up; override with `E2E_BACKEND_URL` / `E2E_FRONTEND_URL` if
-they're on different ports.
+**Read [BUILD_SPEC.md](BUILD_SPEC.md) first.** It is authoritative. When
+anything here disagrees with it, the spec wins.
+[AGENTS.md](AGENTS.md) holds the working rules for changing this repository.
 
 ---
 
-## Project Overview
+## Where things stand
 
-**Knowledge OS** is a production-ready knowledge management system with an integrated AI agent runtime.
+**Phase 0 is complete.** The spine — Hermes → LifeOps MCP → LifeOps Core →
+NornicDB — is proven end to end, and every Phase 0 exit criterion passes.
 
-**Version:** v0.3.0  
-**Status:** ✅ Production Ready  
-**Last Updated:** May 2026  
-**Repository:** https://github.com/ghively/knowledge-os
+Phases 1 through 11 have not started. `README.md` tracks status.
 
----
-
-## Quick Facts
-
-- **Language:** Python (backend), TypeScript (frontend)
-- **Framework:** FastAPI + React 18
-- **Databases:** SQLite + Qdrant (vector DB)
-- **Agents:** ReAct-style with multi-provider LLM support
-- **Real-time:** WebSocket for collaboration & events
-- **Tests:** 33 backend test files (~320 test functions) + 21 frontend test files + 4 Playwright E2E specs
-- **Documentation:** 17 comprehensive guides (~190 KB)
-- **API Endpoints:** 86 documented endpoints
+Do not begin the next phase without the user asking for it.
 
 ---
 
-## Core Systems
+## The rules that matter most
 
-### 1. Agent Runtime (4,400 lines across 21 files)
-- ReAct execution loop (agent_loop.py)
-- Session & memory management
-- Tool registry & MCP client
-- LLM routing (Ollama, OpenAI, Anthropic, Google)
-- Rate limiting & audit logging
-- Scheduler & webhooks
-- Security sandbox with approval gates
-
-### 2. Knowledge Management
-- Object-based notes (Qdrant + SQLite)
-- Block-based outliner editor
-- Semantic search (384-dim embeddings)
-- Real-time collaboration
-- File indexing (PDF, Word, Code, Images)
-
-### 3. Data Layer
-- **SQLite:** Users, sessions, audit logs, schedules, webhooks
-- **Qdrant:** Objects, blocks, files, code, images, memories, relations (8 collections, 384-dim)
-- **File System:** Agent definitions, watched folders
-
-### 4. API (86 endpoints)
-- `/api/v1/auth/` — Authentication (7 endpoints)
-- `/api/v1/agents/` — Agent management (5 endpoints)
-- `/api/v1/agents/runtime/` — Agent execution (40+ endpoints; mounted via `agent_chat` router)
-- `/api/v1/objects/` — Content management (7 endpoints)
-- `/api/v1/blocks/` — Editor blocks (6 endpoints)
-- `/api/v1/tasks/` — Task management (6 endpoints)
-- `/api/v1/files/` — File indexing (5 endpoints)
-- `/api/v1/search/` — Semantic search (3 endpoints)
-- `/api/v1/system/` — Logs & status (6 endpoints)
-- More: collaboration, relations, settings, webhooks, etc.
+1. **NornicDB is the only application database.** No SQLite, PostgreSQL,
+   Qdrant, Neo4j, or Redis.
+2. **Nothing writes to NornicDB except LifeOps Core.** Not agents, not the
+   Console, not integrations.
+3. **Never ask the user for a runtime credential.** Build the adapter, the
+   schema, the Console form, and the Test button; leave the provider disabled.
+4. **Hermes is the assistant.** Do not build a second agent, a voice agent, or
+   an agent runtime.
+5. **No infrastructure for hypothetical problems.** See BUILD_SPEC section 105.
 
 ---
 
-## Key Files & Locations
+## Layout
 
-### Backend Architecture
 ```
-backend/
-├─ app/
-│  ├─ main.py                      # FastAPI app entry
-│  ├─ config.py                    # Configuration
-│  ├─ routers/                     # 10+ API routers
-│  ├─ services/
-│  │  ├─ agent/                    # Agent runtime (21 files, 4,400 LOC)
-│  │  ├─ auth.py                   # Authentication
-│  │  ├─ embedding.py              # Embeddings
-│  │  ├─ backup.py                 # Snapshots & exports
-│  │  └─ ...
-│  ├─ middleware/                  # Auth, rate limiting, logging
-│  └─ database/
-│     ├─ sqlite.py                 # SQLite client
-│     └─ qdrant_client.py           # Qdrant client
-├─ tests/                          # 23 test files
-├─ alembic/                        # Database migrations
-└─ requirements.txt                # Dependencies
-```
+core/lifeops/     LifeOps Core
+  domain/         models and pure rules — no Cypher, no HTTP, no MCP
+  core.py         the single application service; all orchestration lives here
+  policy/         capabilities and trust — pure functions
+  repositories/   interfaces + the only Cypher in the codebase
+  api/            HTTP for the Console — shape translation only
+  mcp/            MCP for agents — shape translation only
+  config/         provider registry, validation, config service
+  secrets/        AES-GCM secret store; secrets never enter NornicDB
 
-### Frontend Architecture
-```
-frontend/
-├─ src/
-│  ├─ pages/                       # 10 pages
-│  ├─ components/                  # 24+ components
-│  ├─ hooks/                       # 6 custom hooks
-│  ├─ stores/                      # 4 Zustand stores (auth, theme, etc)
-│  ├─ services/api.ts              # 86 API endpoints
-│  └─ lib/                         # Utilities
-├─ tests/                          # 13 test files
-└─ vite.config.ts                  # Vite config
+console/src/      LifeOps Console (React), talks only to LifeOps Core
+  pages/lifeops/  Today, Tasks, Configuration, System
+  services/lifeops.ts
+
+tests/            unit · policy · integration · persistence · e2e
+hermes/           MCP registration for Hermes and other clients
+scripts/          build, run, health
+legacy/           pre-LifeOps Knowledge-OS code — not built, not run, not imported
 ```
 
 ---
 
-## Common Tasks
-
-### Running Locally
+## Running it
 
 ```bash
-# Terminal 1: Backend
-cd backend && python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 8000
-
-# Terminal 2: Frontend
-cd frontend && npm install && npm run dev
-
-# Terminal 3: Qdrant (Docker)
-docker run -p 6333:6333 qdrant/qdrant
-
-# Terminal 4: Ollama (optional)
-ollama serve
+make dev      # NornicDB + LifeOps Core + Console
+make health
+make stop
 ```
 
-Then open http://localhost:5173
+Console at http://127.0.0.1:5173, Core at http://127.0.0.1:8080.
 
-### Testing
+No third-party credentials required.
+
+---
+
+## Testing
 
 ```bash
-# Backend
-cd backend && pytest -v
-
-# Frontend
-cd frontend && npm test
-
-# E2E
-cd e2e && npm test
+make test-fast     # unit + policy + integration, no database, ~1s
+make test          # everything Python, needs NornicDB
+make console-test
+make check         # what CI runs
 ```
 
-### Making API Changes
+`tests/e2e/test_phase0_exit.py` is the Phase 0 acceptance gate. Every MCP
+session in it is a real subprocess speaking the real protocol.
 
-1. Add endpoint in `routers/{feature}.py`
-2. Register in `main.py`
-3. Add tests in `tests/test_{feature}.py`
-4. Document in [API.md](API.md)
-5. Update frontend client in `services/api.ts`
-
-### Adding Agent Features
-
-1. Modify `services/agent/agent_loop.py` (execution)
-2. Update tools in `services/agent/tool_registry.py`
-3. Add audit logging in `services/agent/audit.py`
-4. Test with `tests/test_agent_loop.py`
-5. Document in [AGENT_SYSTEM.md](AGENT_SYSTEM.md)
-
-### Database Changes
-
-1. Create migration: `alembic revision --autogenerate -m "description"`
-2. Review: `cat alembic/versions/XXXX_description.py`
-3. Apply: `alembic upgrade head`
-4. Update schema docs in [DATABASE.md](DATABASE.md)
+Details in [TESTING.md](TESTING.md).
 
 ---
 
-## Important Constraints
+## Things worth knowing before you change something
 
-### Performance
-- Max 10 agent iterations per message (prevents infinite loops)
-- Max 300 seconds execution time per agent message
-- 384-dim vectors (sentence-transformers/all-MiniLM-L6-v2)
-- Rotating log handler (10MB max per file, 5 backups)
+**One service, two adapters.** `core/lifeops/core.py` holds every capability
+check and orchestration step. `api/http.py` and `mcp/server.py` only translate
+shapes. Putting a rule in one adapter means the other silently does not get it —
+and MCP is the path no human watches.
 
-### Security
-- JWT tokens with HMAC-SHA-256 (not bcrypt)
-- Per-agent rate limiting: 100k tokens/day, 1000 req/day, 10 req/min
-- Tool execution in sandbox (filesystem, network, timeout restrictions)
-- All agent decisions audited and logged
-- Tool approval required for destructive operations
+**Cypher lives in exactly one place.** `repositories/nornic/`. If a domain test
+needs Cypher to pass, the abstraction has leaked; fix the abstraction.
 
-### Compatibility
-- Python 3.11+ (type hints required)
-- Node.js 18+ (TypeScript strict mode)
-- React 18+ (hooks only)
-- FastAPI 0.100+ (async/await)
-- Qdrant 1.7+ (384-dim vectors)
+**Preferences are never overwritten.** A save closes the old validity window and
+opens a new record with a `SUPERSEDES` edge, in one transaction.
+
+**Task state goes through the machine.** Never assign `state` directly. An
+illegal transition must raise and write nothing.
+
+**Client identity is bound per connection**, never passed as a tool argument — a
+tool argument is model-controlled, which would let any agent claim to be Hermes.
+
+**NornicDB's admin password is fixed at data-directory initialisation.** A new
+`nornicdb.env` pointed at existing data will fail to authenticate.
 
 ---
 
-## Development Standards
+## Known gaps in Phase 0
 
-### Python
-- PEP 8 style (use `black`)
-- Type hints on all functions
-- Async/await for I/O
-- Docstrings for public functions
-- Imports: sorted with `isort`
+Recorded in [SECURITY.md](SECURITY.md), not hidden:
 
-### TypeScript
-- Strict mode enabled
-- No `any` types
-- Proper error handling
-- Component composition (no class components)
-- Zustand for state management
-
-### Testing
-- Unit tests for business logic
-- Integration tests for APIs
-- E2E tests for user flows
-- Minimum 80% coverage for critical paths
+- The Console has no authentication. Loopback only; Phase 1 closes it.
+- No durable audit log yet. Phase 4.
+- No provider adapters. `test` and `discover` report honestly that they are not
+  implemented rather than faking success.
+- Hermes itself has not been attached on this machine — it is not installed
+  here. See [HERMES_INTEGRATION.md](HERMES_INTEGRATION.md).
 
 ---
 
 ## Documentation
 
-**All documentation is current and comprehensive:**
-
-| Document | Purpose | Size |
-|----------|---------|------|
-| [README.md](README.md) | Overview & quick start | 19KB |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System design | 20KB |
-| [INSTALLATION.md](INSTALLATION.md) | Setup guide | 8KB |
-| [API.md](API.md) | API reference | 11KB |
-| [DATABASE.md](DATABASE.md) | Schema & migrations | 11KB |
-| [AGENT_SYSTEM.md](AGENT_SYSTEM.md) | Agent guide | 14KB |
-| [CONFIGURATION.md](CONFIGURATION.md) | Config options | 9KB |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Dev workflow | 11KB |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Production guide | 14KB |
-
-**Quick Start:** README.md → INSTALLATION.md → Start coding!
-
----
-
-## Recent Changes (May 2026)
-
-✅ Security hardening pass — agent_id path traversal, MCP interpreter
-   flag denylist, rate-limit fingerprint binding for bad tokens, agent
-   loop pre-call budget check, backup filename sanitization, auto
-   `created_by` audit trail.
-✅ LLM SDKs (`openai`, `anthropic`, `google-generativeai`) now pinned in
-   `backend/requirements.txt`; were dynamically imported before.
-✅ Container entrypoint runs `alembic upgrade head` automatically (opt
-   out via `KOS_SKIP_MIGRATIONS=1`).
-✅ Comprehensive Playwright e2e suite (60 tests across 13 files) with
-   auto-generated `e2e/REPORT.md` as the canonical "what's broken"
-   artifact.
-✅ GitHub Actions CI re-added (`backend pytest`, `frontend tsc + vitest +
-   build`, optional Playwright smoke).
-✅ Frontend production Docker image hardened (drops to non-root nginx).
-✅ Documentation refreshed: SECURITY.md "Known Limitations", AUTH.md
-   prefix corrected, ROADMAP.md updated to reflect shipped state, README
-   broken `docs/*` links fixed.
-
-## Earlier Milestones (April 2026)
-
-✅ Documentation rewrite (~190 KB across 17 guides)
-✅ Full code review (9.3/10 score)
-✅ All systems production-ready
-✅ Comprehensive API reference (86 endpoints)
-✅ Agent system fully functional
-✅ Logging system unified (backend + frontend + nginx)
-✅ Security audit passed
-
----
-
-## Known Limitations
-
-- Single-instance backend (can add load balancer)
-- SQLite (use PostgreSQL for production)
-- In-memory WebSocket (add Redis for multiple instances)
-- Ollama default (requires API key for production providers)
-
----
-
-## Next Steps for Contributors
-
-1. **Read:** [DEVELOPMENT.md](DEVELOPMENT.md) for workflow
-2. **Setup:** Follow [INSTALLATION.md](INSTALLATION.md)
-3. **Understand:** Review [ARCHITECTURE.md](ARCHITECTURE.md)
-4. **Code:** Make changes following standards
-5. **Test:** Run full test suite
-6. **Document:** Update [API.md](API.md) if needed
-7. **Push:** Create PR against `main`
-
----
-
-## Support
-
-- **Issues:** GitHub Issues
-- **Discussions:** GitHub Discussions
-- **Docs:** See documentation section above
-- **Architecture Questions:** See [ARCHITECTURE.md](ARCHITECTURE.md)
-- **API Questions:** See [API.md](API.md)
-
----
-
-**Version:** v0.3.0 | **Status:** Production Ready ✅  
-**Last Updated:** May 2026
+[README](README.md) · [BUILD_SPEC](BUILD_SPEC.md) · [ARCHITECTURE](ARCHITECTURE.md) ·
+[DATA_MODEL](DATA_MODEL.md) · [MCP_API](MCP_API.md) · [SECURITY](SECURITY.md) ·
+[OPERATIONS](OPERATIONS.md) · [TESTING](TESTING.md) · [CONFIGURATION](CONFIGURATION.md) ·
+[HERMES_INTEGRATION](HERMES_INTEGRATION.md) · [AGENTS](AGENTS.md)
