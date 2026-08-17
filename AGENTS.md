@@ -138,8 +138,20 @@ Every change ships with tests. `make check` before committing.
 - API contract → `tests/integration`
 - Cypher and graph shape → `tests/persistence`
 - Phase acceptance → `tests/e2e`
+- Spec fidelity and structure → `tests/spec`, no database
 
 Suites needing NornicDB must skip when it is unreachable, never fail.
+
+`tests/spec` enforces rules this file already states, because stating them was
+not enough — Phase 3 skipped three steps of "Adding a domain entity" and no test
+noticed. It asserts that BUILD_SPEC enumerations are implemented in full, that
+every repository Protocol has a fake whose signatures match the NornicDB
+implementation, that no test fakes `LifeOpsCore`, and that every NornicDB
+repository has a persistence test.
+
+When a phase adds an enumeration to BUILD_SPEC — section 54's WaitingItem
+fields, section 59's Approval model, section 60's Action record — pin it in
+`tests/spec/test_spec_fidelity.py` before implementing it.
 
 Assert on behaviour, not on implementation. A test that breaks when you rename a
 private method is a maintenance cost, not a safety net.
