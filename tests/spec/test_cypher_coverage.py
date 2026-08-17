@@ -95,15 +95,17 @@ class TestRepository:
         assert uncovered(NORNIC_DIR, PERSISTENCE_DIR) == []
 
     def test_the_check_is_looking_at_real_repositories(self) -> None:
-        """Guards against the scan silently finding nothing to check."""
-        assert set(repository_classes(NORNIC_DIR)) == {
-            "actions.py",
-            "approvals.py",
-            "audit.py",
-            "memory.py",
-            "people.py",
-            "preferences.py",
-            "tasks.py",
-            "waiting.py",
-            "world.py",
-        }
+        """Guards against the scan silently finding nothing to check.
+
+        Deliberately a floor, not an exact set. An exact list would have to be
+        edited every time a phase adds a repository — and since phase agents
+        are told to keep out of tests/spec, that made adding one impossible
+        and pushed two phases into projecting entities as world nodes instead.
+        A guard that changes the architecture to avoid being edited is a bad
+        guard; this one only asserts the scan still has real work to do.
+        """
+        found = repository_classes(NORNIC_DIR)
+        assert len(found) >= 5, found
+        assert all(
+            cls.startswith("Nornic") for classes in found.values() for cls in classes
+        )
