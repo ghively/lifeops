@@ -1,9 +1,11 @@
-"""Voice domain — pure rules for the ElevenLabs quick path (BUILD_SPEC 27-29, 94).
+"""Voice domain — pure rules shared by the cloud and local voice paths
+(BUILD_SPEC 27-30, 94-95).
 
 No I/O, no Cypher, no HTTP. This module defines the shapes the voice pipeline
 passes around and the one rule that belongs to every caller equally: bounding
 the text a synthesis request may carry. Everything that actually reaches a
-network — ElevenLabs, a future local model — lives in ``lifeops.voice``.
+network or a local runtime — ElevenLabs, ``lifeops.voice.local``'s adapters —
+lives in ``lifeops.voice``.
 """
 
 from __future__ import annotations
@@ -68,6 +70,44 @@ class SynthesisOptions(BaseModel):
     stability: float | None = Field(default=None, ge=0.0, le=1.0)
     similarity_boost: float | None = Field(default=None, ge=0.0, le=1.0)
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
+
+
+class TranscriptionResult(BaseModel):
+    """What an ``ASRProvider`` hands back for a chunk of audio (section 28).
+
+    ``is_final`` distinguishes a partial transcript a streaming ASR provider
+    emits while the speaker is still talking from the settled text section 32
+    calls the Voice Bridge to hand Hermes; a non-streaming ``transcribe`` call
+    always returns exactly one final result.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    language: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    is_final: bool = True
+
+
+class VoiceModeStatus(BaseModel):
+    """What the Configuration screen's voice mode picker needs to render
+    "active provider" and "fallback provider" (BUILD_SPEC section 95).
+
+    Selection itself is ``VoiceService``'s job; this is only the readback —
+    which provider id the current mode has chosen for each capability, and
+    which enabled provider would be used next if that one stopped working.
+    Nothing here performs a live health check; that stays behind the
+    existing per-provider Test button so opening Configuration never fans
+    out network calls on its own.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: VoiceMode
+    tts_active: str | None = None
+    tts_fallback: str | None = None
+    asr_active: str | None = None
+    asr_fallback: str | None = None
 
 
 def validate_synthesis_text(text: str) -> str:

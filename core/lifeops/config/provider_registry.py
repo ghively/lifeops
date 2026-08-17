@@ -209,6 +209,16 @@ ELEVENLABS = ProviderDefinition(
     capabilities=["tts", "streaming_tts", "list_voices", "list_models", "health_check"],
 )
 
+#: Static device choices. No torch/CUDA dependency exists to enumerate the
+#: machine's actual GPUs (BUILD_SPEC section 105), so this is a fixed,
+#: reasonable list rather than free text — good enough for the Console's
+#: device selector today, and cheap to make dynamic later if it matters.
+_DEVICE_OPTIONS = [
+    {"value": "cpu", "label": "CPU"},
+    {"value": "cuda:0", "label": "GPU 0 (cuda:0)"},
+    {"value": "cuda:1", "label": "GPU 1 (cuda:1)"},
+]
+
 LOCAL_TTS = ProviderDefinition(
     id="local_tts",
     category=ProviderCategory.VOICE_TTS,
@@ -217,8 +227,16 @@ LOCAL_TTS = ProviderDefinition(
     available_in_phase=6,
     fields=[
         _ENABLED,
-        SelectField("model", "Model", options_from="models"),
-        TextField("device", "Device", default="cuda:0"),
+        SelectField(
+            "model",
+            "Model",
+            required=True,
+            options_from="models",
+            description="BUILD_SPEC section 30 candidates: Qwen3-TTS, Chatterbox "
+            "Turbo, Kokoro. No adapter is wired to one yet, so this list is "
+            "empty until a runtime is installed and integrated.",
+        ),
+        SelectField("device", "Device", default="cuda:0", options=_DEVICE_OPTIONS),
         NumberField("speed", "Speed", default=1.0, minimum=0.5, maximum=2.0, step=0.05),
     ],
     capabilities=["tts", "streaming_tts", "health_check"],
@@ -232,8 +250,15 @@ LOCAL_ASR = ProviderDefinition(
     available_in_phase=6,
     fields=[
         _ENABLED,
-        SelectField("model", "Model", options_from="models"),
-        TextField("device", "Device", default="cuda:0"),
+        SelectField(
+            "model",
+            "Model",
+            required=True,
+            options_from="models",
+            description="BUILD_SPEC section 30 candidates: faster-whisper "
+            "large-v3-turbo, faster-whisper distil-large-v3.",
+        ),
+        SelectField("device", "Device", default="cuda:0", options=_DEVICE_OPTIONS),
         TextField("language", "Language", default="en"),
     ],
     capabilities=["transcribe", "streaming_transcribe", "health_check"],

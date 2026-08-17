@@ -332,7 +332,7 @@ class TestConfiguration:
         # configured" rather than a live network call.
         body = (await client.post(f"{API}/config/providers/elevenlabs/test")).json()
         assert body["healthy"] is False
-        assert "no text-to-speech provider" in body["message"]
+        assert "not enabled and fully configured" in body["message"]
 
     async def test_system_config_round_trip(self, client: httpx.AsyncClient) -> None:
         await client.put(

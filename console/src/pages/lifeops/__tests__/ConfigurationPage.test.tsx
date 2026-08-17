@@ -36,6 +36,9 @@ vi.mock('@/services/lifeops', async () => {
     },
     voiceApi: {
       previewVoice: vi.fn(),
+      getModeStatus: vi.fn(),
+      loadProvider: vi.fn(),
+      unloadProvider: vi.fn(),
     },
   }
 })
@@ -190,6 +193,49 @@ const elevenlabs: ProviderEntry = {
   },
 }
 
+const localTts: ProviderEntry = {
+  definition: {
+    id: 'local_tts',
+    category: 'voice_tts',
+    display_name: 'Local TTS (RTX)',
+    summary: 'GPU-accelerated local speech synthesis.',
+    available_in_phase: 6,
+    docs_url: null,
+    capabilities: ['tts', 'streaming_tts', 'health_check'],
+    fields: [
+      {
+        name: 'enabled',
+        kind: 'boolean',
+        label: 'Enabled',
+        required: false,
+        description: '',
+        default: false,
+        placeholder: null,
+        options: [],
+        options_from: null,
+        minimum: null,
+        maximum: null,
+        step: null,
+        advanced: false,
+      },
+    ],
+  },
+  status: {
+    id: 'local_tts',
+    display_name: 'Local TTS (RTX)',
+    category: 'voice_tts',
+    summary: 'GPU-accelerated local speech synthesis.',
+    state: 'not_configured',
+    enabled: false,
+    available_in_phase: 6,
+    settings: { enabled: false, model: null, device: 'cuda:0' },
+    secrets: {},
+    missing_required: ['model'],
+    capabilities: ['tts', 'streaming_tts', 'health_check'],
+    last_health: null,
+  },
+}
+
 const mockedConfig = vi.mocked(configApi)
 const mockedAuth = vi.mocked(authApi)
 const mockedVoice = vi.mocked(voiceApi)
@@ -205,6 +251,13 @@ beforeEach(() => {
     setup_completed: false,
     safe_mode: false,
     voice_mode: 'quick_cloud',
+  })
+  mockedVoice.getModeStatus.mockResolvedValue({
+    mode: 'quick_cloud',
+    tts_active: null,
+    tts_fallback: null,
+    asr_active: null,
+    asr_fallback: null,
   })
   mockedAuth.me.mockResolvedValue({
     client_id: 'lifeops-console',
@@ -331,6 +384,54 @@ describe('Voice mode', () => {
     await waitFor(() =>
       expect(mockedConfig.updateSystem).toHaveBeenCalledWith({ voice_mode: 'hybrid' }),
     )
+  })
+
+  it('shows the active and fallback provider per BUILD_SPEC section 95', async () => {
+    mockedVoice.getModeStatus.mockResolvedValue({
+      mode: 'local',
+      tts_active: 'local_tts',
+      tts_fallback: 'elevenlabs',
+      asr_active: 'local_asr',
+      asr_fallback: null,
+    })
+    renderPage()
+
+    expect(await screen.findByText(/active local_tts/)).toBeInTheDocument()
+    expect(screen.getByText(/fallback elevenlabs/)).toBeInTheDocument()
+    expect(screen.getByText(/active local_asr/)).toBeInTheDocument()
+  })
+})
+
+describe('Local voice (BUILD_SPEC section 95)', () => {
+  it('offers load/unload controls only for the local voice providers', async () => {
+    mockedConfig.listProviders.mockResolvedValue([deepseek, localTts])
+    renderPage()
+
+    const configureButtons = await screen.findAllByRole('button', { name: 'Configure' })
+    await userEvent.click(configureButtons[0])
+    expect(screen.queryByRole('button', { name: 'Load model' })).not.toBeInTheDocument()
+
+    await userEvent.click(configureButtons[1])
+    expect(screen.getByRole('button', { name: 'Load model' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Unload model' })).toBeInTheDocument()
+  })
+
+  it('reports the server message rather than pretending a model loaded', async () => {
+    mockedConfig.listProviders.mockResolvedValue([localTts])
+    mockedVoice.loadProvider.mockResolvedValue({
+      provider: 'local_tts',
+      loaded: false,
+      message: 'no local TTS runtime is wired up yet',
+    })
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Configure' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Load model' }))
+
+    expect(mockedVoice.loadProvider).toHaveBeenCalledWith('local_tts')
+    expect(
+      await screen.findByText('no local TTS runtime is wired up yet'),
+    ).toBeInTheDocument()
   })
 })
 
