@@ -420,3 +420,192 @@ class TestListing:
 
         listed = {e.id for e in await repo.list_entities(limit=2000)}
         assert ids <= listed
+
+
+@pytest.fixture
+async def phase7_cleanup(nornic_client: NornicClient):
+    """Phase 7 entities are built directly, not through ``world``'s ``make``
+    helper (they are outside ``CREATABLE_ENTITY_TYPES``), so they need their
+    own teardown list rather than riding on that fixture's."""
+    created: list[str] = []
+    try:
+        yield created
+    finally:
+        for entity_id in created:
+            await nornic_client.write(
+                "MATCH (n {id: $id}) DETACH DELETE n", id=entity_id
+            )
+
+
+class TestPhase7EntityRoundTrip:
+    """Appointment, CalendarEvent, and Document (BUILD_SPEC sections 63, 64,
+    96) are projected through the same world repository as Household/
+    Provider/Asset, but they are built with the domain conversion helpers
+    rather than ``EntityDraft`` — they are outside ``CREATABLE_ENTITY_TYPES``
+    on purpose (domain/world.py). This proves the wider
+    ``WORLD_MANAGED_ENTITY_TYPES`` guard actually lets NornicDB accept them,
+    and that every fact the domain model needs survives the JSON round trip.
+    """
+
+    async def test_an_appointment_round_trips_through_its_facts(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.calendar import (
+            Appointment,
+            AppointmentStatus,
+            appointment_to_entity,
+            entity_to_appointment,
+        )
+
+        repo, _, _ = world
+        appointment = Appointment(
+            id=f"appointment_{test_label}",
+            subject="Furnace tune-up",
+            status=AppointmentStatus.HELD,
+            provider_entity_id=f"provider_hvac_{test_label}",
+            task_id=f"task_{test_label}",
+            start_at="2026-03-01T14:00:00Z",
+            end_at="2026-03-01T15:00:00Z",
+            location="Home",
+            notes="Front door code is on file",
+            hold_reference="hold-abc-123",
+            hold_expires_at="2026-03-01T13:30:00Z",
+            created_at=TS,
+            updated_at=TS,
+            created_by_client="hermes-personal",
+        )
+        phase7_cleanup.append(appointment.id)
+
+        created = await repo.create(appointment_to_entity(appointment))
+        assert created.id == appointment.id
+
+        fetched = await repo.get(appointment.id)
+        assert fetched is not None
+        roundtripped = entity_to_appointment(fetched)
+        assert roundtripped.subject == appointment.subject
+        assert roundtripped.status is AppointmentStatus.HELD
+        assert roundtripped.provider_entity_id == appointment.provider_entity_id
+        assert roundtripped.start_at == appointment.start_at
+        assert roundtripped.end_at == appointment.end_at
+        assert roundtripped.hold_reference == appointment.hold_reference
+        assert roundtripped.external_event_id is None
+
+    async def test_rewriting_an_appointment_updates_rather_than_duplicates(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        """The booking flow re-persists the same id after confirm_booking
+        (core.py's ``mark_booked``); MERGE must update it in place."""
+        from lifeops.domain.calendar import (
+            Appointment,
+            AppointmentStatus,
+            appointment_to_entity,
+            confirm_booking,
+            entity_to_appointment,
+        )
+
+        repo, _, _ = world
+        appointment = Appointment(
+            id=f"appointment_{test_label}",
+            subject="Furnace tune-up",
+            start_at="2026-03-01T14:00:00Z",
+            end_at="2026-03-01T15:00:00Z",
+            hold_expires_at="2099-01-01T00:00:00Z",
+            created_at=TS,
+            updated_at=TS,
+        )
+        phase7_cleanup.append(appointment.id)
+        await repo.create(appointment_to_entity(appointment))
+
+        booked = confirm_booking(
+            appointment,
+            external_event_id="ext-evt-1",
+            action_id=f"action_{test_label}",
+            now="2026-03-01T09:00:00Z",
+        )
+        await repo.create(appointment_to_entity(booked))
+
+        listed = [e for e in await repo.list_entities() if e.id == appointment.id]
+        assert len(listed) == 1
+        roundtripped = entity_to_appointment(listed[0])
+        assert roundtripped.status is AppointmentStatus.BOOKED
+        assert roundtripped.external_event_id == "ext-evt-1"
+
+    async def test_a_calendar_event_round_trips(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.calendar import (
+            CalendarEvent,
+            calendar_event_to_entity,
+            entity_to_calendar_event,
+        )
+
+        repo, _, _ = world
+        event = CalendarEvent(
+            id=CalendarEvent.make_id("fake", f"ext-{test_label}"),
+            external_event_id=f"ext-{test_label}",
+            calendar_provider_id="fake",
+            title="Dentist",
+            start_at="2026-04-01T10:00:00Z",
+            end_at="2026-04-01T10:30:00Z",
+            location="Suite 4",
+        )
+        phase7_cleanup.append(event.id)
+
+        await repo.create(calendar_event_to_entity(event, now=TS))
+        fetched = await repo.get(event.id)
+        assert fetched is not None
+        roundtripped = entity_to_calendar_event(fetched)
+        assert roundtripped.title == "Dentist"
+        assert roundtripped.external_event_id == event.external_event_id
+        assert roundtripped.start_at == event.start_at
+
+    async def test_a_document_round_trips(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.documents import (
+            Document,
+            document_to_entity,
+            entity_to_document,
+        )
+
+        repo, _, _ = world
+        document = Document(
+            id=f"document_{test_label}",
+            title="ABC Electric quote",
+            source="email",
+            source_ref="msg-123",
+            mime_type="message/rfc822",
+            summary="Quote for panel upgrade: $2,400",
+            created_at=TS,
+            updated_at=TS,
+            created_by_client="hermes-personal",
+        )
+        phase7_cleanup.append(document.id)
+
+        await repo.create(document_to_entity(document))
+        fetched = await repo.get(document.id)
+        assert fetched is not None
+        roundtripped = entity_to_document(fetched)
+        assert roundtripped.title == document.title
+        assert roundtripped.source == "email"
+        assert roundtripped.source_ref == "msg-123"
+        assert roundtripped.summary == document.summary
+
+    async def test_phase7_types_are_included_in_a_full_listing(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.documents import Document, document_to_entity
+
+        repo, _, _ = world
+        document = Document(
+            id=f"document_{test_label}",
+            title="Listing check",
+            source="manual",
+            created_at=TS,
+            updated_at=TS,
+        )
+        phase7_cleanup.append(document.id)
+        await repo.create(document_to_entity(document))
+
+        listed = {e.id for e in await repo.list_entities(limit=2000)}
+        assert document.id in listed

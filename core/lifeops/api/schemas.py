@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from lifeops.domain.actions import ActionStatus, ActionType
 from lifeops.domain.approvals import ApprovalStatus
+from lifeops.domain.calendar import DEFAULT_HOLD_MINUTES, AppointmentStatus
 from lifeops.domain.memory import MemorySource, MemoryType
 from lifeops.domain.preferences import PreferenceSource
 from lifeops.domain.tasks import TaskPriority, TaskState, VerificationState
@@ -660,3 +661,165 @@ class AuditListResponse(BaseModel):
 
     records: list[AuditRecordResponse]
     total: int
+
+
+# --- calendar (BUILD_SPEC sections 63, 96) ------------------------------------
+
+
+class CalendarEventResponse(BaseModel):
+    """One read-only calendar entry (section 63 step 1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    external_event_id: str
+    calendar_provider_id: str
+    title: str
+    start_at: str
+    end_at: str
+    location: str
+
+
+class CalendarEventListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    events: list[CalendarEventResponse]
+    total: int
+
+
+class FreeBusySlotResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_at: str
+    end_at: str
+    busy: bool
+
+
+class FreeBusyResponse(BaseModel):
+    """Section 63 step 2."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_at: str
+    end_at: str
+    slots: list[FreeBusySlotResponse]
+
+
+class AppointmentResponse(BaseModel):
+    """One Appointment (section 63, 96): a hold or a booking LifeOps is
+    driving, distinct from a bare ``CalendarEventResponse``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    subject: str
+    status: AppointmentStatus
+    provider_entity_id: str | None
+    task_id: str | None
+    start_at: str
+    end_at: str
+    location: str
+    notes: str
+    calendar_provider_id: str
+    hold_reference: str | None
+    hold_expires_at: str | None
+    external_event_id: str | None
+    booking_action_id: str | None
+    created_at: str
+    updated_at: str
+    created_by_client: str | None
+
+
+class AppointmentListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    appointments: list[AppointmentResponse]
+    total: int
+
+
+class CreateAppointmentHoldRequest(BaseModel):
+    """Section 63 step 3."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str = Field(min_length=1, max_length=300)
+    start_at: str
+    end_at: str
+    provider_entity_id: str | None = None
+    task_id: str | None = None
+    location: str = Field(default="", max_length=500)
+    notes: str = Field(default="", max_length=2000)
+    hold_minutes: int = Field(default=DEFAULT_HOLD_MINUTES, ge=1, le=24 * 60)
+
+
+# --- email (BUILD_SPEC sections 61, 64, 96) -----------------------------------
+
+
+class EmailMessageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: str
+    thread_id: str
+    from_address: str
+    to_addresses: list[str]
+    subject: str
+    snippet: str
+    received_at: str
+    folder: str
+
+
+class EmailSearchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messages: list[EmailMessageResponse]
+    total: int
+
+
+class EmailThreadResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str
+    subject: str
+    messages: list[EmailMessageResponse]
+
+
+class SendEmailRequest(BaseModel):
+    """Section 64's send/reply. A reply sets both ``thread_id`` and
+    ``in_reply_to``; a new message sets neither."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    to_addresses: list[str] = Field(min_length=1, max_length=25)
+    subject: str = Field(min_length=1, max_length=500)
+    body: str = Field(min_length=1, max_length=50_000)
+    thread_id: str | None = None
+    in_reply_to: str | None = None
+    task_id: str | None = None
+    target_entity_id: str | None = None
+
+
+# --- documents (BUILD_SPEC sections 36, 64, 96) -------------------------------
+
+
+class DocumentResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    source: str
+    source_ref: str
+    mime_type: str
+    summary: str
+    created_at: str
+    updated_at: str
+    created_by_client: str | None
+
+
+class CreateDocumentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=300)
+    source: str = Field(min_length=1, max_length=50)
+    source_ref: str = Field(default="", max_length=500)
+    mime_type: str = Field(default="", max_length=200)
+    summary: str = Field(default="", max_length=4000)

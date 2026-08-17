@@ -109,3 +109,21 @@ def new_approval_id() -> str:
 
 def new_audit_id() -> str:
     return new_ulid_id(PREFIX_AUDIT)
+
+
+# Phase 7 (calendar + email) prefixes. Single-word, same constraint as above.
+PREFIX_APPOINTMENT = "appointment"
+PREFIX_EVENT = "event"
+PREFIX_DOCUMENT = "document"
+
+
+def new_appointment_id() -> str:
+    return new_ulid_id(PREFIX_APPOINTMENT)
+
+
+def new_event_id() -> str:
+    return new_ulid_id(PREFIX_EVENT)
+
+
+def new_document_id() -> str:
+    return new_ulid_id(PREFIX_DOCUMENT)

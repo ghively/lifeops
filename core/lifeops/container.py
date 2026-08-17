@@ -11,9 +11,11 @@ from __future__ import annotations
 import logging
 
 from lifeops.auth import ConsoleAuth
+from lifeops.calendar.service import CalendarProviderService
 from lifeops.clock import Clock, SystemClock
 from lifeops.config.service import ConfigurationService
 from lifeops.core import LifeOpsCore
+from lifeops.email.service import EmailProviderService
 from lifeops.events import EventBus
 from lifeops.observability.activity import attach_activity_buffer, detach_activity_buffer
 from lifeops.repositories.nornic.actions import NornicActionRepository
@@ -55,6 +57,15 @@ class Container:
         # secrets into calls against an external speech API; it never touches
         # NornicDB or the world model LifeOpsCore owns.
         self.voice = VoiceService(config=self.config, secret_store=self.secret_store)
+        # Phase 7: the calendar and email quick paths (BUILD_SPEC section 96).
+        # Composes configuration and secrets into calls against an external
+        # calendar/mail server; LifeOpsCore holds these too (unlike voice) so
+        # every booking and send still passes through its capability checks
+        # and the Action outbox rather than calling out directly.
+        self.calendar = CalendarProviderService(
+            config=self.config, secret_store=self.secret_store
+        )
+        self.email = EmailProviderService(config=self.config, secret_store=self.secret_store)
         self.events = EventBus()
         # Ephemeral view of recent semantic operations for the Activity screen.
         # Not the audit log — it dies with the process (observability/activity.py).
@@ -85,6 +96,8 @@ class Container:
             actions=self.actions,
             approvals=self.approvals,
             audit=self.audit,
+            calendar=self.calendar,
+            email=self.email,
             clock=self.clock,
             safe_mode=safe_mode,
             events=self.events,

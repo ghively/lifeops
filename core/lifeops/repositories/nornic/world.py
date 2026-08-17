@@ -27,7 +27,7 @@ import json
 from typing import Any
 
 from lifeops.domain.world import (
-    CREATABLE_ENTITY_TYPES,
+    WORLD_MANAGED_ENTITY_TYPES,
     WORLD_RELATIONSHIP_TYPES,
     WorldEdge,
     WorldEntity,
@@ -44,6 +44,14 @@ _LABEL_FOR_TYPE: dict[WorldEntityType, str] = {
     WorldEntityType.PROVIDER: "Provider",
     WorldEntityType.ASSET: "Asset",
     WorldEntityType.PREFERENCE: "Preference",
+    # Phase 7 (section 96): Appointment carries its own booking state machine
+    # and Event/Document are written by the calendar and email flows, so all
+    # three are projected here the same way Person is — readable through the
+    # generic entity path, written through ``WORLD_MANAGED_ENTITY_TYPES``
+    # rather than the narrower ``CREATABLE_ENTITY_TYPES`` generic-create guard.
+    WorldEntityType.APPOINTMENT: "Appointment",
+    WorldEntityType.EVENT: "Event",
+    WorldEntityType.DOCUMENT: "Document",
 }
 
 # Labels come from this module's own constant map keyed on the ID prefix —
@@ -159,8 +167,13 @@ class NornicWorldRepository:
         # Only the shaped types are written here. Preferences and persons are
         # owned by their own repositories; the domain refuses them upstream,
         # and this guard keeps a future caller from writing a Preference node
-        # with the wrong property shape.
-        if entity.entity_type not in CREATABLE_ENTITY_TYPES:
+        # with the wrong property shape. ``WORLD_MANAGED_ENTITY_TYPES`` is
+        # wider than the generic-create ``CREATABLE_ENTITY_TYPES``: Appointment,
+        # Event, and Document are written by dedicated LifeOpsCore flows that
+        # build the ``WorldEntity`` themselves rather than through
+        # ``EntityDraft``, so this guard checks the broader set while the
+        # generic Console/MCP "add an entity" path stays closed to them.
+        if entity.entity_type not in WORLD_MANAGED_ENTITY_TYPES:
             raise ValueError(
                 f"{entity.entity_type} is not created by the world repository"
             )

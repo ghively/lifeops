@@ -111,6 +111,15 @@ _READ_ONLY: frozenset[Capability] = frozenset(
 #: Hermes is the primary assistant and holds the broadest grant.
 #: Memory read+write (Phase 2, section 91) and world read+write (Phase 3,
 #: section 92): remembering and shaping the user's world is its core job.
+#:
+#: Phase 7 (section 96) adds BOOK_APPOINTMENT and SEND_EXTERNAL_MESSAGE.
+#: Hermes is the client that actually reads a calendar and drafts an email on
+#: the user's behalf, so it is the client that must be able to prepare those
+#: Actions — otherwise section 96's read -> reversible-write -> external-
+#: communication flow has no caller. Preparing is not executing: booking
+#: still needs a human's APPROVE_ACTION (Console-only, below), and a hold
+#: still cannot become a booking without independent verification
+#: (domain/calendar.py, section 63's warning).
 HERMES = ClientIdentity(
     client_id="hermes-personal",
     role=ClientRole.PRIMARY_ASSISTANT,
@@ -124,6 +133,8 @@ HERMES = ClientIdentity(
         Capability.UPDATE_TASK,
         Capability.READ_MEMORY,
         Capability.WRITE_MEMORY,
+        Capability.BOOK_APPOINTMENT,
+        Capability.SEND_EXTERNAL_MESSAGE,
     },
 )
 
@@ -159,6 +170,13 @@ CODING_CLIENT = ClientIdentity(
 #: The Console acts as the user directly: it is the surface where a human
 #: corrects state and administers configuration. Memory read+write covers the
 #: Memory screen's correct/invalidate flows (section 17, section 91).
+#:
+#: BOOK_APPOINTMENT and SEND_EXTERNAL_MESSAGE (Phase 7, section 96) let the
+#: human operating the Console place a hold or send an email themselves, not
+#: only approve one Hermes prepared — the Console already stands in for the
+#: user directly for every other write. It also holds APPROVE_ACTION, so a
+#: Console-prepared booking still needs the human's own decision before it
+#: can execute; nothing here is a way around the approval gate.
 CONSOLE = ClientIdentity(
     client_id="lifeops-console",
     role=ClientRole.CONSOLE,
@@ -174,6 +192,8 @@ CONSOLE = ClientIdentity(
         Capability.WRITE_MEMORY,
         Capability.MANAGE_CONFIGURATION,
         Capability.APPROVE_ACTION,
+        Capability.BOOK_APPOINTMENT,
+        Capability.SEND_EXTERNAL_MESSAGE,
     },
 )
 

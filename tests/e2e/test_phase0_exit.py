@@ -130,9 +130,13 @@ async def clean_state() -> AsyncIterator[None]:
 class TestToolSurface:
     """BUILD_SPEC sections 49–51: the tool surface grows only by phase.
 
-    Phase 0 pinned exactly five tools; Phase 2 adds the three memory tools and
-    Phase 3 the four world reads. The assertion stays exact so a tool can never
-    slip in unreviewed.
+    Phase 0 pinned exactly five tools; Phase 2 adds the three memory tools,
+    Phase 3 the four world reads, and Phase 7 (section 96) the calendar and
+    email tools — reads, a reversible hold, and four that only *record
+    intent* through the Action outbox (book_appointment, cancel_appointment,
+    send_email — approving, executing, and independently verifying stay
+    Console/HTTP operations, never MCP tools). The assertion stays exact so a
+    tool can never slip in unreviewed.
     """
 
     async def test_exactly_the_sanctioned_tools(self) -> None:
@@ -160,6 +164,19 @@ class TestToolSurface:
             # machine. Both write only through LifeOpsCore.
             "create_waiting_item",
             "update_task",
+            # Phase 7 (BUILD_SPEC sections 61, 63, 64, 96) — calendar and
+            # email. read_calendar/check_calendar_availability/search_email/
+            # read_email_thread are reads; hold_calendar_time is a reversible
+            # write; book_appointment/cancel_appointment/send_email only
+            # prepare an Action through the outbox.
+            "read_calendar",
+            "check_calendar_availability",
+            "hold_calendar_time",
+            "book_appointment",
+            "cancel_appointment",
+            "search_email",
+            "read_email_thread",
+            "send_email",
         }
 
     async def test_no_raw_database_tool_is_exposed(self) -> None:
