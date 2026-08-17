@@ -39,6 +39,8 @@ function makeApproval(overrides: Partial<Approval> = {}): Approval {
     consumed_at: null,
     status: 'pending',
     action_type: 'book_appointment',
+    authorises_action: 'Book appointment',
+    does_not_authorise: ['Authorize repair work', 'Authorize additional charges'],
     target_entity_id: 'provider_abc_electric',
     amount: '89',
     created_at: '2026-08-17T09:00:00Z',
@@ -86,11 +88,26 @@ describe('Approvals', () => {
     expect(screen.getAllByText('89').length).toBeGreaterThan(0)
   })
 
-  it('shows what Hermes may and may not do', async () => {
+  it('shows what Hermes may and may not do, from the server', async () => {
+    // Section 58's mockup lists specific exclusions, and section 101 step 9 is
+    // "never authorize repairs". The Console must render the boundary the
+    // domain enforces rather than composing a generic disclaimer of its own.
     renderPage()
     await screen.findAllByText('provider_abc_electric')
     expect(screen.getByText('Book appointment')).toBeInTheDocument()
+    expect(screen.getByText('Authorize repair work')).toBeInTheDocument()
+    expect(screen.getByText('Authorize additional charges')).toBeInTheDocument()
     expect(screen.getByText('Anything other than this exact request')).toBeInTheDocument()
+  })
+
+  it('renders no exclusions when the domain declares none', async () => {
+    mockedApprovals.listPending.mockResolvedValue({
+      approvals: [makeApproval({ does_not_authorise: [] })],
+      total: 1,
+    })
+    renderPage()
+    await screen.findAllByText('provider_abc_electric')
+    expect(screen.queryByText('Authorize repair work')).not.toBeInTheDocument()
   })
 
   it('submits an approval decision without deciding anything itself', async () => {
