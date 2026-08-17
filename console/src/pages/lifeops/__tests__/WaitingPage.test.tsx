@@ -1,18 +1,20 @@
 /**
  * Waiting screen behaviour (BUILD_SPEC section 13).
  *
- * Phase 1 shows tasks in WAITING_EXTERNAL with what they are waiting on and
- * for how long. Full WaitingItems are Phase 4 — the screen must say so, not
- * fake them.
+ * Phase 4: the screen renders real WaitingItems — subject, task, waiting on,
+ * waiting since, expected response, next follow-up, follow-up count, and
+ * escalation state — and submits follow-up/resolve decisions to LifeOps
+ * Core rather than computing anything itself.
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { WaitingPage } from '../WaitingPage'
-import { tasksApi, type Task } from '@/services/lifeops'
+import { tasksApi, waitingApi, type Task, type WaitingItem } from '@/services/lifeops'
 
 vi.mock('@/services/lifeops', async () => {
   const actual = await vi.importActual<typeof import('@/services/lifeops')>(
@@ -21,10 +23,15 @@ vi.mock('@/services/lifeops', async () => {
   return {
     ...actual,
     tasksApi: {
+      ...actual.tasksApi,
+      get: vi.fn(),
+    },
+    waitingApi: {
       list: vi.fn(),
       get: vi.fn(),
       create: vi.fn(),
-      update: vi.fn(),
+      followUp: vi.fn(),
+      resolve: vi.fn(),
     },
   }
 })
@@ -54,6 +61,27 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   }
 }
 
+function makeWaitingItem(overrides: Partial<WaitingItem> = {}): WaitingItem {
+  return {
+    id: 'waiting_01abc',
+    task_id: 'task_01abc',
+    subject: 'ABC Electric',
+    waiting_on_entity_id: 'provider_abc_electric',
+    waiting_since: '2026-08-16T08:00:00Z',
+    expected_by: '2026-08-20T00:00:00Z',
+    next_action_at: '2026-08-18T08:00:00Z',
+    last_contact_at: null,
+    followup_count: 0,
+    max_followups: 3,
+    status: 'waiting',
+    attempt_count: 0,
+    lease_owner: null,
+    lease_until: null,
+    created_by_client: 'hermes-personal',
+    ...overrides,
+  }
+}
+
 function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -67,14 +95,12 @@ function renderPage() {
   )
 }
 
+const mockedWaiting = vi.mocked(waitingApi)
 const mockedTasks = vi.mocked(tasksApi)
 
 beforeEach(() => {
-  mockedTasks.list.mockResolvedValue({
-    tasks: [makeTask({ current_action: 'waiting for ABC Electric availability' })],
-    total: 1,
-    by_state: { WAITING_EXTERNAL: 1 },
-  })
+  mockedWaiting.list.mockResolvedValue({ items: [makeWaitingItem()], total: 1 })
+  mockedTasks.get.mockResolvedValue(makeTask())
 })
 
 afterEach(() => {
@@ -82,48 +108,58 @@ afterEach(() => {
 })
 
 describe('Waiting', () => {
-  it('asks LifeOps for tasks in the waiting state', async () => {
+  it('asks LifeOps for the active waiting items', async () => {
     renderPage()
-    expect(await screen.findByText('Book electrician')).toBeInTheDocument()
-    expect(mockedTasks.list).toHaveBeenCalledWith({
-      state: ['WAITING_EXTERNAL'],
+    expect(await screen.findByText('ABC Electric')).toBeInTheDocument()
+    expect(mockedWaiting.list).toHaveBeenCalledWith({
+      status: ['waiting', 'escalated'],
       limit: 200,
     })
   })
 
-  it('shows what each task is waiting on and for how long', async () => {
+  it('shows subject, task, waiting on, and follow-up count', async () => {
     renderPage()
-    expect(
-      await screen.findByText('Waiting: waiting for ABC Electric availability'),
-    ).toBeInTheDocument()
-    expect(screen.getByText(/^for /)).toBeInTheDocument()
+    expect(await screen.findByText('ABC Electric')).toBeInTheDocument()
+    expect(await screen.findByText('Book electrician')).toBeInTheDocument()
+    expect(screen.getByText('provider_abc_electric')).toBeInTheDocument()
+    expect(screen.getByText('0 of 3 follow-ups')).toBeInTheDocument()
   })
 
-  it('falls back to a plain description when no action is recorded', async () => {
-    mockedTasks.list.mockResolvedValue({
-      tasks: [makeTask()],
+  it('shows escalation state', async () => {
+    mockedWaiting.list.mockResolvedValue({
+      items: [makeWaitingItem({ status: 'escalated', next_action_at: null })],
       total: 1,
-      by_state: { WAITING_EXTERNAL: 1 },
     })
     renderPage()
-    expect(
-      await screen.findByText('Waiting on an external response'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('Escalated — needs you')).toBeInTheDocument()
   })
 
-  it('links each waiting task to the Tasks screen', async () => {
+  it('logs a follow-up and refetches', async () => {
+    mockedWaiting.followUp.mockResolvedValue(
+      makeWaitingItem({ followup_count: 1 }),
+    )
     renderPage()
-    const row = (await screen.findByText('Book electrician')).closest('a')
-    expect(row).toHaveAttribute('href', '/tasks')
+    await screen.findByText('ABC Electric')
+
+    await userEvent.click(screen.getByRole('button', { name: /log follow-up/i }))
+
+    await waitFor(() => expect(mockedWaiting.followUp).toHaveBeenCalledWith('waiting_01abc'))
+    await waitFor(() => expect(mockedWaiting.list).toHaveBeenCalledTimes(2))
   })
 
-  it('states that full waiting items arrive in Phase 4', async () => {
+  it('marks an item resolved and refetches', async () => {
+    mockedWaiting.resolve.mockResolvedValue(makeWaitingItem({ status: 'resolved' }))
     renderPage()
-    expect(await screen.findByText(/Phase 4/)).toBeInTheDocument()
+    await screen.findByText('ABC Electric')
+
+    await userEvent.click(screen.getByRole('button', { name: /mark resolved/i }))
+
+    await waitFor(() => expect(mockedWaiting.resolve).toHaveBeenCalledWith('waiting_01abc'))
+    await waitFor(() => expect(mockedWaiting.list).toHaveBeenCalledTimes(2))
   })
 
   it('has an honest empty state', async () => {
-    mockedTasks.list.mockResolvedValue({ tasks: [], total: 0, by_state: {} })
+    mockedWaiting.list.mockResolvedValue({ items: [], total: 0 })
     renderPage()
     expect(
       await screen.findByText('Nothing is waiting on the outside world.'),
@@ -131,7 +167,7 @@ describe('Waiting', () => {
   })
 
   it('explains an unreachable LifeOps Core rather than showing a bare error', async () => {
-    mockedTasks.list.mockRejectedValue(new Error('Network Error'))
+    mockedWaiting.list.mockRejectedValue(new Error('Network Error'))
     renderPage()
     expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument()
   })

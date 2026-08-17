@@ -336,6 +336,142 @@ export interface MemoryList {
   total: number
 }
 
+// --- durable work types (BUILD_SPEC sections 13, 54-62, phase 4) --------------
+//
+// These mirror the Core schemas one-for-one, the same discipline the world
+// types follow. LifeOps Core decides everything that matters here — whether
+// a follow-up escalates, whether an action needs approval, what an approval
+// authorises; the Console only renders and submits.
+
+export type WaitingStatus = 'waiting' | 'escalated' | 'resolved' | 'cancelled'
+
+/** One WaitingItem (BUILD_SPEC section 54) — the Waiting screen's unit
+ * (section 13). */
+export interface WaitingItem {
+  id: string
+  task_id: string
+  subject: string
+  waiting_on_entity_id: string | null
+  waiting_since: string
+  expected_by: string | null
+  next_action_at: string | null
+  last_contact_at: string | null
+  followup_count: number
+  max_followups: number
+  status: WaitingStatus
+  attempt_count: number
+  lease_owner: string | null
+  lease_until: string | null
+  created_by_client: string | null
+}
+
+export interface WaitingList {
+  items: WaitingItem[]
+  total: number
+}
+
+export type ActionType =
+  | 'send_email'
+  | 'request_quote'
+  | 'book_appointment'
+  | 'cancel_appointment'
+  | 'place_phone_call'
+  | 'build_grocery_cart'
+  | 'submit_grocery_order'
+  | 'prepare_payment'
+  | 'commit_payment'
+
+export type ActionStatus =
+  | 'prepared'
+  | 'needs_approval'
+  | 'approved'
+  | 'executing'
+  | 'executed'
+  | 'verified'
+  | 'failed'
+  | 'cancelled'
+
+/** One outbox action (BUILD_SPEC section 60). Named `LifeOpsAction` to stay
+ * unambiguous next to DOM and React "action" usages elsewhere. */
+export interface LifeOpsAction {
+  id: string
+  type: ActionType
+  status: ActionStatus
+  idempotency_key: string
+  payload_hash: string
+  payload: Record<string, unknown>
+  task_id: string | null
+  target_entity_id: string | null
+  created_at: string
+  attempt_count: number
+  last_attempt_at: string | null
+  external_reference: string | null
+  verification_state: string
+  failure_reason: string | null
+  created_by_client: string | null
+}
+
+export interface ActionList {
+  actions: LifeOpsAction[]
+  total: number
+}
+
+export type ApprovalStatus = 'pending' | 'approved' | 'declined' | 'expired'
+
+/**
+ * One approval (BUILD_SPEC sections 57-59), enriched for the Approval screen
+ * (section 58): `action_payload` and `action_status` are the exact action
+ * this approval binds to, attached by the server so the screen never has to
+ * decide what "what will happen" means on its own.
+ */
+export interface Approval {
+  id: string
+  action_id: string
+  payload_hash: string
+  requested_by: string
+  approved_by: string | null
+  approved_at: string | null
+  expires_at: string
+  consumed_at: string | null
+  status: ApprovalStatus
+  action_type: string
+  target_entity_id: string | null
+  amount: string | null
+  created_at: string
+  action_payload: Record<string, unknown>
+  action_status: ActionStatus | null
+}
+
+export interface ApprovalList {
+  approvals: Approval[]
+  total: number
+}
+
+/** One audit record (BUILD_SPEC section 62) — "why did Hermes do that?" */
+export interface AuditRecord {
+  id: string
+  requester: string | null
+  user: string | null
+  client: string
+  session: string | null
+  intent: string | null
+  tool: string | null
+  risk: string | null
+  approval: string | null
+  action: string | null
+  target: string | null
+  result: string
+  verification: string | null
+  timestamp: string
+  trace_id: string | null
+  details: Record<string, string>
+}
+
+export interface AuditList {
+  records: AuditRecord[]
+  total: number
+}
+
 // --- API surface -------------------------------------------------------------
 
 export const authApi = {
@@ -380,6 +516,61 @@ export const tasksApi = {
       verification_evidence: string
     }>,
   ) => lifeops.patch<Task>(`/tasks/${id}`, payload).then((r) => r.data),
+}
+
+export const waitingApi = {
+  /** The Waiting screen's list (BUILD_SPEC section 13). */
+  list: (params?: { status?: WaitingStatus[]; limit?: number }) =>
+    lifeops.get<WaitingList>('/waiting', { params }).then((r) => r.data),
+
+  get: (id: string) => lifeops.get<WaitingItem>(`/waiting/${id}`).then((r) => r.data),
+
+  /** Record that a task is blocked on someone else. Captures a fact; sends
+   * nothing (BUILD_SPEC section 54). */
+  create: (payload: {
+    task_id: string
+    subject: string
+    waiting_on_entity_id?: string
+    expected_by?: string
+    max_followups?: number
+  }) => lifeops.post<WaitingItem>('/waiting', payload).then((r) => r.data),
+
+  /** Log a follow-up, escalating when the budget is spent (section 55). */
+  followUp: (id: string) =>
+    lifeops.post<WaitingItem>(`/waiting/${id}/followup`).then((r) => r.data),
+
+  /** Close a waiting item because the thing arrived. */
+  resolve: (id: string) =>
+    lifeops.post<WaitingItem>(`/waiting/${id}/resolve`).then((r) => r.data),
+}
+
+export const approvalsApi = {
+  /** What the Approval screen shows (BUILD_SPEC section 58). */
+  listPending: (params?: { limit?: number }) =>
+    lifeops.get<ApprovalList>('/approvals', { params }).then((r) => r.data),
+
+  /**
+   * Approve or decline one exact action. LifeOps Core already decided
+   * whether approval was required and what it binds to; this only submits
+   * the human's decision (section 58).
+   */
+  decide: (id: string, approved: boolean) =>
+    lifeops
+      .post<Approval>(`/approvals/${id}/decide`, { approved })
+      .then((r) => r.data),
+}
+
+export const actionsApi = {
+  list: (params?: { status?: ActionStatus[]; limit?: number }) =>
+    lifeops.get<ActionList>('/actions', { params }).then((r) => r.data),
+
+  get: (id: string) => lifeops.get<LifeOpsAction>(`/actions/${id}`).then((r) => r.data),
+}
+
+export const auditApi = {
+  /** The durable audit log — "why did Hermes do that?" (section 62). */
+  read: (params?: { target?: string; limit?: number }) =>
+    lifeops.get<AuditList>('/audit', { params }).then((r) => r.data),
 }
 
 export const peopleApi = {
@@ -792,6 +983,20 @@ export const TASK_STATE_LABELS: Record<TaskState, string> = {
   BLOCKED: 'Blocked',
   FAILED: 'Failed',
   CANCELLED: 'Cancelled',
+}
+
+/** Display names for action types (BUILD_SPEC section 51), for the Approval
+ * screen's "Hermes may" line (section 58). */
+export const ACTION_TYPE_LABELS: Record<ActionType, string> = {
+  send_email: 'Send an email',
+  request_quote: 'Request a quote',
+  book_appointment: 'Book appointment',
+  cancel_appointment: 'Cancel appointment',
+  place_phone_call: 'Place a phone call',
+  build_grocery_cart: 'Build a grocery cart',
+  submit_grocery_order: 'Submit a grocery order',
+  prepare_payment: 'Prepare a payment',
+  commit_payment: 'Commit a payment',
 }
 
 /** Display names for the world-model entity types (BUILD_SPEC section 36). */
