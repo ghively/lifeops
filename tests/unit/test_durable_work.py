@@ -15,12 +15,14 @@ from lifeops.domain.actions import (
     ActionDraft,
     ActionStatus,
     ActionType,
+    RiskClass,
     make_idempotency_key,
     may_execute,
     payload_hash,
     prepare,
     record_attempt,
     requires_approval,
+    risk_for_action,
 )
 from lifeops.domain.approvals import (
     ApprovalStatus,
@@ -264,3 +266,69 @@ class TestApprovalBinding:
 
     def test_expiry_is_bounded(self) -> None:
         assert expires_at(NOW) > NOW
+
+
+class TestRiskClasses:
+    """BUILD_SPEC section 56's ladder decides who approves what.
+
+    Approval is derived from a declared risk class rather than a
+    hand-maintained set of action types, so a new action cannot quietly land
+    on the permissive side: it has no class until someone assigns one.
+    """
+
+    def test_every_action_type_has_a_declared_risk_class(self) -> None:
+        for action_type in ActionType:
+            assert risk_for_action(action_type) in RiskClass
+
+    def test_an_unclassified_action_raises_rather_than_defaulting(self) -> None:
+        """Defaulting an unknown action — least of all to the permissive end —
+        would hide a gap in the safety model."""
+        with pytest.raises(ValidationError):
+            risk_for_action("teleport_the_user")  # type: ignore[arg-type]
+
+    def test_the_section_56_table_is_implemented(self) -> None:
+        assert risk_for_action(ActionType.SEND_EMAIL) is RiskClass.R2_EXTERNAL_COMMUNICATION
+        assert risk_for_action(ActionType.PLACE_PHONE_CALL) is RiskClass.R2_EXTERNAL_COMMUNICATION
+        assert risk_for_action(ActionType.BOOK_APPOINTMENT) is RiskClass.R3_EXTERNAL_COMMITMENT
+        assert risk_for_action(ActionType.SUBMIT_GROCERY_ORDER) is RiskClass.R3_EXTERNAL_COMMITMENT
+        assert risk_for_action(ActionType.COMMIT_PAYMENT) is RiskClass.R4_FINANCIAL_LEGAL_MEDICAL
+        # A cart commits nothing; section 56 puts only *checkout* at R3.
+        assert risk_for_action(ActionType.BUILD_GROCERY_CART) is RiskClass.R1_REVERSIBLE
+
+    def test_financial_and_commitment_actions_always_need_approval(self) -> None:
+        """R3 'Approval initially', R4 'Approval always' — never policy-relaxable."""
+        for action_type in (
+            ActionType.BOOK_APPOINTMENT,
+            ActionType.SUBMIT_GROCERY_ORDER,
+            ActionType.PREPARE_PAYMENT,
+            ActionType.COMMIT_PAYMENT,
+        ):
+            assert requires_approval(action_type) is True
+            # Even with the R2 policy fully relaxed.
+            assert (
+                requires_approval(action_type, approve_external_communication=False)
+                is True
+            )
+
+    def test_external_communication_is_policy_controlled(self) -> None:
+        """Section 56 marks R2 policy-controlled; section 101 sets the default.
+
+        The Electrician scenario has Hermes contact providers and collect a
+        diagnostic fee on its own, requesting approval only at the booking.
+        Gating every quote behind a human would make that unusable — but a
+        user who wants to see every outbound message can flip it.
+        """
+        assert requires_approval(ActionType.SEND_EMAIL) is False
+        assert (
+            requires_approval(ActionType.SEND_EMAIL, approve_external_communication=True)
+            is True
+        )
+
+    def test_reversible_actions_are_never_gated(self) -> None:
+        assert requires_approval(ActionType.BUILD_GROCERY_CART) is False
+        assert (
+            requires_approval(
+                ActionType.BUILD_GROCERY_CART, approve_external_communication=True
+            )
+            is False
+        )
