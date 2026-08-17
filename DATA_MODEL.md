@@ -215,6 +215,51 @@ is not built yet.
 
 ---
 
+## Durable work (Phase 4)
+
+Added in Phase 4 (BUILD_SPEC sections 13, 51, 54, 55, 57-62). Four labels,
+none of them a workflow engine: a waiting item is a follow-up with a lease, an
+action is an outbox row, an approval binds a human decision to an exact
+payload, and an audit record is one append-only line answering "why did
+Hermes do that?".
+
+```
+(:WaitingItem {id, task_id, subject, waiting_on_entity_id, waiting_since,
+               expected_by, next_action_at, last_contact_at, followup_count,
+               max_followups, status, attempt_count, lease_owner,
+               lease_until, created_by_client})
+
+(:Action {id, type, status, idempotency_key, payload_hash, payload_json,
+          task_id, target_entity_id, created_at, attempt_count,
+          last_attempt_at, external_reference, verification_state,
+          failure_reason, created_by_client})
+
+(:Approval {id, action_id, payload_hash, requested_by, approved_by,
+            approved_at, expires_at, consumed_at, status, action_type,
+            target_entity_id, amount, created_at})
+
+(:AuditRecord {id, requester, user, client, session, intent, tool, risk,
+               approval, action, target, result, verification, timestamp,
+               trace_id, details_json})
+```
+
+`payload` (Action) and `details` (AuditRecord) are dicts, and Neo4j-compatible
+property values cannot be maps, so both are stored as JSON strings —
+`payload_json` and `details_json` — with keys sorted before serialisation,
+the same discipline `facts_json` uses in the World entities section.
+
+`WaitingRepository.claim` is a single conditional `SET` guarded by a `WHERE`
+clause on `lease_until`, never a read followed by a write: that is what makes
+two workers racing for the same lease resolve to exactly one winner (section
+55). `idempotency_key` on `Action` carries a uniqueness constraint for the
+same reason section 61 exists — a duplicate key would defeat the mechanism
+that stops a blind retry from double-booking or double-charging.
+`AuditRepository` has no update or delete Cypher anywhere in this codebase;
+append-only is enforced by the absence of the method, not by a rule someone
+has to remember.
+
+---
+
 ## Relationships
 
 ```
@@ -229,7 +274,18 @@ is not built yet.
 (a)-[:OWNS]->(b)
 (a)-[:USES_PROVIDER]->(b)
 (a)-[:RELATED_TO]->(b)
+
+(:WaitingItem)-[:WAITING_ON]->(entity)      who/what is being waited on (Phase 4)
+(:Task)-[:WAITING_ON]->(:WaitingItem)       the task this item blocks (Phase 4)
+(:Action)-[:FOR_TASK]->(:Task)              the task an action serves (Phase 4)
+(:Approval)-[:AUTHORIZES]->(:Action)        section 59's binding (Phase 4)
+(:Person)-[:APPROVED]->(:Approval)          section 59's binding (Phase 4)
 ```
+
+`WaitingItem`'s two `WAITING_ON` edges point in opposite directions off the
+node — outward to the entity being waited on, inward from the task it
+blocks — so dropping the stale entity edge on update (`(w)-[:WAITING_ON]->()`)
+never touches the task edge.
 
 Reassigning a task deletes the stale `ASSIGNED_TO` edge before creating the new
 one, so the graph never shows a task assigned to two people. `ABOUT` follows the
@@ -260,11 +316,24 @@ CREATE CONSTRAINT lifeops_household_id  FOR (h:Household)  REQUIRE h.id IS UNIQU
 CREATE CONSTRAINT lifeops_provider_id   FOR (p:Provider)   REQUIRE p.id IS UNIQUE
 CREATE CONSTRAINT lifeops_asset_id      FOR (a:Asset)      REQUIRE a.id IS UNIQUE
 CREATE CONSTRAINT lifeops_memory_id     FOR (m:Memory)     REQUIRE m.id IS UNIQUE
+CREATE CONSTRAINT lifeops_waiting_id    FOR (w:WaitingItem) REQUIRE w.id IS UNIQUE
+CREATE CONSTRAINT lifeops_action_id     FOR (a:Action)      REQUIRE a.id IS UNIQUE
+CREATE CONSTRAINT lifeops_action_idempotency_key
+                                         FOR (a:Action)      REQUIRE a.idempotency_key IS UNIQUE
+CREATE CONSTRAINT lifeops_approval_id   FOR (ap:Approval)   REQUIRE ap.id IS UNIQUE
+CREATE CONSTRAINT lifeops_audit_id      FOR (r:AuditRecord) REQUIRE r.id IS UNIQUE
 
 CREATE INDEX lifeops_preference_subject_key FOR (p:Preference) ON (p.subject_id, p.key)
 CREATE INDEX lifeops_task_state             FOR (t:Task)       ON (t.state)
 CREATE INDEX lifeops_task_created           FOR (t:Task)       ON (t.created_at)
 CREATE INDEX lifeops_memory_subject         FOR (m:Memory)     ON (m.subject_id)
+CREATE INDEX lifeops_waiting_task           FOR (w:WaitingItem) ON (w.task_id)
+CREATE INDEX lifeops_waiting_status         FOR (w:WaitingItem) ON (w.status)
+CREATE INDEX lifeops_action_task            FOR (a:Action)      ON (a.task_id)
+CREATE INDEX lifeops_action_status          FOR (a:Action)      ON (a.status)
+CREATE INDEX lifeops_approval_action        FOR (ap:Approval)   ON (ap.action_id)
+CREATE INDEX lifeops_approval_status        FOR (ap:Approval)   ON (ap.status)
+CREATE INDEX lifeops_audit_target           FOR (r:AuditRecord) ON (r.target)
 
 CREATE FULLTEXT INDEX lifeops_memory_content FOR (m:Memory) ON EACH [m.content]
 ```
