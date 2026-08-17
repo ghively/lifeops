@@ -1,0 +1,384 @@
+"""World domain model — entities, relationships, and the graph read model
+(BUILD_SPEC sections 36–40, 92).
+
+Phase 3 adds Household, Provider, and Asset alongside the existing Person.
+The three new types share one shape deliberately: ``id``, ``entity_type``,
+``display_name``, a ``facts`` bag of current key facts, and timestamps. Splitting
+them into three near-identical classes now would be modelling a difference that
+no workflow has asked for yet (section 36: only add what a real workflow needs).
+
+Two kinds of rules live here rather than in adapters:
+
+  * Validation — display names, the facts bag, and relationship vocabulary are
+    checked by pure functions so HTTP and MCP get identical behaviour.
+
+  * Graph assembly — turning repository rows into the ``WorldGraph`` read model
+    (dedup, dangling-edge drops, limit caps) is a domain transformation, not a
+    Cypher concern.
+
+Persons are part of the world graph but keep their own richer model in
+``domain/people.py``; here they appear as graph projections (empty ``facts``).
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from lifeops.domain.memory import MemoryRecord
+from lifeops.domain.tasks import Task
+from lifeops.errors import ValidationError
+from lifeops.ids import (
+    PREFIX_ASSET,
+    PREFIX_HOUSEHOLD,
+    PREFIX_PERSON,
+    PREFIX_PREFERENCE,
+    PREFIX_PROVIDER,
+    is_valid_id,
+    slug_id,
+)
+
+
+class WorldEntityType(StrEnum):
+    """The section 36 entity types the world graph renders in Phase 3.
+
+    Section 92 scopes the phase to people, households, providers, and assets.
+    ``PREFERENCE`` joins them because section 15's World screen draws one —
+    ``Gene ─PREFERS→ "After 10 AM"`` — and the ``PREFERS`` edge is already
+    written by the preference layer. The remaining section 36 types
+    (WaitingItem, Appointment, Bill, …) are owned by phases that have not
+    landed; each arrives with the phase that creates it.
+    """
+
+    PERSON = "person"
+    HOUSEHOLD = "household"
+    PROVIDER = "provider"
+    ASSET = "asset"
+    PREFERENCE = "preference"
+
+
+#: The types ``create_entity`` accepts. Persons carry primary-user semantics
+#: and preferences are temporal (section 40) — both have their own operations,
+#: and creating one here would bypass the rules those operations enforce.
+CREATABLE_ENTITY_TYPES: frozenset[WorldEntityType] = frozenset(
+    {
+        WorldEntityType.HOUSEHOLD,
+        WorldEntityType.PROVIDER,
+        WorldEntityType.ASSET,
+    }
+)
+
+
+class WorldRelationship(StrEnum):
+    """The BUILD_SPEC section 39 relationship vocabulary, in the spec's order.
+
+    All twenty are declared. Section 39 gives this list as the *initial*
+    vocabulary and then warns "do not attempt to predefine every relationship
+    in a human life" — that is a bound on inventing new types, not licence to
+    implement fewer. Several of these are written by other aggregates today
+    (``ASSIGNED_TO`` and ``ABOUT`` by tasks, ``PREFERS`` by preferences,
+    ``SUPERSEDES`` by both temporal chains); declaring them here means the
+    world graph reads one vocabulary rather than each layer keeping its own.
+    """
+
+    MEMBER_OF = "MEMBER_OF"
+    RELATED_TO = "RELATED_TO"
+    PREFERS = "PREFERS"
+    OWNS = "OWNS"
+    USES_PROVIDER = "USES_PROVIDER"
+    ASSIGNED_TO = "ASSIGNED_TO"
+    ABOUT = "ABOUT"
+    WITH_PROVIDER = "WITH_PROVIDER"
+    FOR_ASSET = "FOR_ASSET"
+    WAITING_ON = "WAITING_ON"
+    REQUIRES_APPROVAL = "REQUIRES_APPROVAL"
+    AUTHORIZES = "AUTHORIZES"
+    CREATED_BY = "CREATED_BY"
+    REQUESTED_BY = "REQUESTED_BY"
+    EXECUTED_BY = "EXECUTED_BY"
+    VERIFIED_BY = "VERIFIED_BY"
+    DERIVED_FROM = "DERIVED_FROM"
+    SUPERSEDES = "SUPERSEDES"
+    RELATED_MEMORY = "RELATED_MEMORY"
+    REFERENCES = "REFERENCES"
+
+
+#: The whole section 39 vocabulary. Graph reads default to this, and edges
+#: whose endpoints are not world entities are dropped during assembly — so an
+#: ASSIGNED_TO edge to a Task neither appears as an arrow into nowhere nor has
+#: to be excluded by name here.
+WORLD_RELATIONSHIP_TYPES: tuple[WorldRelationship, ...] = tuple(WorldRelationship)
+
+_PREFIX_FOR_TYPE: dict[WorldEntityType, str] = {
+    WorldEntityType.PERSON: PREFIX_PERSON,
+    WorldEntityType.HOUSEHOLD: PREFIX_HOUSEHOLD,
+    WorldEntityType.PROVIDER: PREFIX_PROVIDER,
+    WorldEntityType.ASSET: PREFIX_ASSET,
+    WorldEntityType.PREFERENCE: PREFIX_PREFERENCE,
+}
+
+_TYPE_FOR_PREFIX: dict[str, WorldEntityType] = {
+    prefix: entity_type for entity_type, prefix in _PREFIX_FOR_TYPE.items()
+}
+
+_MAX_FACTS = 50
+_MAX_FACT_KEY = 100
+_MAX_FACT_VALUE = 500
+
+
+class WorldEntity(BaseModel):
+    """One node in the user's world.
+
+    ``facts`` is a flat bag of current key facts (``{"insurance": "Progressive",
+    "mileage": "114203"}``). It holds *current* state only — temporal fact
+    history is a later phase, which is why ``entity_history`` documents exactly
+    what it can and cannot report.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    entity_type: WorldEntityType
+    display_name: str
+    facts: dict[str, str] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+    created_by_client: str | None = None
+
+    @staticmethod
+    def make_id(entity_type: WorldEntityType, display_name: str) -> str:
+        return slug_id(_PREFIX_FOR_TYPE[entity_type], display_name)
+
+
+class EntityDraft(BaseModel):
+    """Input shape for creating a Household, Provider, or Asset.
+
+    Persons and preferences are excluded on purpose — see
+    ``CREATABLE_ENTITY_TYPES``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_type: WorldEntityType
+    display_name: str = Field(min_length=1, max_length=200)
+    facts: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("entity_type")
+    @classmethod
+    def _is_creatable(cls, value: WorldEntityType) -> WorldEntityType:
+        if value not in CREATABLE_ENTITY_TYPES:
+            raise ValueError(
+                f"{value} entities are not created here: persons go through the "
+                "person surface and preferences through save_preference, which "
+                "supersedes rather than overwrites"
+            )
+        return value
+
+
+class WorldNode(BaseModel):
+    """One node of the graph read model the World screen renders (section 15)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    entity_type: WorldEntityType
+    label: str
+    # World entities have no lifecycle state yet; the field exists so the
+    # Console contract is stable when one arrives.
+    status: str = "active"
+
+
+class WorldEdge(BaseModel):
+    """A directed relationship between two world entities."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    target: str
+    type: WorldRelationship
+
+
+class WorldGraph(BaseModel):
+    """The read model behind the World screen (sections 15 and 92)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[WorldNode] = Field(default_factory=list)
+    edges: list[WorldEdge] = Field(default_factory=list)
+
+
+class EntityDetail(BaseModel):
+    """The entity inspector aggregate (section 16).
+
+    Provenance is carried on the records themselves — ``created_by_client`` and
+    timestamps on the entity, ``source_type`` / ``confidence`` on memories —
+    rather than duplicated into a parallel structure.
+
+    ``relationships`` holds raw ``(source, target, type)`` edges; ``neighbors``
+    carries the same endpoints as labelled nodes. Section 16 requires the panel
+    to show *named* relations, and an id alone cannot render one — so the read
+    model resolves the labels rather than leaving each adapter to invent its
+    own lookup.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity: WorldEntity
+    relationships: list[WorldEdge] = Field(default_factory=list)
+    neighbors: list[WorldNode] = Field(default_factory=list)
+    related_tasks: list[Task] = Field(default_factory=list)
+    related_memories: list[MemoryRecord] = Field(default_factory=list)
+
+
+class EntityHistory(BaseModel):
+    """What "history of this entity" means in Phase 3.
+
+    World entity facts are current-only in this phase, so there is no fact
+    supersession chain to report. What the audit trail *can* answer today is
+    which memories about the entity were recorded, corrected, or invalidated —
+    ``memories`` therefore contains every version of every memory referencing
+    the entity, including closed validity windows, newest first. ``covers``
+    states that scope explicitly so no consumer mistakes this for a complete
+    audit log (the durable audit log is Phase 4, section 62).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    memories: list[MemoryRecord] = Field(default_factory=list)
+    covers: list[str] = Field(default_factory=list)
+
+
+# --- pure rules ---------------------------------------------------------------
+
+
+def parse_relationship(value: str) -> WorldRelationship:
+    """Parse a relationship type name, rejecting anything outside the vocabulary."""
+    try:
+        return WorldRelationship(value.strip().upper())
+    except (ValueError, AttributeError):
+        raise ValidationError(
+            f"unknown relationship type: {value!r}",
+            field="rel_type",
+            allowed=[str(r) for r in WorldRelationship],
+        ) from None
+
+
+def parse_entity_types(values: list[str] | None) -> list[WorldEntityType] | None:
+    """Parse World screen type filters, rejecting anything outside the model.
+
+    ``None`` means "no filter" and is passed through; an unknown name is a
+    caller error rather than an empty result, because silently returning
+    nothing for a typo looks identical to an empty world.
+    """
+    if values is None:
+        return None
+    parsed: list[WorldEntityType] = []
+    for value in values:
+        try:
+            entity_type = WorldEntityType(value.strip().lower())
+        except (ValueError, AttributeError):
+            raise ValidationError(
+                f"unknown entity type: {value!r}",
+                field="types",
+                allowed=[str(t) for t in WorldEntityType],
+            ) from None
+        if entity_type not in parsed:
+            parsed.append(entity_type)
+    return parsed
+
+
+def is_world_entity_id(entity_id: str) -> bool:
+    """Whether an ID addresses a world entity, without raising.
+
+    The vocabulary spans edges owned by other aggregates, so a graph walk
+    routinely meets a ``task_`` or ``memory_`` endpoint. That is not a caller
+    error — it is a node the World screen does not draw — so traversal asks
+    this rather than catching an exception from ``entity_type_for_id``.
+    """
+    if not is_valid_id(entity_id):
+        return False
+    return entity_id.split("_", 1)[0] in _TYPE_FOR_PREFIX
+
+
+def entity_type_for_id(entity_id: str) -> WorldEntityType:
+    """The world entity type an ID addresses.
+
+    Raises rather than guesses: an ID outside the four world prefixes must not
+    silently become a graph node (a ``task_`` id is addressable, but it is not
+    a world entity).
+    """
+    if not is_valid_id(entity_id):
+        raise ValidationError(f"not a canonical LifeOps ID: {entity_id!r}", field="entity_id")
+    prefix = entity_id.split("_", 1)[0]
+    entity_type = _TYPE_FOR_PREFIX.get(prefix)
+    if entity_type is None:
+        raise ValidationError(
+            f"{entity_id!r} is not a world entity id",
+            field="entity_id",
+            allowed=sorted(_TYPE_FOR_PREFIX),
+        )
+    return entity_type
+
+
+def validate_facts(facts: dict[str, str]) -> dict[str, str]:
+    """Normalise and bound the facts bag.
+
+    Keys are stripped and must be non-empty; the bag is capped so an agent
+    cannot turn one entity into an unbounded document store.
+    """
+    cleaned: dict[str, str] = {}
+    for raw_key, raw_value in facts.items():
+        key = raw_key.strip()
+        value = raw_value.strip()
+        if not key:
+            raise ValidationError("fact keys must not be empty", field="facts")
+        if len(key) > _MAX_FACT_KEY:
+            raise ValidationError(
+                f"fact key {key!r} exceeds {_MAX_FACT_KEY} characters", field="facts"
+            )
+        if len(value) > _MAX_FACT_VALUE:
+            raise ValidationError(
+                f"fact {key!r} exceeds {_MAX_FACT_VALUE} characters", field="facts"
+            )
+        cleaned[key] = value
+    if len(cleaned) > _MAX_FACTS:
+        raise ValidationError(
+            f"an entity may carry at most {_MAX_FACTS} facts", field="facts"
+        )
+    return cleaned
+
+
+def assemble_world_graph(
+    entities: list[WorldEntity],
+    edges: list[WorldEdge],
+    *,
+    limit: int,
+) -> WorldGraph:
+    """Build the World screen's read model from repository rows.
+
+    Nodes are deduplicated by id and capped at ``limit``; edges are
+    deduplicated and dropped when either endpoint fell outside the node set,
+    so the Console never renders an arrow into nowhere.
+    """
+    nodes: dict[str, WorldNode] = {}
+    for entity in entities:
+        if entity.id in nodes or len(nodes) >= limit:
+            continue
+        nodes[entity.id] = WorldNode(
+            id=entity.id,
+            entity_type=entity.entity_type,
+            label=entity.display_name,
+        )
+
+    seen: set[tuple[str, str, WorldRelationship]] = set()
+    kept: list[WorldEdge] = []
+    for edge in edges:
+        key = (edge.source, edge.target, edge.type)
+        if key in seen or edge.source not in nodes or edge.target not in nodes:
+            continue
+        seen.add(key)
+        kept.append(edge)
+
+    return WorldGraph(nodes=list(nodes.values()), edges=kept)

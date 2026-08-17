@@ -21,11 +21,15 @@ from lifeops.api.events import router as events_router
 from lifeops.api.schemas import (
     ConsoleLogBatch,
     CorrectMemoryRequest,
+    CreateEntityRequest,
     CreatePersonRequest,
     CreateTaskRequest,
     DiscoverResponse,
+    EntityDetailResponse,
+    EntityHistoryResponse,
     ErrorResponse,
     InvalidateMemoryRequest,
+    LinkRelationshipRequest,
     LoginRequest,
     LoginResponse,
     MemoryHistoryResponse,
@@ -45,6 +49,11 @@ from lifeops.api.schemas import (
     UpdateProviderRequest,
     UpdateSystemRequest,
     UpdateTaskRequest,
+    WorldEdge,
+    WorldEntityResponse,
+    WorldGraphResponse,
+    WorldNode,
+    WorldRelationshipType,
 )
 from lifeops.auth import InvalidCredentialsError
 from lifeops.config.provider_registry import all_providers, get_provider
@@ -53,6 +62,8 @@ from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
 from lifeops.domain.tasks import Task, TaskDraft, TaskState, TaskUpdate, transition_table
+from lifeops.domain.world import EntityDetail, EntityDraft, WorldGraph
+from lifeops.domain.world import WorldEntity as DomainWorldEntity
 from lifeops.errors import LifeOpsError, NotFoundError, ValidationError
 from lifeops.events import CONFIG_CHANGED
 from lifeops.observability.logging import configure_logging, redact, trace_context
@@ -107,6 +118,24 @@ def _task_out(task: Task) -> TaskResponse:
 
 def _memory_out(record: MemoryRecord) -> MemoryResponse:
     return MemoryResponse(**record.model_dump())
+
+
+def _graph_out(graph: WorldGraph) -> WorldGraphResponse:
+    return WorldGraphResponse(**graph.model_dump())
+
+
+def _entity_out(entity: DomainWorldEntity) -> WorldEntityResponse:
+    return WorldEntityResponse(**entity.model_dump())
+
+
+def _entity_detail_out(detail: EntityDetail) -> EntityDetailResponse:
+    return EntityDetailResponse(
+        entity=_entity_out(detail.entity),
+        relationships=[WorldEdge(**e.model_dump()) for e in detail.relationships],
+        neighbors=[WorldNode(**n.model_dump()) for n in detail.neighbors],
+        related_tasks=[_task_out(t) for t in detail.related_tasks],
+        related_memories=[_memory_out(m) for m in detail.related_memories],
+    )
 
 
 def _publish_config_changed(container: Container, **fields: Any) -> None:
@@ -538,6 +567,137 @@ async def update_task(
         update=TaskUpdate(**payload.model_dump(exclude_unset=True)),
     )
     return _task_out(task)
+
+
+# --- world (BUILD_SPEC section 92) -------------------------------------------
+#
+# The Console's world surface: graph, neighborhood, entity inspector, and the
+# narrow write side (households, providers, assets, and their relationships).
+# Every rule — capability checks, the relationship vocabulary, what history can
+# honestly report — lives in LifeOpsCore and the domain. These routes translate
+# shapes and carry the 404/409/422 contracts.
+
+
+@router.get("/world/graph", response_model=WorldGraphResponse, tags=["world"])
+async def world_graph(
+    container: ContainerDep,
+    client: ClientDep,
+    types: Annotated[list[str] | None, Query()] = None,
+    query: Annotated[str, Query(max_length=200)] = "",
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> WorldGraphResponse:
+    """The world graph, narrowed by entity type and search text.
+
+    ``types`` repeats (``?types=asset&types=provider``) rather than taking a
+    comma-joined string, so a display name containing a comma cannot become
+    two filters.
+    """
+    graph = await container.core.world_graph(
+        client, query=query, entity_types=types, limit=limit
+    )
+    return _graph_out(graph)
+
+
+@router.get("/world/neighborhood", response_model=WorldGraphResponse, tags=["world"])
+async def world_neighborhood(
+    container: ContainerDep,
+    client: ClientDep,
+    entity_id: Annotated[str, Query(min_length=1, max_length=200)],
+    depth: Annotated[int, Query(ge=1, le=3)] = 1,
+) -> WorldGraphResponse:
+    """The subgraph around one entity, out to ``depth`` hops."""
+    graph = await container.core.world_neighborhood(
+        client, entity_id=entity_id, depth=depth
+    )
+    return _graph_out(graph)
+
+
+@router.get(
+    "/world/entities/{entity_id}",
+    response_model=EntityDetailResponse,
+    tags=["world"],
+)
+async def get_entity_detail(
+    entity_id: str, container: ContainerDep, client: ClientDep
+) -> EntityDetailResponse:
+    """The entity inspector aggregate: entity, facts, relationships, related
+    tasks, and memories in one call (section 16)."""
+    detail = await container.core.get_entity_detail(client, entity_id=entity_id)
+    return _entity_detail_out(detail)
+
+
+@router.get(
+    "/world/entities/{entity_id}/history",
+    response_model=EntityHistoryResponse,
+    tags=["world"],
+)
+async def entity_history(
+    entity_id: str, container: ContainerDep, client: ClientDep
+) -> EntityHistoryResponse:
+    """The recorded history of an entity, newest first, with its own scope
+    stated in ``covers``."""
+    history = await container.core.entity_history(client, entity_id=entity_id)
+    return EntityHistoryResponse(
+        entity_id=history.entity_id,
+        memories=[_memory_out(m) for m in history.memories],
+        covers=history.covers,
+    )
+
+
+@router.post(
+    "/world/entities",
+    response_model=WorldEntityResponse,
+    status_code=201,
+    tags=["world"],
+)
+async def create_entity(
+    payload: CreateEntityRequest, container: ContainerDep, client: ClientDep
+) -> WorldEntityResponse:
+    """Create a household, provider, or asset. This records world state; it
+    executes nothing."""
+    entity = await container.core.create_entity(client, EntityDraft(**payload.model_dump()))
+    return _entity_out(entity)
+
+
+@router.post(
+    "/world/relationships",
+    response_model=WorldEdge,
+    status_code=201,
+    tags=["world"],
+)
+async def link_entities(
+    payload: LinkRelationshipRequest, container: ContainerDep, client: ClientDep
+) -> WorldEdge:
+    """Relate two existing entities."""
+    edge = await container.core.link_entities(
+        client,
+        source_id=payload.source_id,
+        target_id=payload.target_id,
+        rel_type=str(payload.rel_type),
+    )
+    return WorldEdge(**edge.model_dump())
+
+
+@router.delete("/world/relationships", status_code=204, tags=["world"])
+async def unlink_entities(
+    container: ContainerDep,
+    client: ClientDep,
+    source_id: Annotated[str, Query(min_length=1, max_length=200)],
+    target_id: Annotated[str, Query(min_length=1, max_length=200)],
+    rel_type: Annotated[WorldRelationshipType, Query()],
+) -> None:
+    """Remove a relationship, identified by its (source, target, type) triple.
+
+    The triple travels as query parameters, not a body: DELETE bodies are
+    dropped by some proxies and HTTP clients, and the relationship has no id
+    of its own to put in the path.
+    """
+    await container.core.unlink_entities(
+        client,
+        source_id=source_id,
+        target_id=target_id,
+        rel_type=str(rel_type),
+    )
 
 
 # --- search (BUILD_SPEC section 19) ------------------------------------------

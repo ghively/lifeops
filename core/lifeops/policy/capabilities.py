@@ -12,7 +12,8 @@ Two rules shape this module:
 
 Phase 0 wires only the capabilities the five MCP tools need. The unused risk
 classes are declared because the enum has to be stable before other phases
-start persisting it in audit records.
+start persisting it in audit records. Later phases extend the same manifest
+(WRITE_WORLD in Phase 3) rather than inventing parallel policy.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ class Capability(StrEnum):
     """A named thing a client may be permitted to do."""
 
     READ_WORLD = "read_world"
+    WRITE_WORLD = "write_world"
     READ_PREFERENCES = "read_preferences"
     WRITE_PREFERENCE = "write_preference"
     READ_TASKS = "read_tasks"
@@ -103,9 +105,9 @@ _READ_ONLY: frozenset[Capability] = frozenset(
     }
 )
 
-#: Hermes is the primary assistant and holds the broadest Phase 0 grant.
-#: Memory read+write arrives in Phase 2 (section 91): remembering and
-#: recalling the user's world is the primary assistant's core job.
+#: Hermes is the primary assistant and holds the broadest grant.
+#: Memory read+write (Phase 2, section 91) and world read+write (Phase 3,
+#: section 92): remembering and shaping the user's world is its core job.
 HERMES = ClientIdentity(
     client_id="hermes-personal",
     role=ClientRole.PRIMARY_ASSISTANT,
@@ -113,6 +115,7 @@ HERMES = ClientIdentity(
     description="The user's primary conversational assistant.",
     capabilities=_READ_ONLY
     | {
+        Capability.WRITE_WORLD,
         Capability.WRITE_PREFERENCE,
         Capability.CREATE_TASK,
         Capability.UPDATE_TASK,
@@ -160,6 +163,7 @@ CONSOLE = ClientIdentity(
     description="The user operating LifeOps through the web interface.",
     capabilities=_READ_ONLY
     | {
+        Capability.WRITE_WORLD,
         Capability.WRITE_PREFERENCE,
         Capability.CREATE_TASK,
         Capability.UPDATE_TASK,

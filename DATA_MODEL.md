@@ -173,22 +173,80 @@ not a `Preference` and never appears through the preference APIs.
 
 ---
 
+## World entities (Phase 3)
+
+```
+(:Household  {id, display_name, facts_json, created_at, updated_at,
+              created_by_client})
+(:Provider   {...})
+(:Asset      {...})
+(:Person     {...})   the Phase 0 node, projected into the world graph
+(:Preference {...})   the Phase 0 node, projected when current (section 15)
+```
+
+The three Phase 3 types share one shape deliberately (BUILD_SPEC section 36:
+only add what a real workflow needs). Splitting them into near-identical
+labels with distinct properties would model a difference nothing has asked
+for yet.
+
+`facts` is a flat bag of *current* key facts — `{"insurance": "Progressive",
+"mileage": "114203"}` — stored as the JSON string `facts_json`, because
+Neo4j-compatible property values cannot be maps and a dict property fails at
+write time. Keys are sorted before serialisation so identical facts compare
+equal. The bag is capped (50 keys, 100-character keys, 500-character values)
+so an agent cannot turn one entity into an unbounded document store.
+
+Facts are current-only in Phase 3: there is no per-fact supersession chain.
+`get_entity_history` therefore reports the memories referencing an entity and
+states that scope in a `covers` field rather than implying more.
+
+Persons and preferences are part of the world graph but keep their richer
+models in `domain/people.py` and `domain/preferences.py`. The world repository
+*projects* them and never writes them — one `:Preference` node is read by two
+repositories, and `create_entity` refuses both types.
+
+A preference projects as BUILD_SPEC section 15 draws it: `display_name` is the
+preference's **value** (`"After 10 AM"`), with its `key`, source, and confidence
+carried as facts so the inspector shows which preference it is. Only *current*
+preferences are nodes — a superseded one leaves the graph and takes its
+`PREFERS` edge with it, while both versions stay queryable through preference
+history. That is section 15's current view; the temporal toggle it also lists
+is not built yet.
+
+---
+
 ## Relationships
 
 ```
 (:Person)-[:PREFERS]->(:Preference)         subject of a preference
 (:Preference)-[:SUPERSEDES]->(:Preference)  temporal chain
 (:Task)-[:ASSIGNED_TO]->(:Person)           owner
+(:Task)-[:ABOUT]->(entity)                  related entities (Phase 3)
 (:Person)-[:REMEMBERS]->(:Memory)           subject of a memory (Phase 2)
 (:Memory)-[:SUPERSEDES]->(:Memory)          temporal chain (Phase 2)
+
+(a)-[:MEMBER_OF]->(b)                       world graph (Phase 3)
+(a)-[:OWNS]->(b)
+(a)-[:USES_PROVIDER]->(b)
+(a)-[:RELATED_TO]->(b)
 ```
 
 Reassigning a task deletes the stale `ASSIGNED_TO` edge before creating the new
-one, so the graph never shows a task assigned to two people.
+one, so the graph never shows a task assigned to two people. `ABOUT` follows the
+same discipline when a task's related set changes.
 
-The wider vocabulary from BUILD_SPEC section 39 — `MEMBER_OF`, `USES_PROVIDER`,
-`WAITING_ON`, `REQUIRES_APPROVAL`, `DERIVED_FROM`, and the rest — is defined
-there and written as the phases that use them land.
+`Task.related_entity_ids` remains the source of truth for reads even though
+Phase 3 also writes `ABOUT` edges: tasks written before Phase 3 carry only the
+property, so the migration is write-path only and both are unioned on read.
+
+The full section 39 vocabulary is declared in `domain/world.py` and accepted by
+the world API — all twenty types, in the spec's order. Some have no writer yet
+beyond a hand-made link; that is the spec's initial vocabulary, and section 39's
+warning bounds inventing new types rather than implementing fewer.
+
+Edges whose endpoints are not world entities — `(:Task)-[:ABOUT]->(asset)` is
+the common case — are reported on the entity they touch but dropped during
+graph assembly, so the World screen never renders an arrow into a Task.
 
 ---
 
@@ -198,6 +256,9 @@ there and written as the phases that use them land.
 CREATE CONSTRAINT lifeops_person_id     FOR (p:Person)     REQUIRE p.id IS UNIQUE
 CREATE CONSTRAINT lifeops_preference_id FOR (p:Preference) REQUIRE p.id IS UNIQUE
 CREATE CONSTRAINT lifeops_task_id       FOR (t:Task)       REQUIRE t.id IS UNIQUE
+CREATE CONSTRAINT lifeops_household_id  FOR (h:Household)  REQUIRE h.id IS UNIQUE
+CREATE CONSTRAINT lifeops_provider_id   FOR (p:Provider)   REQUIRE p.id IS UNIQUE
+CREATE CONSTRAINT lifeops_asset_id      FOR (a:Asset)      REQUIRE a.id IS UNIQUE
 CREATE CONSTRAINT lifeops_memory_id     FOR (m:Memory)     REQUIRE m.id IS UNIQUE
 
 CREATE INDEX lifeops_preference_subject_key FOR (p:Preference) ON (p.subject_id, p.key)

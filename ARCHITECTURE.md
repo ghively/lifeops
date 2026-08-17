@@ -186,12 +186,21 @@ declared client identity, and policy consults that.
 | Create task | ● | ● | ● | ● |
 | Update task | ● | ● | — | ● |
 | Write preference | ● | ● | — | ● |
+| Read memory | ● | ● | ● | ● |
+| Write memory | ● | — | — | ● |
+| Write world | ● | — | — | ● |
 | Manage configuration | — | — | — | ● |
 | Approve action | — | — | — | ● |
 
 The coding agent's job is the repository, not the user's life. Only the Console
 — where a human is present — administers configuration or approves anything; an
 agent approving its own action would defeat the gate entirely.
+
+Hermes holds `write_world` because shaping the user's world is the primary
+assistant's job, but no MCP *tool* spends it: the Phase 3 world tools are all
+reads, and entities and relationships are created from the Console. The
+capability is granted where it belongs rather than the tool surface being the
+only thing standing between a model and the graph.
 
 There is no policy language. Capabilities are an explicit map and the decision
 function is fifteen readable lines. A rules engine here would be infrastructure
@@ -220,9 +229,10 @@ client sees is identical — that is the whole point.
 neither fits a Linux host without Docker. Building the Go binary was shorter
 than adding a container runtime to satisfy one dependency.
 
-**Embeddings off.** NornicDB can generate them. Phase 0 has nothing to embed —
-that starts in Phase 2 with memory. Loading a model now would be capacity held
-against a problem that does not exist yet.
+**Embeddings off.** NornicDB can generate them, and Phase 2 gave memory
+something worth embedding — but BM25 fulltext recall is answering the queries
+that exist today. Loading an embedding model stays capacity held against a
+problem that has not appeared yet.
 
 **Console auth is opt-in.** Phase 1 added bearer-token authentication, enabled
 only once a console password is set. Until then loopback binding is the whole
