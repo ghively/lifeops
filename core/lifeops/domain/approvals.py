@@ -57,7 +57,10 @@ class Approval(BaseModel):
     amount: str | None = None
     #: Section 58's two lists. Carried on the record rather than derived in an
     #: adapter, so HTTP and any future surface show the same boundary.
-    authorises_action: str
+    #: Defaulted rather than required: an approval written before this field
+    #: existed carries no such property, and a read must not fail on it.
+    #: ``request()`` always populates both from the action type.
+    authorises_action: str = ""
     does_not_authorise: list[str] = Field(default_factory=list)
 
     created_at: str
