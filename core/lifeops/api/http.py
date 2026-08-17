@@ -21,21 +21,33 @@ from lifeops.api.events import router as events_router
 from lifeops.api.schemas import (
     ActionListResponse,
     ActionResponse,
+    AppointmentListResponse,
+    AppointmentResponse,
     ApprovalListResponse,
     ApprovalResponse,
     AuditListResponse,
     AuditRecordResponse,
+    CalendarEventListResponse,
+    CalendarEventResponse,
     ConsoleLogBatch,
     CorrectMemoryRequest,
+    CreateAppointmentHoldRequest,
+    CreateDocumentRequest,
     CreateEntityRequest,
     CreatePersonRequest,
     CreateTaskRequest,
     CreateWaitingItemRequest,
     DecideApprovalRequest,
     DiscoverResponse,
+    DocumentResponse,
+    EmailMessageResponse,
+    EmailSearchResponse,
+    EmailThreadResponse,
     EntityDetailResponse,
     EntityHistoryResponse,
     ErrorResponse,
+    FreeBusyResponse,
+    FreeBusySlotResponse,
     InvalidateMemoryRequest,
     LinkRelationshipRequest,
     LoginRequest,
@@ -49,6 +61,7 @@ from lifeops.api.schemas import (
     PreferenceResponse,
     RememberRequest,
     SavePreferenceRequest,
+    SendEmailRequest,
     SetPasswordRequest,
     SetPasswordResponse,
     SynthesizeSpeechRequest,
@@ -72,6 +85,14 @@ from lifeops.container import Container
 from lifeops.domain.actions import Action, ActionStatus
 from lifeops.domain.approvals import Approval
 from lifeops.domain.audit import AuditRecord
+from lifeops.domain.calendar import (
+    Appointment,
+    AppointmentHoldDraft,
+    CalendarEvent,
+    FreeBusyResult,
+)
+from lifeops.domain.documents import Document, DocumentDraft
+from lifeops.domain.email import EmailMessage, EmailSendDraft, EmailThread
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
@@ -186,6 +207,38 @@ def _action_out(action: Action) -> ActionResponse:
 
 def _audit_out(record: AuditRecord) -> AuditRecordResponse:
     return AuditRecordResponse(**record.model_dump())
+
+
+def _calendar_event_out(event: CalendarEvent) -> CalendarEventResponse:
+    return CalendarEventResponse(**event.model_dump())
+
+
+def _free_busy_out(result: FreeBusyResult) -> FreeBusyResponse:
+    return FreeBusyResponse(
+        start_at=result.start_at,
+        end_at=result.end_at,
+        slots=[FreeBusySlotResponse(**s.model_dump()) for s in result.slots],
+    )
+
+
+def _appointment_out(appointment: Appointment) -> AppointmentResponse:
+    return AppointmentResponse(**appointment.model_dump())
+
+
+def _email_message_out(message: EmailMessage) -> EmailMessageResponse:
+    return EmailMessageResponse(**message.model_dump())
+
+
+def _email_thread_out(thread: EmailThread) -> EmailThreadResponse:
+    return EmailThreadResponse(
+        thread_id=thread.thread_id,
+        subject=thread.subject,
+        messages=[_email_message_out(m) for m in thread.messages],
+    )
+
+
+def _document_out(document: Document) -> DocumentResponse:
+    return DocumentResponse(**document.model_dump())
 
 
 def _publish_config_changed(container: Container, **fields: Any) -> None:
@@ -874,6 +927,185 @@ async def get_action(
     return _action_out(await container.core.get_action(client, action_id=action_id))
 
 
+@router.post(
+    "/actions/{action_id}/execute", response_model=ActionResponse, tags=["actions"]
+)
+async def execute_action(
+    action_id: str, container: ContainerDep, client: ClientDep
+) -> ActionResponse:
+    """Commit a committed-and-approved action and perform its external effect
+    (BUILD_SPEC section 60 steps 2-3; phase 7's booking, cancelling, and
+    email-sending executors)."""
+    return _action_out(await container.core.execute_action(client, action_id=action_id))
+
+
+@router.post(
+    "/actions/{action_id}/verify-externally",
+    response_model=ActionResponse,
+    tags=["actions"],
+)
+async def verify_action_externally(
+    action_id: str, container: ContainerDep, client: ClientDep
+) -> ActionResponse:
+    """Independently confirm an executed action and, only then, mark it
+    verified (BUILD_SPEC section 63's warning: a hold, or a provider's
+    "accepted" response, is not proof)."""
+    return _action_out(
+        await container.core.verify_action_externally(client, action_id=action_id)
+    )
+
+
+# --- calendar (BUILD_SPEC sections 63, 96) ------------------------------------
+
+
+@router.get("/calendar/events", response_model=CalendarEventListResponse, tags=["calendar"])
+async def read_calendar(
+    container: ContainerDep,
+    client: ClientDep,
+    start_at: Annotated[str, Query()],
+    end_at: Annotated[str, Query()],
+) -> CalendarEventListResponse:
+    """Section 63 step 1."""
+    events = await container.core.read_calendar(client, start_at=start_at, end_at=end_at)
+    return CalendarEventListResponse(
+        events=[_calendar_event_out(e) for e in events], total=len(events)
+    )
+
+
+@router.get("/calendar/free-busy", response_model=FreeBusyResponse, tags=["calendar"])
+async def calendar_free_busy(
+    container: ContainerDep,
+    client: ClientDep,
+    start_at: Annotated[str, Query()],
+    end_at: Annotated[str, Query()],
+) -> FreeBusyResponse:
+    """Section 63 step 2."""
+    result = await container.core.check_calendar_free_busy(
+        client, start_at=start_at, end_at=end_at
+    )
+    return _free_busy_out(result)
+
+
+@router.get("/appointments", response_model=AppointmentListResponse, tags=["calendar"])
+async def list_appointments(
+    container: ContainerDep,
+    client: ClientDep,
+    task_id: Annotated[str | None, Query()] = None,
+) -> AppointmentListResponse:
+    appointments = await container.core.list_appointments(client, task_id=task_id)
+    return AppointmentListResponse(
+        appointments=[_appointment_out(a) for a in appointments], total=len(appointments)
+    )
+
+
+@router.get(
+    "/appointments/{appointment_id}", response_model=AppointmentResponse, tags=["calendar"]
+)
+async def get_appointment(
+    appointment_id: str, container: ContainerDep, client: ClientDep
+) -> AppointmentResponse:
+    return _appointment_out(
+        await container.core.get_appointment(client, appointment_id=appointment_id)
+    )
+
+
+@router.post(
+    "/appointments/holds",
+    response_model=AppointmentResponse,
+    status_code=201,
+    tags=["calendar"],
+)
+async def create_appointment_hold(
+    payload: CreateAppointmentHoldRequest, container: ContainerDep, client: ClientDep
+) -> AppointmentResponse:
+    """Section 63 step 3: a reversible write."""
+    draft = AppointmentHoldDraft(**payload.model_dump())
+    appointment = await container.core.create_appointment_hold(client, draft)
+    return _appointment_out(appointment)
+
+
+@router.post(
+    "/appointments/{appointment_id}/book", response_model=ActionResponse, tags=["calendar"]
+)
+async def book_appointment(
+    appointment_id: str, container: ContainerDep, client: ClientDep
+) -> ActionResponse:
+    """Section 63 step 4, through the outbox — records intent, executes
+    nothing yet. Approve via ``/approvals``, then ``/actions/{id}/execute``."""
+    action = await container.core.book_appointment(client, appointment_id=appointment_id)
+    return _action_out(action)
+
+
+@router.post(
+    "/appointments/{appointment_id}/cancel", response_model=ActionResponse, tags=["calendar"]
+)
+async def cancel_appointment(
+    appointment_id: str, container: ContainerDep, client: ClientDep
+) -> ActionResponse:
+    """Section 63 step 6, through the outbox."""
+    action = await container.core.cancel_appointment(client, appointment_id=appointment_id)
+    return _action_out(action)
+
+
+# --- email (BUILD_SPEC sections 61, 64, 96) -----------------------------------
+
+
+@router.get("/email/search", response_model=EmailSearchResponse, tags=["email"])
+async def search_email(
+    container: ContainerDep,
+    client: ClientDep,
+    q: Annotated[str, Query(min_length=0, max_length=500)] = "",
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+) -> EmailSearchResponse:
+    """Section 64's search/read."""
+    messages = await container.core.search_email(client, query=q, limit=limit)
+    return EmailSearchResponse(
+        messages=[_email_message_out(m) for m in messages], total=len(messages)
+    )
+
+
+@router.get(
+    "/email/threads/{thread_id}", response_model=EmailThreadResponse, tags=["email"]
+)
+async def read_email_thread(
+    thread_id: str, container: ContainerDep, client: ClientDep
+) -> EmailThreadResponse:
+    """Section 64's thread read."""
+    thread = await container.core.read_email_thread(client, thread_id=thread_id)
+    return _email_thread_out(thread)
+
+
+@router.post(
+    "/email/send", response_model=ActionResponse, status_code=201, tags=["email"]
+)
+async def send_email(
+    payload: SendEmailRequest, container: ContainerDep, client: ClientDep
+) -> ActionResponse:
+    """Section 64's send/reply, recorded through the outbox rather than sent
+    directly (section 61: the idempotency key is LifeOps's, not the
+    caller's)."""
+    draft = EmailSendDraft(**payload.model_dump())
+    action = await container.core.prepare_send_email(client, draft)
+    return _action_out(action)
+
+
+# --- documents (BUILD_SPEC sections 36, 64, 96) -------------------------------
+
+
+@router.post(
+    "/documents", response_model=DocumentResponse, status_code=201, tags=["documents"]
+)
+async def create_document(
+    payload: CreateDocumentRequest, container: ContainerDep, client: ClientDep
+) -> DocumentResponse:
+    """A reference to something ingested from email or the calendar (section
+    64); link it to a task or entity with the existing ``/world/relationships``
+    route."""
+    draft = DocumentDraft(**payload.model_dump())
+    document = await container.core.create_document(client, draft)
+    return _document_out(document)
+
+
 @router.get("/audit", response_model=AuditListResponse, tags=["audit"])
 async def read_audit(
     container: ContainerDep,
@@ -964,11 +1196,11 @@ async def update_provider_config(
 async def test_provider(provider_id: str, container: ContainerDep) -> TestProviderResponse:
     """Run the provider's health check.
 
-    ElevenLabs (phase 5) and the local voice adapters (phase 6) have real
-    adapters and are actually called here. Every other provider still ships
-    no adapter, so this reports honestly that one is not implemented yet
-    rather than returning a fake success. A Test button that lies is worse
-    than one that says "not yet".
+    ElevenLabs (phase 5), the local voice adapters (phase 6), and calendar/
+    email (phase 7) have real adapters and are actually called here. Every
+    other provider still ships no adapter, so this reports honestly that one
+    is not implemented yet rather than returning a fake success. A Test
+    button that lies is worse than one that says "not yet".
     """
     definition = get_provider(provider_id)
     if definition is None:
@@ -976,6 +1208,8 @@ async def test_provider(provider_id: str, container: ContainerDep) -> TestProvid
 
     if provider_id in ("elevenlabs", "local_tts", "local_asr"):
         return await _test_voice_provider(container, provider_id)
+    if provider_id in ("calendar", "email"):
+        return await _test_calendar_or_email(container, provider_id)
 
     status = container.config.get_status(provider_id)
     message = (
@@ -1021,6 +1255,29 @@ async def _test_voice_provider(container: Container, provider_id: str) -> TestPr
     )
 
 
+async def _test_calendar_or_email(container: Container, provider_id: str) -> TestProviderResponse:
+    """Actually call the calendar or email provider (phase 7) when it is
+    enabled; report "not configured" otherwise (AGENTS.md never fakes
+    success)."""
+    try:
+        if provider_id == "calendar":
+            report = await container.calendar.health()
+        else:
+            _, report = await container.email.health()
+    except ProviderNotConfiguredError as exc:
+        report = container.config.record_health(
+            provider_id, healthy=False, message=str(exc), reason="not_configured"
+        )
+    status = container.config.get_status(provider_id)
+    return TestProviderResponse(
+        provider=provider_id,
+        healthy=report.healthy,
+        state=str(status.state),
+        message=report.message,
+        checked_at=report.checked_at,
+    )
+
+
 @router.post(
     "/config/providers/{provider_id}/discover",
     response_model=DiscoverResponse,
@@ -1052,6 +1309,18 @@ async def discover_provider_options(
 
     if provider_id in ("local_tts", "local_asr") and field == "model":
         return await _discover_local_voice(provider_id, field)
+
+    if provider_id == "calendar" and field == "default_calendar":
+        return DiscoverResponse(
+            provider=provider_id,
+            field=field,
+            options=[],
+            message=(
+                "This phase's CalDAV adapter reads one calendar collection at "
+                "the configured server URL; it does not enumerate a user's "
+                "other calendars yet."
+            ),
+        )
 
     return DiscoverResponse(
         provider=provider_id,

@@ -15,12 +15,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from lifeops.calendar.service import CalendarProviderService
 from lifeops.clock import Clock, SystemClock, now_iso
 from lifeops.domain.actions import REQUIRES_APPROVAL as ACTIONS_REQUIRING_APPROVAL
 from lifeops.domain.actions import (
     Action,
     ActionDraft,
     ActionStatus,
+    ActionType,
     record_attempt,
 )
 from lifeops.domain.actions import prepare as prepare_action
@@ -33,6 +35,32 @@ from lifeops.domain.approvals import consume as consume_approval
 from lifeops.domain.approvals import decide as decide_approval
 from lifeops.domain.approvals import request as request_approval
 from lifeops.domain.audit import AuditRecord
+from lifeops.domain.calendar import (
+    Appointment,
+    AppointmentHoldDraft,
+    AppointmentStatus,
+    CalendarEvent,
+    FreeBusyResult,
+    appointment_to_entity,
+    calendar_event_to_entity,
+    confirm_booking,
+    entity_to_appointment,
+    hold_is_expired,
+)
+from lifeops.domain.calendar import cancel_appointment as cancel_appointment_domain
+from lifeops.domain.calendar import place_hold as place_hold_domain
+from lifeops.domain.documents import (
+    Document,
+    DocumentDraft,
+    document_to_entity,
+)
+from lifeops.domain.documents import create_document as create_document_domain
+from lifeops.domain.email import (
+    EmailMessage,
+    EmailSendDraft,
+    EmailThread,
+)
+from lifeops.domain.email import build_send_payload as build_send_email_payload
 from lifeops.domain.memory import (
     MemoryDraft,
     MemoryRecord,
@@ -79,11 +107,14 @@ from lifeops.domain.world import (
     parse_relationship,
     validate_facts,
 )
+from lifeops.email.service import EmailProviderService
 from lifeops.errors import (
     ConfigurationError,
     ConflictError,
     NotFoundError,
+    ProviderError,
     ValidationError,
+    VerificationRequiredError,
 )
 from lifeops.events import (
     ACTION_CHANGED,
@@ -778,6 +809,185 @@ class ActionService:
         return saved
 
 
+class AppointmentService:
+    """Calendar reads and the appointment lifecycle (BUILD_SPEC sections 63,
+    96), following section 63's mandatory order: read, free/busy, hold,
+    create, update, cancel.
+
+    Holds two dependencies rather than one, unlike the other services in this
+    module: ``world`` for the local Appointment/CalendarEvent record and
+    ``calendar`` for the actual provider call. Both are needed for the same
+    reason ``ActionService`` holds actions and approvals together — placing a
+    hold or booking a slot is one operation with an external half and a local
+    half, and splitting them across two callers is how the external half gets
+    forgotten.
+
+    ``execute_booking`` and ``execute_cancellation`` are called only from
+    ``LifeOpsCore.execute_action``, after an Action has been committed. This
+    class never calls ``prepare_action`` or ``verify_action`` itself — the
+    outbox is Phase 4's, and this consumes it rather than re-implementing it.
+    """
+
+    def __init__(
+        self,
+        *,
+        world: WorldRepository,
+        calendar: CalendarProviderService,
+        clock: Clock,
+        publish: Callable[[str], None] | None = None,
+    ) -> None:
+        self._world = world
+        self._calendar = calendar
+        self._clock = clock
+        self._publish_event = publish
+
+    def _notify(self, entity_id: str) -> None:
+        if self._publish_event is not None:
+            self._publish_event(entity_id)
+
+    async def get(self, appointment_id: str) -> Appointment:
+        entity = await self._world.get(appointment_id)
+        if entity is None:
+            raise NotFoundError(
+                f"no such appointment: {appointment_id}", appointment_id=appointment_id
+            )
+        return entity_to_appointment(entity)
+
+    async def list(
+        self, *, status: AppointmentStatus | None = None, task_id: str | None = None
+    ) -> list[Appointment]:
+        entities = await self._world.list_entities(types=[WorldEntityType.APPOINTMENT])
+        appointments = [entity_to_appointment(e) for e in entities]
+        if status is not None:
+            appointments = [a for a in appointments if a.status is status]
+        if task_id is not None:
+            appointments = [a for a in appointments if a.task_id == task_id]
+        return sorted(appointments, key=lambda a: a.start_at)
+
+    # --- section 63 step 1-2: read ------------------------------------------
+
+    async def read_calendar(self, *, start_at: str, end_at: str) -> list[CalendarEvent]:
+        events = await self._calendar.list_events(start_at=start_at, end_at=end_at)
+        now = now_iso(self._clock)
+        for event in events:
+            # Upsert, not append: reading the same window twice must not
+            # duplicate the node (module docstring — the id is deterministic).
+            await self._world.create(calendar_event_to_entity(event, now=now))
+        return events
+
+    async def free_busy(self, *, start_at: str, end_at: str) -> FreeBusyResult:
+        slots = await self._calendar.free_busy(start_at=start_at, end_at=end_at)
+        return FreeBusyResult(start_at=start_at, end_at=end_at, slots=slots)
+
+    # --- section 63 step 3: hold ---------------------------------------------
+
+    async def hold(self, draft: AppointmentHoldDraft, *, client_id: str) -> Appointment:
+        hold_reference = await self._calendar.create_hold(
+            subject=draft.subject,
+            start_at=draft.start_at,
+            end_at=draft.end_at,
+            notes=draft.notes,
+        )
+        now = now_iso(self._clock)
+        appointment = place_hold_domain(
+            draft, now=now, client_id=client_id, hold_reference=hold_reference
+        )
+        await self._world.create(appointment_to_entity(appointment))
+        self._notify(appointment.id)
+        return appointment
+
+    # --- section 63 steps 4 and 6: execution, called from execute_action ----
+
+    async def execute_booking(self, action: Action) -> tuple[str, str]:
+        appointment_id = action.payload.get("appointment_id")
+        if not appointment_id:
+            raise ValidationError(
+                "a book_appointment action needs appointment_id in its payload",
+                action_id=action.id,
+            )
+        appointment = await self.get(str(appointment_id))
+        now = now_iso(self._clock)
+        if appointment.status is not AppointmentStatus.HELD:
+            raise ValidationError(
+                f"appointment {appointment_id} is {appointment.status}, not held; "
+                "it cannot be booked",
+                appointment_id=appointment_id,
+            )
+        if hold_is_expired(appointment, now=now):
+            raise ValidationError(
+                f"the hold for appointment {appointment_id} expired at "
+                f"{appointment.hold_expires_at}",
+                appointment_id=appointment_id,
+            )
+        external_id = await self._calendar.create_event(
+            subject=str(action.payload.get("subject") or appointment.subject),
+            start_at=str(action.payload.get("start_at") or appointment.start_at),
+            end_at=str(action.payload.get("end_at") or appointment.end_at),
+            location=str(action.payload.get("location") or appointment.location),
+            notes=str(action.payload.get("notes") or appointment.notes),
+            hold_reference=appointment.hold_reference,
+        )
+        return external_id, f"created via calendar provider: {external_id}"
+
+    async def execute_cancellation(self, action: Action) -> tuple[str, str]:
+        appointment_id = action.payload.get("appointment_id")
+        if not appointment_id:
+            raise ValidationError(
+                "a cancel_appointment action needs appointment_id in its payload",
+                action_id=action.id,
+            )
+        appointment = await self.get(str(appointment_id))
+        if appointment.is_terminal:
+            raise ValidationError(
+                f"appointment {appointment_id} is already {appointment.status}",
+                appointment_id=appointment_id,
+            )
+        reference = appointment.external_event_id or appointment.hold_reference
+        if not reference:
+            raise ValidationError(
+                f"appointment {appointment_id} has no calendar reference to cancel",
+                appointment_id=appointment_id,
+            )
+        await self._calendar.cancel_event(reference)
+        return reference, f"cancelled via calendar provider: {reference}"
+
+    # --- independent confirmation, called from verify_action_externally ----
+
+    async def confirm_evidence(self, external_event_id: str) -> tuple[bool, str]:
+        event = await self._calendar.get_event(external_event_id)
+        if event is None:
+            return False, f"no event {external_event_id!r} found on the calendar"
+        return True, f"confirmed on the calendar: {event.external_event_id} ({event.title})"
+
+    async def confirm_cancellation_evidence(self, external_event_id: str) -> tuple[bool, str]:
+        event = await self._calendar.get_event(external_event_id)
+        if event is not None:
+            return False, f"event {external_event_id!r} is still on the calendar"
+        return True, f"confirmed absent from the calendar: {external_event_id}"
+
+    # --- local state sync, called only after verify_action succeeds --------
+
+    async def mark_booked(
+        self, appointment_id: str, *, external_event_id: str, action_id: str, now: str
+    ) -> Appointment:
+        appointment = await self.get(appointment_id)
+        updated = confirm_booking(
+            appointment, external_event_id=external_event_id, action_id=action_id, now=now
+        )
+        await self._world.create(appointment_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+    async def mark_cancelled(
+        self, appointment_id: str, *, action_id: str, now: str
+    ) -> Appointment:
+        appointment = await self.get(appointment_id)
+        updated = cancel_appointment_domain(appointment, action_id=action_id, now=now)
+        await self._world.create(appointment_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+
 class LifeOpsCore:
     def __init__(
         self,
@@ -791,6 +1001,8 @@ class LifeOpsCore:
         actions: ActionRepository | None = None,
         approvals: ApprovalRepository | None = None,
         audit: AuditRepository | None = None,
+        calendar: CalendarProviderService | None = None,
+        email: EmailProviderService | None = None,
         clock: Clock | None = None,
         safe_mode: bool = False,
         events: EventBus | None = None,
@@ -798,6 +1010,11 @@ class LifeOpsCore:
         self._people = people
         self._preferences = preferences
         self._tasks = tasks
+        # Kept alongside ``_world_service`` (not instead of it) for the one
+        # flow — documents — that builds a ``WorldEntity`` directly rather
+        # than through ``EntityDraft``, the same reason ``AppointmentService``
+        # above takes ``world`` as its own dependency.
+        self._world_repo = world
         self._clock = clock or SystemClock()
         self.safe_mode = safe_mode
         self._events = events
@@ -852,6 +1069,22 @@ class LifeOpsCore:
             else None
         )
         self._audit_repo = audit
+        # Calendar/email (Phase 7, section 96) need both a persistence path
+        # (``world``) and a provider adapter (``calendar``), the same
+        # two-dependency shape ``ActionService`` uses for actions+approvals.
+        self._appointment_service = (
+            AppointmentService(
+                world=world,
+                calendar=calendar,
+                clock=self._clock,
+                publish=(
+                    lambda entity_id: self._publish(WORLD_CHANGED, entity_id=entity_id)
+                ),
+            )
+            if world is not None and calendar is not None
+            else None
+        )
+        self._email_service = email
 
     def _require(self, client: ClientIdentity, capability: Capability) -> None:
         require(client, capability, safe_mode=self.safe_mode)
@@ -1435,6 +1668,20 @@ class LifeOpsCore:
             )
         return self._action_service
 
+    def _appointments(self) -> AppointmentService:
+        if self._appointment_service is None:
+            raise ConfigurationError(
+                "no calendar provider is configured", component="calendar"
+            )
+        return self._appointment_service
+
+    def _email(self) -> EmailProviderService:
+        if self._email_service is None:
+            raise ConfigurationError(
+                "no email provider is configured", component="email"
+            )
+        return self._email_service
+
     async def audit(
         self,
         client: ClientIdentity,
@@ -1698,6 +1945,306 @@ class LifeOpsCore:
             verification=str(verified.verification_state),
         )
         return verified
+
+    async def execute_action(self, client: ClientIdentity, *, action_id: str) -> Action:
+        """Commit an action and perform its external effect (section 60 steps
+        2-3), for the three writes this phase implements: booking, cancelling,
+        and sending email.
+
+        Deliberately not folded into ``commit_action``: committing spends the
+        approval and is safe to call on its own; calling the provider is a
+        distinct step with its own failure mode, and section 60 asks for both
+        to be visible as separate points in the record. This method exists so
+        one caller (the Console, or Hermes once a human has approved) does not
+        have to reimplement "commit, then call the right provider, then
+        record the result" for every action type.
+        """
+        action = await self._actions().get(action_id)
+        self._require(client, capability_for_action(str(action.type)))
+        if action.type not in (
+            ActionType.BOOK_APPOINTMENT,
+            ActionType.CANCEL_APPOINTMENT,
+            ActionType.SEND_EMAIL,
+        ):
+            raise ValidationError(
+                f"no executor is wired for action type {action.type}",
+                action_id=action.id,
+                action_type=str(action.type),
+            )
+
+        committed = await self.commit_action(client, action_id=action_id)
+        try:
+            if committed.type is ActionType.BOOK_APPOINTMENT:
+                external_reference, _ = await self._appointments().execute_booking(committed)
+            elif committed.type is ActionType.CANCEL_APPOINTMENT:
+                external_reference, _ = await self._appointments().execute_cancellation(
+                    committed
+                )
+            else:
+                external_reference, _ = await self._execute_send_email(committed)
+        except (ProviderError, ValidationError) as exc:
+            return await self.record_action_result(
+                client, action_id=action_id, succeeded=False, failure_reason=str(exc)
+            )
+        return await self.record_action_result(
+            client, action_id=action_id, succeeded=True, external_reference=external_reference
+        )
+
+    async def _execute_send_email(self, action: Action) -> tuple[str, str]:
+        draft = EmailSendDraft(**action.payload)
+        message_id = await self._email().send(draft)
+        return message_id, f"sent via email provider: {message_id}"
+
+    async def verify_action_externally(
+        self, client: ClientIdentity, *, action_id: str
+    ) -> Action:
+        """Independently confirm an executed action really happened before
+        marking it verified — section 63's warning generalised to every write
+        this phase makes: neither a hold nor a provider accepting a request is
+        proof, only checking again is (section 6).
+
+        This is the only path that can move a booked or cancelled Appointment
+        out of ``HELD`` or into ``CANCELLED``: local state changes exactly
+        when, and only when, this independent check passes.
+        """
+        action = await self._actions().get(action_id)
+        self._require(client, capability_for_action(str(action.type)))
+        if action.status is not ActionStatus.EXECUTED:
+            raise ConflictError(
+                f"action {action.id} is {action.status}; only an executed action "
+                "can be verified",
+                action_id=action.id,
+                reason="not_executed",
+            )
+        if not action.external_reference:
+            raise VerificationRequiredError(
+                f"action {action.id} has no external reference to verify against",
+                action_id=action.id,
+            )
+
+        if action.type is ActionType.BOOK_APPOINTMENT:
+            ok, evidence = await self._appointments().confirm_evidence(
+                action.external_reference
+            )
+        elif action.type is ActionType.CANCEL_APPOINTMENT:
+            ok, evidence = await self._appointments().confirm_cancellation_evidence(
+                action.external_reference
+            )
+        elif action.type is ActionType.SEND_EMAIL:
+            ok = await self._email().confirm_sent(action.external_reference)
+            evidence = (
+                f"confirmed in the Sent folder: {action.external_reference}"
+                if ok
+                else f"not found in the Sent folder: {action.external_reference}"
+            )
+        else:
+            raise ValidationError(
+                f"no verifier is wired for action type {action.type}", action_id=action.id
+            )
+
+        if not ok:
+            raise VerificationRequiredError(
+                f"could not independently confirm that {action.type} succeeded",
+                action_id=action.id,
+            )
+
+        verified = await self.verify_action(client, action_id=action_id, evidence=evidence)
+
+        appointment_id = verified.payload.get("appointment_id")
+        if appointment_id and verified.external_reference:
+            now = now_iso(self._clock)
+            if verified.type is ActionType.BOOK_APPOINTMENT:
+                await self._appointments().mark_booked(
+                    str(appointment_id),
+                    external_event_id=verified.external_reference,
+                    action_id=verified.id,
+                    now=now,
+                )
+            elif verified.type is ActionType.CANCEL_APPOINTMENT:
+                await self._appointments().mark_cancelled(
+                    str(appointment_id), action_id=verified.id, now=now
+                )
+        return verified
+
+    # --- calendar (BUILD_SPEC sections 63, 96) -------------------------------
+    #
+    # Section 63's mandatory order: read, free/busy, hold, create, update,
+    # cancel. Reads are gated on READ_WORLD — the lowest-risk step and the one
+    # every client that can see the world should be able to take. Holding a
+    # slot already touches an external calendar, so it spends BOOK_APPOINTMENT
+    # and is blocked in safe mode with it (policy/capabilities.py).
+
+    async def read_calendar(
+        self, client: ClientIdentity, *, start_at: str, end_at: str
+    ) -> list[CalendarEvent]:
+        """Section 63 step 1. Read entries and cache them into the world graph
+        (section 63: "Calendar records should relate to LifeOps entities")."""
+        self._require(client, Capability.READ_WORLD)
+        with operation("calendar.read", client_id=client.client_id):
+            return await self._appointments().read_calendar(start_at=start_at, end_at=end_at)
+
+    async def check_calendar_free_busy(
+        self, client: ClientIdentity, *, start_at: str, end_at: str
+    ) -> FreeBusyResult:
+        """Section 63 step 2."""
+        self._require(client, Capability.READ_WORLD)
+        return await self._appointments().free_busy(start_at=start_at, end_at=end_at)
+
+    async def get_appointment(
+        self, client: ClientIdentity, *, appointment_id: str
+    ) -> Appointment:
+        self._require(client, Capability.READ_WORLD)
+        return await self._appointments().get(appointment_id)
+
+    async def list_appointments(
+        self,
+        client: ClientIdentity,
+        *,
+        status: AppointmentStatus | None = None,
+        task_id: str | None = None,
+    ) -> list[Appointment]:
+        self._require(client, Capability.READ_WORLD)
+        return await self._appointments().list(status=status, task_id=task_id)
+
+    async def create_appointment_hold(
+        self, client: ClientIdentity, draft: AppointmentHoldDraft
+    ) -> Appointment:
+        """Section 63 step 3: a reversible write, not yet a commitment."""
+        self._require(client, Capability.BOOK_APPOINTMENT)
+        appointment = await self._appointments().hold(draft, client_id=client.client_id)
+        await self.audit(
+            client,
+            result="held",
+            intent="create_appointment_hold",
+            tool="calendar",
+            target=appointment.id,
+            risk=str(Capability.BOOK_APPOINTMENT),
+        )
+        return appointment
+
+    async def book_appointment(
+        self, client: ClientIdentity, *, appointment_id: str
+    ) -> Action:
+        """Section 63 step 4, through the outbox (BUILD_SPEC section 60).
+
+        Placing a hold does not do this — only a prepared, approved,
+        committed, and independently verified Action can (section 63's
+        warning). This method only gets that Action started.
+        """
+        appointment = await self._appointments().get(appointment_id)
+        if appointment.status is not AppointmentStatus.HELD:
+            raise ValidationError(
+                f"appointment {appointment_id} is {appointment.status}, not held",
+                appointment_id=appointment_id,
+            )
+        payload = {
+            "appointment_id": appointment.id,
+            "subject": appointment.subject,
+            "start_at": appointment.start_at,
+            "end_at": appointment.end_at,
+            "location": appointment.location,
+            "notes": appointment.notes,
+            "hold_reference": appointment.hold_reference,
+        }
+        return await self.prepare_action(
+            client,
+            ActionDraft(
+                type=ActionType.BOOK_APPOINTMENT,
+                payload=payload,
+                task_id=appointment.task_id,
+                target_entity_id=appointment.provider_entity_id,
+            ),
+        )
+
+    async def cancel_appointment(
+        self, client: ClientIdentity, *, appointment_id: str
+    ) -> Action:
+        """Section 63 step 6, through the outbox."""
+        appointment = await self._appointments().get(appointment_id)
+        if appointment.is_terminal:
+            raise ValidationError(
+                f"appointment {appointment_id} is already {appointment.status}",
+                appointment_id=appointment_id,
+            )
+        payload = {
+            "appointment_id": appointment.id,
+            "external_event_id": appointment.external_event_id,
+        }
+        return await self.prepare_action(
+            client,
+            ActionDraft(
+                type=ActionType.CANCEL_APPOINTMENT,
+                payload=payload,
+                task_id=appointment.task_id,
+                target_entity_id=appointment.provider_entity_id,
+            ),
+        )
+
+    # --- email (BUILD_SPEC sections 61, 64, 96) -------------------------------
+    #
+    # Reads are gated on READ_WORLD, the same as calendar reads. Sending and
+    # replying go through the outbox (prepare_send_email -> prepare_action)
+    # rather than a direct call, because section 61 requires an idempotency
+    # key LifeOps generates for email writes — never one this method or a
+    # caller invents.
+
+    async def search_email(
+        self, client: ClientIdentity, *, query: str, limit: int = 25
+    ) -> list[EmailMessage]:
+        """Section 64's search/read."""
+        self._require(client, Capability.READ_WORLD)
+        return await self._email().search(query, limit=limit)
+
+    async def read_email_thread(
+        self, client: ClientIdentity, *, thread_id: str
+    ) -> EmailThread:
+        """Section 64's thread read."""
+        self._require(client, Capability.READ_WORLD)
+        return await self._email().read_thread(thread_id)
+
+    async def prepare_send_email(
+        self, client: ClientIdentity, draft: EmailSendDraft
+    ) -> Action:
+        """Section 64's send/reply, prepared through the outbox."""
+        payload = build_send_email_payload(draft)
+        return await self.prepare_action(
+            client,
+            ActionDraft(
+                type=ActionType.SEND_EMAIL,
+                payload=payload,
+                task_id=draft.task_id,
+                target_entity_id=draft.target_entity_id,
+            ),
+        )
+
+    # --- documents (BUILD_SPEC sections 36, 64, 96) ---------------------------
+
+    async def create_document(
+        self, client: ClientIdentity, draft: DocumentDraft
+    ) -> Document:
+        """Section 64: "associate message with task/provider/entity" and
+        "ingest relevant observations" both start here — a Document is the
+        durable reference; linking it to a task or entity is an ordinary
+        ``link_entities`` call with the existing REFERENCES/ABOUT edges
+        (section 39), not a new relationship type.
+        """
+        self._require(client, Capability.WRITE_WORLD)
+        now = now_iso(self._clock)
+        document = create_document_domain(draft, now=now, client_id=client.client_id)
+        if self._world_repo is None:
+            raise ConfigurationError(
+                "no world repository is configured", component="world"
+            )
+        entity = await self._world_repo.create(document_to_entity(document))
+        self._publish(WORLD_CHANGED, entity_id=entity.id)
+        await self.audit(
+            client,
+            result="created",
+            intent="create_document",
+            tool="documents",
+            target=document.id,
+        )
+        return document
 
     # --- search -------------------------------------------------------------
 

@@ -56,6 +56,14 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "FOR (ap:Approval) REQUIRE ap.id IS UNIQUE",
     "CREATE CONSTRAINT lifeops_audit_id IF NOT EXISTS "
     "FOR (r:AuditRecord) REQUIRE r.id IS UNIQUE",
+    # Phase 7 (BUILD_SPEC sections 63, 64, 96): a duplicate appointment_ id
+    # is exactly the "booked it twice" failure section 60 exists to prevent.
+    "CREATE CONSTRAINT lifeops_appointment_id IF NOT EXISTS "
+    "FOR (a:Appointment) REQUIRE a.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_event_id IF NOT EXISTS "
+    "FOR (e:Event) REQUIRE e.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_document_id IF NOT EXISTS "
+    "FOR (d:Document) REQUIRE d.id IS UNIQUE",
     "CREATE INDEX lifeops_preference_subject_key IF NOT EXISTS "
     "FOR (p:Preference) ON (p.subject_id, p.key)",
     "CREATE INDEX lifeops_task_state IF NOT EXISTS FOR (t:Task) ON (t.state)",
