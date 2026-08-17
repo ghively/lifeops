@@ -86,6 +86,7 @@ from lifeops.observability.logging import configure_logging, redact, trace_conte
 from lifeops.policy import CapabilityGrant, ClientIdentity, all_clients, resolve_client
 from lifeops.policy.capabilities import CONSOLE
 from lifeops.settings import Settings, get_settings
+from lifeops.voice.local import LocalASRProvider, LocalTTSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -963,17 +964,18 @@ async def update_provider_config(
 async def test_provider(provider_id: str, container: ContainerDep) -> TestProviderResponse:
     """Run the provider's health check.
 
-    ElevenLabs has a real adapter as of phase 5 and is actually called here.
-    Every other provider still ships no adapter, so this reports honestly
-    that one is not implemented yet rather than returning a fake success. A
-    Test button that lies is worse than one that says "not yet".
+    ElevenLabs (phase 5) and the local voice adapters (phase 6) have real
+    adapters and are actually called here. Every other provider still ships
+    no adapter, so this reports honestly that one is not implemented yet
+    rather than returning a fake success. A Test button that lies is worse
+    than one that says "not yet".
     """
     definition = get_provider(provider_id)
     if definition is None:
         raise NotFoundError(f"unknown provider {provider_id!r}", provider=provider_id)
 
-    if provider_id == "elevenlabs":
-        return await _test_elevenlabs(container)
+    if provider_id in ("elevenlabs", "local_tts", "local_asr"):
+        return await _test_voice_provider(container, provider_id)
 
     status = container.config.get_status(provider_id)
     message = (
@@ -992,17 +994,23 @@ async def test_provider(provider_id: str, container: ContainerDep) -> TestProvid
     )
 
 
-async def _test_elevenlabs(container: Container) -> TestProviderResponse:
-    """Actually call ElevenLabs when it is enabled; report "not configured"
-    rather than a health check result when it is not — the user has not
-    turned it on, so nothing was attempted (AGENTS.md never fakes success)."""
+async def _test_voice_provider(container: Container, provider_id: str) -> TestProviderResponse:
+    """Actually call the named voice provider (ElevenLabs, local TTS, or
+    local ASR) when it is enabled; report "not configured" rather than a
+    health check result when it is not — the user has not turned it on, so
+    nothing was attempted (AGENTS.md never fakes success).
+
+    Uses ``health_for``, not the mode-aware ``health()``: the Console is
+    testing the card it clicked, not whatever the active voice mode would
+    currently select — testing local_tts must test local_tts even while
+    Quick Cloud mode has TTS pinned to elevenlabs.
+    """
     try:
-        provider_id, report = await container.voice.health()
+        _, report = await container.voice.health_for(provider_id)
     except ProviderNotConfiguredError as exc:
         report = container.config.record_health(
-            "elevenlabs", healthy=False, message=str(exc), reason="not_configured"
+            provider_id, healthy=False, message=str(exc), reason="not_configured"
         )
-        provider_id = "elevenlabs"
     status = container.config.get_status(provider_id)
     return TestProviderResponse(
         provider=provider_id,
@@ -1042,6 +1050,9 @@ async def discover_provider_options(
     if provider_id == "elevenlabs" and field in ("voice_id", "model_id"):
         return await _discover_elevenlabs(container, field)
 
+    if provider_id in ("local_tts", "local_asr") and field == "model":
+        return await _discover_local_voice(provider_id, field)
+
     return DiscoverResponse(
         provider=provider_id,
         field=field,
@@ -1068,6 +1079,16 @@ async def _discover_elevenlabs(container: Container, field: str) -> DiscoverResp
     except ProviderNotConfiguredError as exc:
         return DiscoverResponse(provider="elevenlabs", field=field, options=[], message=str(exc))
     return DiscoverResponse(provider="elevenlabs", field=field, options=options)
+
+
+async def _discover_local_voice(provider_id: str, field: str) -> DiscoverResponse:
+    """No local model list exists to discover — no ML runtime ships with this
+    codebase (BUILD_SPEC section 105). Reports that honestly, independent of
+    whether the provider is enabled, so a user sees why before configuring
+    anything (never fakes a model list, per AGENTS.md)."""
+    provider = LocalASRProvider() if provider_id == "local_asr" else LocalTTSProvider()
+    _, message = await provider.health()
+    return DiscoverResponse(provider=provider_id, field=field, options=[], message=message)
 
 
 _AUDIO_MEDIA_TYPES = {
@@ -1100,6 +1121,54 @@ async def preview_voice(
     chunks = container.voice.stream(payload.text, options)
     media_type = _AUDIO_MEDIA_TYPES.get(payload.output_format or "mp3_44100_128", "audio/mpeg")
     return StreamingResponse(chunks, media_type=media_type)
+
+
+@router.get("/voice/mode-status", tags=["voice"])
+async def voice_mode_status(container: ContainerDep) -> dict[str, Any]:
+    """What the current voice mode (BUILD_SPEC section 29) has selected for
+    each capability, and what would be used next if that stopped working —
+    the Console's "active provider" / "fallback provider" (section 95).
+
+    A pure readback: nothing here performs a live health check, so opening
+    Configuration never fans out network calls on its own.
+    """
+    return container.voice.mode_status().model_dump()
+
+
+_LOCAL_VOICE_PROVIDER_IDS = ("local_tts", "local_asr")
+
+
+@router.post("/voice/providers/{provider_id}/load", tags=["voice"])
+async def load_voice_provider(provider_id: str, container: ContainerDep) -> dict[str, Any]:
+    """Load a local provider's model into memory (BUILD_SPEC section 95).
+
+    Only the local adapters implement a load/unload lifecycle; nothing here
+    can succeed until a real local runtime is installed, so this reports the
+    same honest "not installed" message ``Test`` does rather than pretending
+    a model loaded.
+    """
+    if provider_id not in _LOCAL_VOICE_PROVIDER_IDS:
+        raise NotFoundError(
+            f"provider {provider_id!r} has no load/unload lifecycle", provider=provider_id
+        )
+    try:
+        loaded, message = await container.voice.load(provider_id)
+    except ProviderNotConfiguredError as exc:
+        return {"provider": provider_id, "loaded": False, "message": str(exc)}
+    return {"provider": provider_id, "loaded": loaded, "message": message}
+
+
+@router.post("/voice/providers/{provider_id}/unload", tags=["voice"])
+async def unload_voice_provider(provider_id: str, container: ContainerDep) -> dict[str, Any]:
+    if provider_id not in _LOCAL_VOICE_PROVIDER_IDS:
+        raise NotFoundError(
+            f"provider {provider_id!r} has no load/unload lifecycle", provider=provider_id
+        )
+    try:
+        loaded, message = await container.voice.unload(provider_id)
+    except ProviderNotConfiguredError as exc:
+        return {"provider": provider_id, "loaded": False, "message": str(exc)}
+    return {"provider": provider_id, "loaded": loaded, "message": message}
 
 
 @router.get("/config/system", tags=["config"])

@@ -222,6 +222,20 @@ export interface ProviderEntry {
 /** BUILD_SPEC section 29 — which ASR/TTS pairing the Voice Bridge uses. */
 export type VoiceMode = 'quick_cloud' | 'hybrid' | 'local'
 
+/**
+ * What the current voice mode has selected for each capability, and what
+ * would be used next if that provider stopped working (BUILD_SPEC section
+ * 95's "active provider" / "fallback provider"). A pure readback — fetching
+ * this never performs a live health check.
+ */
+export interface VoiceModeStatus {
+  mode: VoiceMode
+  tts_active: string | null
+  tts_fallback: string | null
+  asr_active: string | null
+  asr_fallback: string | null
+}
+
 export interface SystemConfig {
   display_name: string
   timezone: string
@@ -699,6 +713,30 @@ export const voiceApi = {
       throw await toBlobAwareError(error)
     }
   },
+
+  /** BUILD_SPEC section 95's active/fallback provider readback. */
+  getModeStatus: () =>
+    lifeops.get<VoiceModeStatus>('/voice/mode-status').then((r) => r.data),
+
+  /**
+   * Load/unload a local provider's model (BUILD_SPEC section 95). Only
+   * `local_tts` and `local_asr` support this; both always report why they
+   * did not load in this environment (BUILD_SPEC section 105 — no ML
+   * runtime ships here) rather than pretending to succeed.
+   */
+  loadProvider: (id: string) =>
+    lifeops
+      .post<{ provider: string; loaded: boolean; message: string }>(
+        `/voice/providers/${id}/load`,
+      )
+      .then((r) => r.data),
+
+  unloadProvider: (id: string) =>
+    lifeops
+      .post<{ provider: string; loaded: boolean; message: string }>(
+        `/voice/providers/${id}/unload`,
+      )
+      .then((r) => r.data),
 }
 
 export const searchApi = {
