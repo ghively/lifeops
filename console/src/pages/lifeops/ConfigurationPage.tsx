@@ -32,6 +32,9 @@ import {
   type VoiceMode,
 } from '@/services/lifeops'
 
+/** BUILD_SPEC section 95 — the two local voice adapters phase 6 adds. */
+const LOCAL_VOICE_PROVIDER_IDS = new Set(['local_tts', 'local_asr'])
+
 const STATE_TONE: Record<ProviderState, string> = {
   healthy: 'bg-green-100 text-green-800',
   configured: 'bg-blue-100 text-blue-800',
@@ -252,6 +255,57 @@ function VoicePreview({
   )
 }
 
+/**
+ * Load/unload controls for the two local voice adapters (BUILD_SPEC section
+ * 95). No ML runtime ships with this codebase (section 105), so both
+ * buttons report — honestly, never a fake success — why nothing loaded in
+ * this environment; the point is that the control exists and tells the
+ * truth once a real runtime is installed and selected.
+ */
+function LocalVoiceControls({ providerId }: { providerId: string }) {
+  const [message, setMessage] = useState<string | null>(null)
+
+  const load = useMutation({
+    mutationFn: () => voiceApi.loadProvider(providerId),
+    onSuccess: (result) => setMessage(result.message),
+  })
+  const unload = useMutation({
+    mutationFn: () => voiceApi.unloadProvider(providerId),
+    onSuccess: (result) => setMessage(result.message),
+  })
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => load.mutate()}
+          disabled={load.isPending}
+        >
+          {load.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Load model'}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => unload.mutate()}
+          disabled={unload.isPending}
+        >
+          {unload.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Unload model'}
+        </Button>
+      </div>
+      {message && <p className="text-xs text-muted-foreground">{message}</p>}
+      {(load.isError || unload.isError) && (
+        <p className="text-xs text-red-600">
+          {errorMessage((load.error ?? unload.error) as unknown)}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function ProviderCard({ entry }: { entry: ProviderEntry }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -315,6 +369,8 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
           {status.last_health && (
             <p className="mt-1 text-xs text-muted-foreground">
               Last check: {status.last_health.message || (status.last_health.healthy ? 'ok' : 'failed')}
+              {typeof status.last_health.details.latency_ms === 'number' &&
+                ` · ${status.last_health.details.latency_ms}ms`}
             </p>
           )}
         </div>
@@ -360,6 +416,10 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
               voiceId={(draft.voice_id as string) || (status.settings.voice_id as string)}
               modelId={(draft.model_id as string) || (status.settings.model_id as string)}
             />
+          )}
+
+          {LOCAL_VOICE_PROVIDER_IDS.has(definition.id) && (
+            <LocalVoiceControls providerId={definition.id} />
           )}
 
           {definition.fields.some((f) => f.advanced) && (
@@ -523,13 +583,23 @@ function ConsoleAccessCard() {
 function VoiceModeCard() {
   const queryClient = useQueryClient()
   const systemQuery = useQuery({ queryKey: ['lifeops', 'system'], queryFn: configApi.getSystem })
+  // A pure readback (BUILD_SPEC section 95) — no live health check, so this
+  // never fans out network calls just because Configuration was opened.
+  const statusQuery = useQuery({
+    queryKey: ['lifeops', 'voice', 'mode-status'],
+    queryFn: voiceApi.getModeStatus,
+  })
 
   const save = useMutation({
     mutationFn: (voice_mode: VoiceMode) => configApi.updateSystem({ voice_mode }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system'] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system'] })
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'voice', 'mode-status'] })
+    },
   })
 
   const current = save.variables ?? systemQuery.data?.voice_mode ?? 'quick_cloud'
+  const status = statusQuery.data
 
   return (
     <section className="space-y-3">
@@ -555,6 +625,20 @@ function VoiceModeCard() {
           </button>
         ))}
       </div>
+      {status && (
+        <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+          <p>
+            <span className="font-medium text-foreground">Speech-to-text:</span>{' '}
+            active {status.asr_active ?? 'none configured'}
+            {status.asr_fallback && ` · fallback ${status.asr_fallback}`}
+          </p>
+          <p>
+            <span className="font-medium text-foreground">Text-to-speech:</span>{' '}
+            active {status.tts_active ?? 'none configured'}
+            {status.tts_fallback && ` · fallback ${status.tts_fallback}`}
+          </p>
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
         Changes which provider Hermes&apos; Voice Bridge reaches for; it does not
         require reconfiguring Hermes itself.
