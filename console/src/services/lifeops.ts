@@ -219,6 +219,9 @@ export interface ProviderEntry {
   status: ProviderStatus
 }
 
+/** BUILD_SPEC section 29 — which ASR/TTS pairing the Voice Bridge uses. */
+export type VoiceMode = 'quick_cloud' | 'hybrid' | 'local'
+
 export interface SystemConfig {
   display_name: string
   timezone: string
@@ -227,6 +230,7 @@ export interface SystemConfig {
   local_url: string | null
   setup_completed: boolean
   safe_mode: boolean
+  voice_mode: VoiceMode
 }
 
 export interface ComponentHealth {
@@ -450,6 +454,57 @@ export const configApi = {
 
   updateSystem: (values: Partial<SystemConfig>) =>
     lifeops.put<SystemConfig>('/config/system', values).then((r) => r.data),
+}
+
+export interface SynthesizeSpeechRequest {
+  text: string
+  voice_id?: string
+  model_id?: string
+  output_format?: string
+  stability?: number
+  similarity_boost?: number
+  speed?: number
+}
+
+/**
+ * `responseType: 'blob'` makes axios hand back a Blob on an error response
+ * too, so the usual `LifeOpsError` interceptor never sees the JSON body.
+ * Re-parse it here so a "not configured" preview failure still surfaces the
+ * server's message instead of a generic one.
+ */
+async function toBlobAwareError(error: unknown): Promise<unknown> {
+  if (
+    axios.isAxiosError(error) &&
+    error.response?.data instanceof Blob &&
+    error.response.data.type.includes('json')
+  ) {
+    try {
+      const body = JSON.parse(await error.response.data.text()) as LifeOpsErrorBody
+      if (body?.code) {
+        return new LifeOpsError(body.code, body.message, error.response.status, body.details)
+      }
+    } catch {
+      // Not parseable JSON after all — fall through to the original error.
+    }
+  }
+  return error
+}
+
+export const voiceApi = {
+  /**
+   * Synthesize sample text and return playable audio (BUILD_SPEC section 27's
+   * Preview voice button). Never saves anything and does not require Hermes.
+   */
+  previewVoice: async (payload: SynthesizeSpeechRequest): Promise<Blob> => {
+    try {
+      const response = await lifeops.post<Blob>('/voice/tts/preview', payload, {
+        responseType: 'blob',
+      })
+      return response.data
+    } catch (error) {
+      throw await toBlobAwareError(error)
+    }
+  },
 }
 
 export const searchApi = {

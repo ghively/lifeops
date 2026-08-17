@@ -24,6 +24,7 @@ from lifeops.repositories.nornic.tasks import NornicTaskRepository
 from lifeops.repositories.nornic.world import NornicWorldRepository
 from lifeops.secrets.local_encrypted import LocalEncryptedSecretStore
 from lifeops.settings import Settings, get_settings
+from lifeops.voice.service import VoiceService
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,10 @@ class Container:
         self.auth = ConsoleAuth(
             secret_store=self.secret_store, settings=self.settings, clock=self.clock
         )
+        # Phase 5: the ElevenLabs quick path. Composes configuration and
+        # secrets into calls against an external speech API; it never touches
+        # NornicDB or the world model LifeOpsCore owns.
+        self.voice = VoiceService(config=self.config, secret_store=self.secret_store)
         self.events = EventBus()
         # Ephemeral view of recent semantic operations for the Activity screen.
         # Not the audit log — it dies with the process (observability/activity.py).

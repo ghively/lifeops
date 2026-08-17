@@ -451,6 +451,10 @@ class UpdateSystemRequest(BaseModel):
     local_url: str | None = None
     setup_completed: bool | None = None
     safe_mode: bool | None = None
+    # Loosely typed like every other field here: the enum check happens in
+    # ConfigurationService.update_system, which reports it through the
+    # LifeOps error taxonomy instead of FastAPI's default 422 shape.
+    voice_mode: str | None = None
 
 
 class TestProviderResponse(BaseModel):
@@ -470,3 +474,25 @@ class DiscoverResponse(BaseModel):
     field: str
     options: list[dict[str, str]]
     message: str = ""
+
+
+# --- voice (BUILD_SPEC section 27, phase 5) -----------------------------------
+
+
+class SynthesizeSpeechRequest(BaseModel):
+    """The Console's Preview voice button (BUILD_SPEC section 27).
+
+    Every field but ``text`` is optional: previewing a voice before saving it
+    means the caller can override just ``voice_id`` and let stability,
+    model, and the rest fall back to what is already configured.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=2000)
+    voice_id: str | None = None
+    model_id: str | None = None
+    output_format: str | None = None
+    stability: float | None = Field(default=None, ge=0.0, le=1.0)
+    similarity_boost: float | None = Field(default=None, ge=0.0, le=1.0)
+    speed: float | None = Field(default=None, ge=0.5, le=2.0)
