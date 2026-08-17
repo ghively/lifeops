@@ -605,3 +605,40 @@ class TestAuditRepository:
         """Append-only is enforced by the absent method, not a convention."""
         assert not hasattr(NornicAuditRepository, "update")
         assert not hasattr(NornicAuditRepository, "delete")
+
+
+class TestApprovalBoundaryRoundTrip:
+    """Section 58's boundary must survive NornicDB.
+
+    The scope lists were added to the domain after this repository was
+    written, and nothing in the protocol-conformance harness would notice:
+    that suite compares signatures, not field-level round-trip fidelity. Only
+    a persistence test catches a property that is never written.
+    """
+
+    async def test_the_scope_survives_a_round_trip(self, durable, test_label) -> None:
+        from lifeops.domain.actions import ActionDraft, ActionType, prepare
+        from lifeops.domain.approvals import request as request_approval
+
+        action = prepare(
+            ActionDraft(type=ActionType.BOOK_APPOINTMENT, payload={"amount": "89"}),
+            now="2026-01-01T00:00:00Z",
+            client_id="hermes-personal",
+        )
+        approval = request_approval(
+            action, now="2026-01-01T00:00:00Z", requested_by="hermes-personal"
+        )
+        approval.id = f"approval_{test_label}"
+        await durable.approvals.create(approval)
+        try:
+            restored = await durable.approvals.get(approval.id)
+            assert restored is not None
+            assert restored.authorises_action == "Book appointment"
+            assert restored.does_not_authorise == [
+                "Authorize repair work",
+                "Authorize additional charges",
+            ]
+        finally:
+            await durable.client.write(
+                "MATCH (ap:Approval {id: $id}) DETACH DELETE ap", id=approval.id
+            )
