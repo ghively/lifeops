@@ -10,6 +10,7 @@ plus `make console-test`.
 | `tests/integration` | no | The HTTP API contract the Console depends on |
 | `tests/persistence` | yes | The Cypher is right and the graph shape is what later phases will traverse |
 | `tests/e2e` | yes | The Phase 0 exit criteria, over real MCP |
+| `tests/spec` | no | BUILD_SPEC enumerations are implemented in full, every repository Protocol has a matching fake, no test fakes LifeOpsCore, every NornicDB repository has a persistence test |
 | `console/src/**/__tests__` | no | Console rendering and data flow |
 
 ---
