@@ -21,6 +21,7 @@ export type LifeOpsEventType =
   | 'preference_changed'
   | 'person_changed'
   | 'config_changed'
+  | 'memory_changed'
 
 const MAX_BACKOFF_MS = 30_000
 /** Consecutive connection failures before giving up on the socket. */
@@ -55,6 +56,10 @@ function invalidateFor(queryClient: QueryClient, type: string): void {
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'providers'] })
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system-status'] })
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system-config'] })
+      break
+    case 'memory_changed':
+      // Prefix match: covers the list, search results, and history chains.
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'memory'] })
       break
     default:
       // Unknown event — cheaper to refresh everything than to miss one.

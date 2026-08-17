@@ -3,11 +3,11 @@
 NornicDB speaks the Neo4j Bolt protocol, so the official ``neo4j`` driver is
 the transport. This module is the only place in LifeOps that knows that.
 
-Schema note: LifeOps writes plain labelled nodes and relationships. It does not
-use Nornic's memory-decay, managed-embedding, or auto-relationship features in
-Phase 0 — those become relevant in Phase 2 (Memory), and reaching for them
-before there is memory to decay would be building for a problem that does not
-exist yet (BUILD_SPEC section 105).
+Schema note: LifeOps writes plain labelled nodes and relationships. The one
+Nornic-specific capability it relies on is the Lucene-backed fulltext index
+used for BM25 memory recall (Phase 2, BUILD_SPEC section 47). Managed
+embeddings and decay machinery stay off until a phase has a concrete need for
+them (section 105).
 """
 
 from __future__ import annotations
@@ -32,10 +32,19 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "FOR (p:Preference) REQUIRE p.id IS UNIQUE",
     "CREATE CONSTRAINT lifeops_task_id IF NOT EXISTS "
     "FOR (t:Task) REQUIRE t.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_memory_id IF NOT EXISTS "
+    "FOR (m:Memory) REQUIRE m.id IS UNIQUE",
     "CREATE INDEX lifeops_preference_subject_key IF NOT EXISTS "
     "FOR (p:Preference) ON (p.subject_id, p.key)",
     "CREATE INDEX lifeops_task_state IF NOT EXISTS FOR (t:Task) ON (t.state)",
     "CREATE INDEX lifeops_task_created IF NOT EXISTS FOR (t:Task) ON (t.created_at)",
+    "CREATE INDEX lifeops_memory_subject IF NOT EXISTS "
+    "FOR (m:Memory) ON (m.subject_id)",
+    # BM25 recall for the memory layer (BUILD_SPEC section 47). Embeddings stay
+    # off; on a backend without fulltext support this is skipped with a warning
+    # and the repository falls back to substring matching.
+    "CREATE FULLTEXT INDEX lifeops_memory_content IF NOT EXISTS "
+    "FOR (m:Memory) ON EACH [m.content]",
 )
 
 

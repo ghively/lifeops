@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Sequence
 
+from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
 from lifeops.domain.tasks import Task, TaskState
@@ -178,7 +179,118 @@ class FakeTaskRepository:
         return copy.deepcopy(task)
 
 
+class FakeMemoryRepository:
+    def __init__(self) -> None:
+        self._memories: dict[str, MemoryRecord] = {}
+
+    async def get(self, memory_id: str) -> MemoryRecord | None:
+        found = self._memories.get(memory_id)
+        return copy.deepcopy(found) if found else None
+
+    async def list_current(
+        self,
+        subject_id: str | None = None,
+        *,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        matches = [
+            m
+            for m in self._memories.values()
+            if m.valid_to is None
+            and (subject_id is None or m.subject_id == subject_id)
+            and (memory_types is None or m.type in memory_types)
+        ]
+        matches.sort(key=lambda m: (m.importance, m.observed_at, m.id), reverse=True)
+        return [copy.deepcopy(m) for m in matches[:limit]]
+
+    async def search(
+        self,
+        query: str,
+        *,
+        subject_id: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 10,
+    ) -> list[MemoryRecord]:
+        # All-terms substring match: the fake mirrors the repository's
+        # fallback ranking, not the fulltext scoring (which is persistence's
+        # job to prove).
+        terms = query.strip().lower().split()
+        if not terms:
+            return []
+        matches = [
+            m
+            for m in self._memories.values()
+            if m.valid_to is None
+            and (subject_id is None or m.subject_id == subject_id)
+            and (memory_types is None or m.type in memory_types)
+            and all(term in m.content.lower() for term in terms)
+        ]
+        matches.sort(key=lambda m: (m.importance, m.observed_at, m.id), reverse=True)
+        return [copy.deepcopy(m) for m in matches[:limit]]
+
+    async def list_history(self, memory_id: str) -> list[MemoryRecord]:
+        if memory_id not in self._memories:
+            return []
+        chain: dict[str, MemoryRecord] = {}
+        # Walk up the chain via supersedes pointers, then down by scanning for
+        # records that supersede an id already in the chain.
+        current: MemoryRecord | None = self._memories[memory_id]
+        while current is not None and current.id not in chain:
+            chain[current.id] = current
+            current = (
+                self._memories.get(current.supersedes) if current.supersedes else None
+            )
+        changed = True
+        while changed:
+            changed = False
+            for m in self._memories.values():
+                if m.id not in chain and m.supersedes in chain:
+                    chain[m.id] = m
+                    changed = True
+        ordered = sorted(chain.values(), key=lambda m: (m.valid_from, m.id), reverse=True)
+        return [copy.deepcopy(m) for m in ordered]
+
+    async def get_current_duplicate(
+        self, subject_id: str, memory_type: MemoryType, content: str
+    ) -> MemoryRecord | None:
+        matches = [
+            m
+            for m in self._memories.values()
+            if m.subject_id == subject_id
+            and m.type == memory_type
+            and m.content == content
+            and m.valid_to is None
+        ]
+        if not matches:
+            return None
+        matches.sort(key=lambda m: m.valid_from, reverse=True)
+        return copy.deepcopy(matches[0])
+
+    async def save_superseding(
+        self, memory: MemoryRecord, *, supersedes: MemoryRecord | None
+    ) -> MemoryRecord:
+        if supersedes is not None:
+            stored = self._memories.get(supersedes.id)
+            if stored is not None:
+                stored.valid_to = memory.valid_from
+        self._memories[memory.id] = copy.deepcopy(memory)
+        return copy.deepcopy(memory)
+
+    async def invalidate(
+        self, memory_id: str, *, at: str, reason: str | None = None
+    ) -> MemoryRecord | None:
+        stored = self._memories.get(memory_id)
+        if stored is None:
+            return None
+        if stored.valid_to is None:
+            stored.valid_to = at
+            stored.invalidation_reason = reason
+        return copy.deepcopy(stored)
+
+
 __all__ = [
+    "FakeMemoryRepository",
     "FakePersonRepository",
     "FakePreferenceRepository",
     "FakeTaskRepository",

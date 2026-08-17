@@ -20,16 +20,22 @@ from fastapi.responses import JSONResponse
 from lifeops.api.events import router as events_router
 from lifeops.api.schemas import (
     ConsoleLogBatch,
+    CorrectMemoryRequest,
     CreatePersonRequest,
     CreateTaskRequest,
     DiscoverResponse,
     ErrorResponse,
+    InvalidateMemoryRequest,
     LoginRequest,
     LoginResponse,
+    MemoryHistoryResponse,
+    MemoryListResponse,
+    MemoryResponse,
     MeResponse,
     PersonResponse,
     PreferenceListResponse,
     PreferenceResponse,
+    RememberRequest,
     SavePreferenceRequest,
     SetPasswordRequest,
     SetPasswordResponse,
@@ -43,6 +49,7 @@ from lifeops.api.schemas import (
 from lifeops.auth import InvalidCredentialsError
 from lifeops.config.provider_registry import all_providers, get_provider
 from lifeops.container import Container
+from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
 from lifeops.domain.tasks import Task, TaskDraft, TaskState, TaskUpdate, transition_table
@@ -96,6 +103,10 @@ def _preference_out(pref: Preference) -> PreferenceResponse:
 
 def _task_out(task: Task) -> TaskResponse:
     return TaskResponse(**task.model_dump(), needs_attention=task.needs_attention)
+
+
+def _memory_out(record: MemoryRecord) -> MemoryResponse:
+    return MemoryResponse(**record.model_dump())
 
 
 def _publish_config_changed(container: Container, **fields: Any) -> None:
@@ -337,6 +348,129 @@ async def invalidate_preference(
         client, preference_id=preference_id
     )
     return _preference_out(pref)
+
+
+# --- memory (BUILD_SPEC sections 42-47) ---------------------------------------
+#
+# Memory may observe, never rewrite transactional reality (section 44). Every
+# rule enforcing that lives in LifeOpsCore and the domain; these routes only
+# translate shapes and carry the capability denial, 404, and 422 contracts.
+# Mutations publish ``memory_changed`` from LifeOpsCore itself, as task
+# mutations do.
+
+
+@router.get("/memory", response_model=MemoryListResponse, tags=["memory"])
+async def list_memories(
+    container: ContainerDep,
+    client: ClientDep,
+    subject_id: Annotated[str | None, Query()] = None,
+    type: Annotated[list[MemoryType] | None, Query()] = None,
+    include_invalid: Annotated[bool, Query()] = False,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> MemoryListResponse:
+    """Current memories, most relevant first.
+
+    A blank-query recall is the list operation: LifeOpsCore exposes no
+    separate listing. ``include_invalid`` is refused loudly rather than
+    silently ignored — closed records are reachable per memory through the
+    history route, and a list that claims to include them while excluding
+    them would be a lie.
+    """
+    if include_invalid:
+        raise ValidationError(
+            "listing invalidated memories is not supported yet; "
+            "open a memory's history instead",
+            reason="include_invalid_unsupported",
+        )
+    records = await container.core.recall(
+        client, query="", subject_id=subject_id, memory_types=type, limit=limit
+    )
+    return MemoryListResponse(
+        memories=[_memory_out(r) for r in records], total=len(records)
+    )
+
+
+@router.post("/memory", response_model=MemoryResponse, status_code=201, tags=["memory"])
+async def remember(
+    payload: RememberRequest, container: ContainerDep, client: ClientDep
+) -> MemoryResponse:
+    """Store a memory. This records an observation; it executes nothing."""
+    record = await container.core.remember(
+        client, MemoryDraft(**payload.model_dump(exclude_none=True))
+    )
+    return _memory_out(record)
+
+
+@router.get("/memory/search", response_model=MemoryListResponse, tags=["memory"])
+async def search_memories(
+    container: ContainerDep,
+    client: ClientDep,
+    q: Annotated[str, Query(min_length=1, max_length=500)],
+    subject_id: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> MemoryListResponse:
+    records = await container.core.recall(
+        client, query=q, subject_id=subject_id, limit=limit
+    )
+    return MemoryListResponse(
+        memories=[_memory_out(r) for r in records], total=len(records)
+    )
+
+
+@router.get("/memory/{memory_id}", response_model=MemoryResponse, tags=["memory"])
+async def get_memory(
+    memory_id: str, container: ContainerDep, client: ClientDep
+) -> MemoryResponse:
+    return _memory_out(await container.core.get_memory(client, memory_id=memory_id))
+
+
+@router.get(
+    "/memory/{memory_id}/history",
+    response_model=MemoryHistoryResponse,
+    tags=["memory"],
+)
+async def memory_history(
+    memory_id: str, container: ContainerDep, client: ClientDep
+) -> MemoryHistoryResponse:
+    """The supersession chain: every version of this memory, current and closed."""
+    history = await container.core.memory_history(client, memory_id=memory_id)
+    return MemoryHistoryResponse(
+        memory_id=memory_id,
+        history=[_memory_out(r) for r in history],
+        total=len(history),
+    )
+
+
+@router.post(
+    "/memory/{memory_id}/invalidate", response_model=MemoryResponse, tags=["memory"]
+)
+async def invalidate_memory(
+    memory_id: str,
+    payload: InvalidateMemoryRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> MemoryResponse:
+    """Close a memory's validity window. The record is never deleted."""
+    record = await container.core.invalidate_memory(
+        client, memory_id=memory_id, reason=payload.reason
+    )
+    return _memory_out(record)
+
+
+@router.post(
+    "/memory/{memory_id}/correct", response_model=MemoryResponse, tags=["memory"]
+)
+async def correct_memory(
+    memory_id: str,
+    payload: CorrectMemoryRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> MemoryResponse:
+    """Correct a memory: the old record closes and the returned one supersedes it."""
+    record = await container.core.correct_memory(
+        client, memory_id=memory_id, new_content=payload.content
+    )
+    return _memory_out(record)
 
 
 # --- tasks ---

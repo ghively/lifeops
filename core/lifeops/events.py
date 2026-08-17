@@ -24,6 +24,7 @@ TASK_CHANGED = "task_changed"
 PREFERENCE_CHANGED = "preference_changed"
 PERSON_CHANGED = "person_changed"
 CONFIG_CHANGED = "config_changed"
+MEMORY_CHANGED = "memory_changed"
 
 #: Per-subscriber queue bound. A Console tab this far behind is reconnected or
 #: refetching anyway; dropping beats unbounded memory growth.

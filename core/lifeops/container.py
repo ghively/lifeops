@@ -17,6 +17,7 @@ from lifeops.core import LifeOpsCore
 from lifeops.events import EventBus
 from lifeops.observability.activity import attach_activity_buffer, detach_activity_buffer
 from lifeops.repositories.nornic.client import NornicClient
+from lifeops.repositories.nornic.memory import NornicMemoryRepository
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
 from lifeops.repositories.nornic.tasks import NornicTaskRepository
@@ -52,6 +53,7 @@ class Container:
         self.people = NornicPersonRepository(self.nornic)
         self.preferences = NornicPreferenceRepository(self.nornic)
         self.tasks = NornicTaskRepository(self.nornic)
+        self.memory = NornicMemoryRepository(self.nornic)
 
         # Safe mode may be set at boot or flipped by the user from the
         # Console; the config document is authoritative once it exists.
@@ -61,6 +63,7 @@ class Container:
             people=self.people,
             preferences=self.preferences,
             tasks=self.tasks,
+            memory=self.memory,
             clock=self.clock,
             safe_mode=safe_mode,
             events=self.events,

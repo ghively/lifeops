@@ -290,6 +290,44 @@ export interface SearchResults {
   tasks: Task[]
 }
 
+// --- memory types (BUILD_SPEC sections 42-47) ---------------------------------
+
+export type MemoryType =
+  | 'episodic'
+  | 'semantic'
+  | 'preference_candidate'
+  | 'summary'
+  | 'association'
+
+/**
+ * One durable memory with provenance and a validity window. A record is never
+ * edited in place: correction supersedes it and invalidation closes
+ * `valid_to`, so `supersedes`/`valid_to` are the history trail.
+ */
+export interface MemoryRecord {
+  id: string
+  subject_id: string
+  type: MemoryType
+  content: string
+  source_type: string
+  source_id: string | null
+  observed_at: string
+  created_at: string
+  confidence: number
+  importance: number
+  valid_from: string
+  valid_to: string | null
+  supersedes: string | null
+  entity_ids: string[]
+  created_by_client: string | null
+  invalidation_reason: string | null
+}
+
+export interface MemoryList {
+  memories: MemoryRecord[]
+  total: number
+}
+
 // --- API surface -------------------------------------------------------------
 
 export const authApi = {
@@ -415,6 +453,61 @@ export const searchApi = {
     lifeops.get<SearchResults>('/search', { params: { q } }).then((r) => r.data),
 }
 
+export const memoryApi = {
+  /**
+   * Current memories. `include_invalid: true` is refused loudly by the server
+   * (422, reason `include_invalid_unsupported`) until LifeOps Core grows a
+   * listing for closed records — closed versions are read per memory through
+   * `history()` instead.
+   */
+  list: (params?: {
+    subject_id?: string
+    type?: MemoryType[]
+    include_invalid?: boolean
+    limit?: number
+  }) => lifeops.get<MemoryList>('/memory', { params }).then((r) => r.data),
+
+  get: (id: string) =>
+    lifeops.get<MemoryRecord>(`/memory/${id}`).then((r) => r.data),
+
+  search: (q: string, params?: { subject_id?: string; limit?: number }) =>
+    lifeops
+      .get<MemoryList>('/memory/search', { params: { q, ...params } })
+      .then((r) => r.data),
+
+  /** The supersession chain: every version of this memory, current and closed. */
+  history: (id: string) =>
+    lifeops
+      .get<{ memory_id: string; history: MemoryRecord[]; total: number }>(
+        `/memory/${id}/history`,
+      )
+      .then((r) => r.data),
+
+  /** Store an observation. This records intent; it executes nothing (§44). */
+  remember: (payload: {
+    content: string
+    type: MemoryType
+    subject_id?: string
+    source_type?: string
+    source_id?: string
+    confidence?: number
+    importance?: number
+    entity_ids?: string[]
+  }) => lifeops.post<MemoryRecord>('/memory', payload).then((r) => r.data),
+
+  /** Close the validity window. The record is never deleted. */
+  invalidate: (id: string, reason: string) =>
+    lifeops
+      .post<MemoryRecord>(`/memory/${id}/invalidate`, { reason })
+      .then((r) => r.data),
+
+  /** Correction is supersession: the old record closes, a new one opens. */
+  correct: (id: string, content: string) =>
+    lifeops
+      .post<MemoryRecord>(`/memory/${id}/correct`, { content })
+      .then((r) => r.data),
+}
+
 export const systemApi = {
   status: () => lifeops.get<SystemStatus>('/system/status').then((r) => r.data),
   health: () =>
@@ -463,6 +556,27 @@ export const TASK_STATE_LABELS: Record<TaskState, string> = {
   BLOCKED: 'Blocked',
   FAILED: 'Failed',
   CANCELLED: 'Cancelled',
+}
+
+export const MEMORY_TYPE_LABELS: Record<MemoryType, string> = {
+  episodic: 'Episodic',
+  semantic: 'Fact',
+  preference_candidate: 'Preference candidate',
+  summary: 'Summary',
+  association: 'Association',
+}
+
+export const MEMORY_SOURCE_LABELS: Record<string, string> = {
+  user_explicit: 'Stated by you',
+  user_inferred: 'Inferred from your words',
+  conversation: 'Conversation',
+  email: 'Email',
+  calendar: 'Calendar',
+  document: 'Document',
+  website: 'Website',
+  phone_call: 'Phone call',
+  system: 'System',
+  agent: 'Assistant inference',
 }
 
 // --- display helpers ---------------------------------------------------------

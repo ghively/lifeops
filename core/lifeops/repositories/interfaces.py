@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
+from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
 from lifeops.domain.tasks import Task, TaskState
@@ -91,6 +92,64 @@ class TaskRepository(Protocol):
     async def update(self, task: Task) -> Task:
         """Persist a task that already exists. Raises NotFoundError if absent."""
         ...
+
+
+@runtime_checkable
+class MemoryRepository(Protocol):
+    """Persistence for memory records (BUILD_SPEC sections 42–47).
+
+    Deliberately disjoint from the task/preference repositories: memory
+    observes the world and must never be a path back into transactional
+    state (section 44).
+    """
+
+    async def get(self, memory_id: str) -> MemoryRecord | None: ...
+
+    async def list_current(
+        self,
+        subject_id: str | None = None,
+        *,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """Current memories (validity window open), most important first."""
+        ...
+
+    async def search(
+        self,
+        query: str,
+        *,
+        subject_id: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 10,
+    ) -> list[MemoryRecord]:
+        """Ranked text search over current memories (section 47 recall)."""
+        ...
+
+    async def list_history(self, memory_id: str) -> list[MemoryRecord]:
+        """Every version in the record's SUPERSEDES chain, newest first."""
+        ...
+
+    async def get_current_duplicate(
+        self, subject_id: str, memory_type: MemoryType, content: str
+    ) -> MemoryRecord | None:
+        """An identical current record, so re-stating a memory is a no-op."""
+        ...
+
+    async def save_superseding(
+        self, memory: MemoryRecord, *, supersedes: MemoryRecord | None
+    ) -> MemoryRecord:
+        """Persist a new memory, closing the record it replaces.
+
+        The close-and-open pair must be atomic, exactly as for preferences:
+        a crash between the two writes would otherwise leave either two
+        current versions of one memory or none at all.
+        """
+        ...
+
+    async def invalidate(
+        self, memory_id: str, *, at: str, reason: str | None = None
+    ) -> MemoryRecord | None: ...
 
 
 @runtime_checkable

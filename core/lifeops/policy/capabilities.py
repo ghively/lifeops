@@ -33,11 +33,14 @@ class Capability(StrEnum):
     READ_TASKS = "read_tasks"
     CREATE_TASK = "create_task"
     UPDATE_TASK = "update_task"
+    READ_MEMORY = "read_memory"
+    WRITE_MEMORY = "write_memory"
 
     # Declared now, granted in later phases. Present so that a client whose
     # config claims them fails validation loudly instead of being ignored.
+    # SEARCH_MEMORY stays declared for config stability; memory recall is
+    # guarded by READ_MEMORY.
     SEARCH_MEMORY = "search_memory"
-    WRITE_MEMORY = "write_memory"
     SEND_EXTERNAL_MESSAGE = "send_external_message"
     BOOK_APPOINTMENT = "book_appointment"
     SHOPPING_CHECKOUT = "shopping_checkout"
@@ -101,6 +104,8 @@ _READ_ONLY: frozenset[Capability] = frozenset(
 )
 
 #: Hermes is the primary assistant and holds the broadest Phase 0 grant.
+#: Memory read+write arrives in Phase 2 (section 91): remembering and
+#: recalling the user's world is the primary assistant's core job.
 HERMES = ClientIdentity(
     client_id="hermes-personal",
     role=ClientRole.PRIMARY_ASSISTANT,
@@ -111,12 +116,15 @@ HERMES = ClientIdentity(
         Capability.WRITE_PREFERENCE,
         Capability.CREATE_TASK,
         Capability.UPDATE_TASK,
+        Capability.READ_MEMORY,
+        Capability.WRITE_MEMORY,
     },
 )
 
 #: A general interactive MCP client (ChatGPT, another Claude surface).
 #: Reads and creates tasks; may state preferences on the user's behalf, since
-#: the user is talking to it directly.
+#: the user is talking to it directly. It may read memory but not write it:
+#: durable recollection of the user's life is the primary assistant's job.
 INTERACTIVE_CLIENT = ClientIdentity(
     client_id="interactive-mcp",
     role=ClientRole.INTERACTIVE_ASSISTANT,
@@ -127,22 +135,24 @@ INTERACTIVE_CLIENT = ClientIdentity(
         Capability.WRITE_PREFERENCE,
         Capability.CREATE_TASK,
         Capability.UPDATE_TASK,
+        Capability.READ_MEMORY,
     },
 )
 
-#: A coding agent. Reads the world and files tasks, but does not get to
-#: rewrite the user's stated preferences — its job is the repository, not the
-#: user's life (section 35).
+#: A coding agent. Reads the world, files tasks, and may recall memory (useful
+#: context for code work) — but does not get to write the user's recollections
+#: or rewrite stated preferences: its job is the repository (section 35).
 CODING_CLIENT = ClientIdentity(
     client_id="claude-code",
     role=ClientRole.ENGINEERING_ASSISTANT,
     display_name="Claude Code",
     description="An engineering assistant operating on the repository.",
-    capabilities=_READ_ONLY | {Capability.CREATE_TASK},
+    capabilities=_READ_ONLY | {Capability.CREATE_TASK, Capability.READ_MEMORY},
 )
 
 #: The Console acts as the user directly: it is the surface where a human
-#: corrects state and administers configuration.
+#: corrects state and administers configuration. Memory read+write covers the
+#: Memory screen's correct/invalidate flows (section 17, section 91).
 CONSOLE = ClientIdentity(
     client_id="lifeops-console",
     role=ClientRole.CONSOLE,
@@ -153,6 +163,8 @@ CONSOLE = ClientIdentity(
         Capability.WRITE_PREFERENCE,
         Capability.CREATE_TASK,
         Capability.UPDATE_TASK,
+        Capability.READ_MEMORY,
+        Capability.WRITE_MEMORY,
         Capability.MANAGE_CONFIGURATION,
         Capability.APPROVE_ACTION,
     },
