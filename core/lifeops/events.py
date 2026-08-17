@@ -63,3 +63,6 @@ class EventBus:
 WAITING_CHANGED = "waiting_changed"
 ACTION_CHANGED = "action_changed"
 APPROVAL_CHANGED = "approval_changed"
+
+# Phase 9 (browser + shopping, BUILD_SPEC section 98).
+SHOPPING_CHANGED = "shopping_changed"

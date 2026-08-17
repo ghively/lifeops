@@ -12,6 +12,8 @@ from lifeops.domain.approvals import ApprovalStatus
 from lifeops.domain.calendar import DEFAULT_HOLD_MINUTES, AppointmentStatus
 from lifeops.domain.memory import MemorySource, MemoryType
 from lifeops.domain.preferences import PreferenceSource
+from lifeops.domain.service_request import ServiceRequestStatus
+from lifeops.domain.shopping import ShoppingListStatus
 from lifeops.domain.tasks import TaskPriority, TaskState, VerificationState
 from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingStatus
 
@@ -823,3 +825,162 @@ class CreateDocumentRequest(BaseModel):
     source_ref: str = Field(default="", max_length=500)
     mime_type: str = Field(default="", max_length=200)
     summary: str = Field(default="", max_length=4000)
+
+
+# --- service requests (BUILD_SPEC sections 36, 67, 68, 97, 101) ---------------
+
+
+class ServiceRequestResponse(BaseModel):
+    """One ServiceRequest (section 67's provider workflow, section 101's
+    electrician scenario)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    subject: str
+    status: ServiceRequestStatus
+    task_id: str | None
+    asset_entity_id: str | None
+    provider_entity_id: str | None
+    availability: list[str]
+    diagnostic_fee: str | None
+    waiting_item_id: str | None
+    contact_action_id: str | None
+    booking_action_id: str | None
+    appointment_id: str | None
+    notes: str
+    created_at: str
+    updated_at: str
+    created_by_client: str | None
+
+
+class ServiceRequestListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    service_requests: list[ServiceRequestResponse]
+    total: int
+
+
+class CreateServiceRequestRequest(BaseModel):
+    """Section 101 step 1: identify the relevant asset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str = Field(min_length=1, max_length=300)
+    task_id: str | None = None
+    asset_entity_id: str | None = None
+    provider_entity_id: str | None = None
+    notes: str = Field(default="", max_length=2000)
+
+
+class RequestProviderContactRequest(BaseModel):
+    """Section 101 steps 5-7: contact the provider by phone, or request a
+    quote, to collect availability and a fee. ``authorize_charge`` and
+    ``authorize_repairs`` are not fields here — BUILD_SPEC section 97's hard
+    rule and section 101 step 9 are enforced by ``build_call_objective``
+    never accepting them, not by validating a value a caller could submit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_entity_id: str = Field(min_length=1, max_length=200)
+    objective: str = Field(min_length=1, max_length=200)
+    collect: list[str] = Field(default_factory=list, max_length=10)
+
+
+class RequestServiceBookingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    appointment_id: str = Field(min_length=1, max_length=200)
+
+
+class ConfirmServiceBookingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    appointment_id: str = Field(min_length=1, max_length=200)
+
+
+# --- shopping (BUILD_SPEC sections 36, 56, 98) --------------------------------
+
+
+class ShoppingItemSchema(BaseModel):
+    """Mirrors ``lifeops.domain.shopping.ShoppingItem`` one-for-one, the same
+    discipline the rest of this module follows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    quantity: str = Field(default="1", max_length=50)
+    notes: str = Field(default="", max_length=300)
+    substitution_allowed: bool = True
+    substituted_with: str | None = None
+    substitution_reason: str | None = None
+    estimated_price: str | None = None
+
+
+class ShoppingListResponse(BaseModel):
+    """One ShoppingList (section 98's cart/checkout lifecycle)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    store: str
+    task_id: str | None
+    status: ShoppingListStatus
+    items: list[ShoppingItemSchema]
+    cart_reference: str | None
+    order_reference: str | None
+    cart_action_id: str | None
+    checkout_action_id: str | None
+    total_estimate: str | None
+    created_at: str
+    updated_at: str
+    created_by_client: str | None
+
+
+class ShoppingListListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shopping_lists: list[ShoppingListResponse]
+    total: int
+
+
+class CreateShoppingListRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+    store: str = Field(default="", max_length=200)
+    task_id: str | None = None
+    items: list[ShoppingItemSchema] = Field(default_factory=list)
+
+
+class AddShoppingItemsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ShoppingItemSchema] = Field(min_length=1, max_length=60)
+
+
+class SubstitutionRequest(BaseModel):
+    """Section 98's substitutions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_name: str = Field(min_length=1, max_length=200)
+    substituted_with: str = Field(min_length=1, max_length=200)
+    reason: str = Field(default="", max_length=300)
+
+
+class ProductResultResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    price: str | None = None
+    availability: str | None = None
+    url: str | None = None
+
+
+class ShoppingSearchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[ProductResultResponse]
+    total: int
