@@ -90,16 +90,85 @@ REQUIRES_IDEMPOTENCY: frozenset[ActionType] = frozenset(
     }
 )
 
-#: Section 57: these carry enough consequence that a human approves the exact
-#: payload before it is committed.
+class RiskClass(StrEnum):
+    """BUILD_SPEC section 56's risk ladder.
+
+    The whole approval model hangs off this. Deriving "does a human decide?"
+    from a declared risk class — rather than from a hand-maintained set of
+    action types — means a new action cannot quietly land on the permissive
+    side of the line: it has no risk class until someone assigns one, and
+    ``risk_for_action`` refuses to guess.
+    """
+
+    R0_READ_ONLY = "R0"
+    R1_REVERSIBLE = "R1"
+    R2_EXTERNAL_COMMUNICATION = "R2"
+    R3_EXTERNAL_COMMITMENT = "R3"
+    R4_FINANCIAL_LEGAL_MEDICAL = "R4"
+
+
+#: Section 56's table, action by action.
+RISK_FOR_ACTION: dict[ActionType, RiskClass] = {
+    # R2 — external communication. Says something on the user's behalf, but
+    # commits them to nothing.
+    ActionType.SEND_EMAIL: RiskClass.R2_EXTERNAL_COMMUNICATION,
+    ActionType.REQUEST_QUOTE: RiskClass.R2_EXTERNAL_COMMUNICATION,
+    ActionType.PLACE_PHONE_CALL: RiskClass.R2_EXTERNAL_COMMUNICATION,
+    # R1 — a cart is reversible and commits nothing; section 56 puts only
+    # *checkout* at R3.
+    ActionType.BUILD_GROCERY_CART: RiskClass.R1_REVERSIBLE,
+    # R3 — external commitment. Someone else now expects something.
+    ActionType.BOOK_APPOINTMENT: RiskClass.R3_EXTERNAL_COMMITMENT,
+    ActionType.CANCEL_APPOINTMENT: RiskClass.R3_EXTERNAL_COMMITMENT,
+    ActionType.SUBMIT_GROCERY_ORDER: RiskClass.R3_EXTERNAL_COMMITMENT,
+    # R4 — money.
+    ActionType.PREPARE_PAYMENT: RiskClass.R4_FINANCIAL_LEGAL_MEDICAL,
+    ActionType.COMMIT_PAYMENT: RiskClass.R4_FINANCIAL_LEGAL_MEDICAL,
+}
+
+#: Section 56 marks R2 "policy-controlled", and the table's shape decides the
+#: default: R3 reads "Approval initially", R4 "Approval always", R2 neither.
+#: Section 101 settles it — the Electrician scenario has Hermes contact
+#: providers, collect availability, and collect a diagnostic fee on its own,
+#: and only requests approval at the booking (step 11). Gating every quote
+#: request behind a human would make that scenario unusable.
+#:
+#: It stays a named constant rather than an inlined False because section 56
+#: calls it policy-controlled: a user who wants to see every outbound message
+#: flips this, and R3/R4 are unaffected either way.
+REQUIRE_APPROVAL_FOR_EXTERNAL_COMMUNICATION = False
+
+#: R3 and R4 are never policy-controlled. Section 56: "Approval initially" and
+#: "Approval always" respectively.
+ALWAYS_APPROVED: frozenset[RiskClass] = frozenset(
+    {RiskClass.R3_EXTERNAL_COMMITMENT, RiskClass.R4_FINANCIAL_LEGAL_MEDICAL}
+)
+
+
+def risk_for_action(action_type: ActionType) -> RiskClass:
+    """The risk class of an action. Raises rather than defaulting.
+
+    An unclassified action is a gap in the safety model, and defaulting it to
+    anything — least of all the permissive end — would hide that.
+    """
+    try:
+        return RISK_FOR_ACTION[action_type]
+    except KeyError:
+        raise ValidationError(
+            f"no risk class declared for action type {action_type!r}",
+            field="type",
+        ) from None
+
+
+#: Kept as a derived view so existing callers and tests keep working.
 REQUIRES_APPROVAL: frozenset[ActionType] = frozenset(
-    {
-        ActionType.BOOK_APPOINTMENT,
-        ActionType.CANCEL_APPOINTMENT,
-        ActionType.SUBMIT_GROCERY_ORDER,
-        ActionType.PREPARE_PAYMENT,
-        ActionType.COMMIT_PAYMENT,
-    }
+    action_type
+    for action_type, risk in RISK_FOR_ACTION.items()
+    if risk in ALWAYS_APPROVED
+    or (
+        risk is RiskClass.R2_EXTERNAL_COMMUNICATION
+        and REQUIRE_APPROVAL_FOR_EXTERNAL_COMMUNICATION
+    )
 )
 
 
@@ -214,8 +283,22 @@ def make_idempotency_key(action_type: ActionType, payload: dict[str, Any]) -> st
     return f"{action_type}:{payload_hash(payload)}"
 
 
-def requires_approval(action_type: ActionType) -> bool:
-    return action_type in REQUIRES_APPROVAL
+def requires_approval(
+    action_type: ActionType,
+    *,
+    approve_external_communication: bool = REQUIRE_APPROVAL_FOR_EXTERNAL_COMMUNICATION,
+) -> bool:
+    """Whether a human decides this one (section 56).
+
+    R3 and R4 always. R2 by policy. R0 and R1 never — section 56 marks a
+    calendar hold automatic, and a hold is not a booking (section 63).
+    """
+    risk = risk_for_action(action_type)
+    if risk in ALWAYS_APPROVED:
+        return True
+    if risk is RiskClass.R2_EXTERNAL_COMMUNICATION:
+        return approve_external_communication
+    return False
 
 
 def prepare(draft: ActionDraft, *, now: str, client_id: str) -> Action:

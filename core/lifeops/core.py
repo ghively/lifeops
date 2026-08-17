@@ -24,6 +24,7 @@ from lifeops.domain.actions import (
     ActionStatus,
     ActionType,
     record_attempt,
+    risk_for_action,
 )
 from lifeops.domain.actions import prepare as prepare_action
 from lifeops.domain.approvals import (
@@ -1833,7 +1834,7 @@ class LifeOpsCore:
             result=str(action.status),
             intent="prepare_action",
             tool=str(action.type),
-            risk=str(capability_for_action(str(draft.type))),
+            risk=str(risk_for_action(draft.type)),
             action=action.id,
             target=action.target_entity_id,
         )
@@ -1897,7 +1898,7 @@ class LifeOpsCore:
             tool=str(committed.type),
             action=committed.id,
             target=committed.target_entity_id,
-            risk=str(capability_for_action(str(committed.type))),
+            risk=str(risk_for_action(committed.type)),
         )
         return committed
 
