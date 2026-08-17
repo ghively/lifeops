@@ -84,3 +84,28 @@ def entity_type_of(entity_id: str) -> str:
     if not is_valid_id(entity_id):
         raise ValueError(f"not a canonical LifeOps ID: {entity_id!r}")
     return entity_id.split("_", 1)[0]
+
+
+# Phase 4 durable-work prefixes. Single-word by necessity: entity_type_of
+# splits on the first underscore, so "waiting_item_01j..." would resolve to
+# the prefix "waiting" anyway.
+PREFIX_WAITING = "waiting"
+PREFIX_ACTION = "action"
+PREFIX_APPROVAL = "approval"
+PREFIX_AUDIT = "audit"
+
+
+def new_waiting_id() -> str:
+    return new_ulid_id(PREFIX_WAITING)
+
+
+def new_action_id() -> str:
+    return new_ulid_id(PREFIX_ACTION)
+
+
+def new_approval_id() -> str:
+    return new_ulid_id(PREFIX_APPROVAL)
+
+
+def new_audit_id() -> str:
+    return new_ulid_id(PREFIX_AUDIT)

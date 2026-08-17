@@ -13,10 +13,14 @@ from __future__ import annotations
 import copy
 from collections.abc import Sequence
 
+from lifeops.domain.actions import Action, ActionStatus
+from lifeops.domain.approvals import Approval
+from lifeops.domain.audit import AuditRecord
 from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
 from lifeops.domain.tasks import Task, TaskState
+from lifeops.domain.waiting import ACTIVE_STATUSES, WaitingItem, WaitingStatus
 from lifeops.domain.world import (
     WORLD_RELATIONSHIP_TYPES,
     WorldEdge,
@@ -486,10 +490,179 @@ class FakeWorldRepository:
         return True
 
 
+class FakeWaitingRepository:
+    def __init__(self) -> None:
+        self._items: dict[str, WaitingItem] = {}
+
+    async def get(self, waiting_id: str) -> WaitingItem | None:
+        found = self._items.get(waiting_id)
+        return copy.deepcopy(found) if found else None
+
+    async def list_for_task(self, task_id: str) -> list[WaitingItem]:
+        matches = [i for i in self._items.values() if i.task_id == task_id]
+        matches.sort(key=lambda i: i.waiting_since, reverse=True)
+        return [copy.deepcopy(i) for i in matches]
+
+    async def list_by_status(
+        self, *, statuses: list[WaitingStatus] | None = None, limit: int = 100
+    ) -> list[WaitingItem]:
+        wanted = set(statuses) if statuses is not None else None
+        matches = [
+            i for i in self._items.values() if wanted is None or i.status in wanted
+        ]
+        matches.sort(key=lambda i: (i.waiting_since, i.id), reverse=True)
+        return [copy.deepcopy(i) for i in matches[:limit]]
+
+    async def list_due(self, *, now: str, limit: int = 50) -> list[WaitingItem]:
+        matches = [
+            i
+            for i in self._items.values()
+            if i.status in ACTIVE_STATUSES
+            and i.next_action_at is not None
+            and i.next_action_at <= now
+            and (i.lease_until is None or i.lease_until <= now)
+        ]
+        matches.sort(key=lambda i: (i.next_action_at or "", i.id))
+        return [copy.deepcopy(i) for i in matches[:limit]]
+
+    async def claim(
+        self, waiting_id: str, *, owner: str, until: str, now: str
+    ) -> WaitingItem | None:
+        stored = self._items.get(waiting_id)
+        if stored is None:
+            return None
+        # Mirrors the conditional Cypher write: only an unheld or expired
+        # lease may be taken, so two workers cannot both win the same item.
+        if stored.lease_until is not None and stored.lease_until > now:
+            return None
+        stored.lease_owner = owner
+        stored.lease_until = until
+        return copy.deepcopy(stored)
+
+    async def create(self, item: WaitingItem) -> WaitingItem:
+        self._items[item.id] = copy.deepcopy(item)
+        return copy.deepcopy(item)
+
+    async def update(self, item: WaitingItem) -> WaitingItem:
+        if item.id not in self._items:
+            raise NotFoundError(
+                f"waiting item {item.id} does not exist", waiting_id=item.id
+            )
+        self._items[item.id] = copy.deepcopy(item)
+        return copy.deepcopy(item)
+
+
+class FakeActionRepository:
+    def __init__(self) -> None:
+        self._actions: dict[str, Action] = {}
+
+    async def get(self, action_id: str) -> Action | None:
+        found = self._actions.get(action_id)
+        return copy.deepcopy(found) if found else None
+
+    async def get_by_idempotency_key(self, key: str) -> Action | None:
+        for action in self._actions.values():
+            if action.idempotency_key == key:
+                return copy.deepcopy(action)
+        return None
+
+    async def list_for_task(self, task_id: str) -> list[Action]:
+        matches = [a for a in self._actions.values() if a.task_id == task_id]
+        matches.sort(key=lambda a: (a.created_at, a.id), reverse=True)
+        return [copy.deepcopy(a) for a in matches]
+
+    async def list_by_status(
+        self, *, statuses: list[ActionStatus] | None = None, limit: int = 100
+    ) -> list[Action]:
+        wanted = set(statuses) if statuses is not None else None
+        matches = [
+            a for a in self._actions.values() if wanted is None or a.status in wanted
+        ]
+        matches.sort(key=lambda a: (a.created_at, a.id), reverse=True)
+        return [copy.deepcopy(a) for a in matches[:limit]]
+
+    async def create(self, action: Action) -> Action:
+        self._actions[action.id] = copy.deepcopy(action)
+        return copy.deepcopy(action)
+
+    async def update(self, action: Action) -> Action:
+        if action.id not in self._actions:
+            raise NotFoundError(
+                f"action {action.id} does not exist", action_id=action.id
+            )
+        self._actions[action.id] = copy.deepcopy(action)
+        return copy.deepcopy(action)
+
+
+class FakeApprovalRepository:
+    def __init__(self) -> None:
+        self._approvals: dict[str, Approval] = {}
+
+    async def get(self, approval_id: str) -> Approval | None:
+        found = self._approvals.get(approval_id)
+        return copy.deepcopy(found) if found else None
+
+    async def get_for_action(self, action_id: str) -> Approval | None:
+        matches = [a for a in self._approvals.values() if a.action_id == action_id]
+        if not matches:
+            return None
+        matches.sort(key=lambda a: a.created_at, reverse=True)
+        return copy.deepcopy(matches[0])
+
+    async def list_pending(self, *, limit: int = 50) -> list[Approval]:
+        from lifeops.domain.approvals import ApprovalStatus
+
+        matches = [
+            a for a in self._approvals.values() if a.status is ApprovalStatus.PENDING
+        ]
+        matches.sort(key=lambda a: (a.created_at, a.id))
+        return [copy.deepcopy(a) for a in matches[:limit]]
+
+    async def create(self, approval: Approval) -> Approval:
+        self._approvals[approval.id] = copy.deepcopy(approval)
+        return copy.deepcopy(approval)
+
+    async def update(self, approval: Approval) -> Approval:
+        if approval.id not in self._approvals:
+            raise NotFoundError(
+                f"approval {approval.id} does not exist", approval_id=approval.id
+            )
+        self._approvals[approval.id] = copy.deepcopy(approval)
+        return copy.deepcopy(approval)
+
+
+class FakeAuditRepository:
+    """Append-only, like the real one — no update method exists to call."""
+
+    def __init__(self) -> None:
+        self._records: list[AuditRecord] = []
+
+    async def append(self, record: AuditRecord) -> AuditRecord:
+        self._records.append(copy.deepcopy(record))
+        return copy.deepcopy(record)
+
+    async def list_recent(self, *, limit: int = 100) -> list[AuditRecord]:
+        ordered = sorted(
+            self._records, key=lambda r: (r.timestamp, r.id), reverse=True
+        )
+        return [copy.deepcopy(r) for r in ordered[:limit]]
+
+    async def list_for_target(
+        self, target: str, *, limit: int = 100
+    ) -> list[AuditRecord]:
+        matches = [r for r in self._records if r.target == target]
+        matches.sort(key=lambda r: (r.timestamp, r.id), reverse=True)
+        return [copy.deepcopy(r) for r in matches[:limit]]
+
+
 __all__ = [
+    "FakeActionRepository",
+    "FakeApprovalRepository",
+    "FakeAuditRepository",
     "FakeMemoryRepository",
     "FakePersonRepository",
     "FakePreferenceRepository",
     "FakeTaskRepository",
+    "FakeWaitingRepository",
     "FakeWorldRepository",
 ]

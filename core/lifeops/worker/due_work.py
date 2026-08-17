@@ -33,7 +33,7 @@ from collections.abc import Awaitable, Callable
 
 from lifeops.core import LifeOpsCore
 from lifeops.domain.waiting import WaitingItem
-from lifeops.policy.capabilities import HERMES, ClientIdentity
+from lifeops.policy.capabilities import DUE_WORK_WORKER, ClientIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ class DueWorkWorker:
         self,
         core: LifeOpsCore,
         *,
-        client: ClientIdentity = HERMES,
+        client: ClientIdentity = DUE_WORK_WORKER,
         owner: str | None = None,
         poll_interval_s: float = 60.0,
         batch_limit: int = 50,

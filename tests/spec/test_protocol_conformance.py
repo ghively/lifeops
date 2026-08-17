@@ -18,16 +18,24 @@ import pytest
 
 from lifeops.repositories import interfaces
 from lifeops.repositories.fakes import (
+    FakeActionRepository,
+    FakeApprovalRepository,
+    FakeAuditRepository,
     FakeMemoryRepository,
     FakePersonRepository,
     FakePreferenceRepository,
     FakeTaskRepository,
+    FakeWaitingRepository,
     FakeWorldRepository,
 )
+from lifeops.repositories.nornic.actions import NornicActionRepository
+from lifeops.repositories.nornic.approvals import NornicApprovalRepository
+from lifeops.repositories.nornic.audit import NornicAuditRepository
 from lifeops.repositories.nornic.memory import NornicMemoryRepository
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
 from lifeops.repositories.nornic.tasks import NornicTaskRepository
+from lifeops.repositories.nornic.waiting import NornicWaitingRepository
 from lifeops.repositories.nornic.world import NornicWorldRepository
 
 #: (Protocol, in-memory fake, NornicDB implementation).
@@ -41,6 +49,10 @@ PAIRS: list[tuple[type, type, type]] = [
     (interfaces.TaskRepository, FakeTaskRepository, NornicTaskRepository),
     (interfaces.MemoryRepository, FakeMemoryRepository, NornicMemoryRepository),
     (interfaces.WorldRepository, FakeWorldRepository, NornicWorldRepository),
+    (interfaces.WaitingRepository, FakeWaitingRepository, NornicWaitingRepository),
+    (interfaces.ActionRepository, FakeActionRepository, NornicActionRepository),
+    (interfaces.ApprovalRepository, FakeApprovalRepository, NornicApprovalRepository),
+    (interfaces.AuditRepository, FakeAuditRepository, NornicAuditRepository),
 ]
 
 #: HealthCheck is satisfied by NornicClient rather than a repository and has no
