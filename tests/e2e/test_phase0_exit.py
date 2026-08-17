@@ -130,8 +130,9 @@ async def clean_state() -> AsyncIterator[None]:
 class TestToolSurface:
     """BUILD_SPEC sections 49–51: the tool surface grows only by phase.
 
-    Phase 0 pinned exactly five tools; Phase 2 adds the three memory tools.
-    The assertion stays exact so a tool can never slip in unreviewed.
+    Phase 0 pinned exactly five tools; Phase 2 adds the three memory tools and
+    Phase 3 the four world reads. The assertion stays exact so a tool can never
+    slip in unreviewed.
     """
 
     async def test_exactly_the_sanctioned_tools(self) -> None:
@@ -148,6 +149,12 @@ class TestToolSurface:
             "search_memory",
             "remember",
             "invalidate_memory",
+            # Phase 3 (section 92) — reads only. World *writes* stay on the
+            # Console: shaping the graph is the user's act, not the model's.
+            "find_person",
+            "get_provider",
+            "get_related_entities",
+            "get_entity_history",
         }
 
     async def test_no_raw_database_tool_is_exposed(self) -> None:

@@ -17,6 +17,15 @@ from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
 from lifeops.domain.tasks import Task, TaskState
+from lifeops.domain.world import (
+    WORLD_RELATIONSHIP_TYPES,
+    WorldEdge,
+    WorldEntity,
+    WorldEntityType,
+    WorldRelationship,
+    entity_type_for_id,
+    is_world_entity_id,
+)
 from lifeops.errors import NotFoundError
 
 
@@ -75,6 +84,16 @@ class FakePreferenceRepository:
             and (key_prefix is None or p.key.startswith(key_prefix))
         ]
         return [copy.deepcopy(p) for p in sorted(matches, key=lambda p: p.key)]
+
+    async def list_all_current(self) -> list[Preference]:
+        """Every current preference, across subjects.
+
+        Exists for the world projection: NornicDB stores one ``:Preference``
+        node that both the preference and world repositories read, and the
+        fakes have to model that rather than drifting apart.
+        """
+        current = [p for p in self._prefs.values() if p.valid_to is None]
+        return [copy.deepcopy(p) for p in sorted(current, key=lambda p: p.id)]
 
     async def get_current_by_key(self, subject_id: str, key: str) -> Preference | None:
         matches = [
@@ -168,6 +187,13 @@ class FakeTaskRepository:
         matches.sort(key=lambda t: (t.created_at, t.id), reverse=True)
         return [copy.deepcopy(t) for t in matches[:limit]]
 
+    async def list_related_to_entity(self, entity_id: str) -> list[Task]:
+        matches = [
+            t for t in self._tasks.values() if entity_id in t.related_entity_ids
+        ]
+        matches.sort(key=lambda t: (t.created_at, t.id), reverse=True)
+        return [copy.deepcopy(t) for t in matches]
+
     async def create(self, task: Task) -> Task:
         self._tasks[task.id] = copy.deepcopy(task)
         return copy.deepcopy(task)
@@ -202,6 +228,17 @@ class FakeMemoryRepository:
             and (memory_types is None or m.type in memory_types)
         ]
         matches.sort(key=lambda m: (m.importance, m.observed_at, m.id), reverse=True)
+        return [copy.deepcopy(m) for m in matches[:limit]]
+
+    async def list_for_entity(
+        self, entity_id: str, *, current_only: bool = True, limit: int = 50
+    ) -> list[MemoryRecord]:
+        matches = [
+            m
+            for m in self._memories.values()
+            if entity_id in m.entity_ids and (not current_only or m.valid_to is None)
+        ]
+        matches.sort(key=lambda m: (m.created_at, m.id), reverse=True)
         return [copy.deepcopy(m) for m in matches[:limit]]
 
     async def search(
@@ -289,9 +326,170 @@ class FakeMemoryRepository:
         return copy.deepcopy(stored)
 
 
+class FakeWorldRepository:
+    """In-memory world graph.
+
+    Mirrors the NornicDB repository's contract rather than its storage: edges
+    are stored as a set of ``(source, target, type)`` triples so ``link`` is
+    idempotent the same way ``MERGE`` is, and ``neighborhood`` walks edges in
+    both directions from the starting entity.
+    """
+
+    def __init__(self, preferences: FakePreferenceRepository | None = None) -> None:
+        self._entities: dict[str, WorldEntity] = {}
+        self._edges: set[tuple[str, str, WorldRelationship]] = set()
+        # Preferences are projected from their own store, never copied into
+        # this one — the same arrangement NornicDB has, where one
+        # ``:Preference`` node is read by two repositories.
+        self._preferences = preferences
+
+    @staticmethod
+    def _preference_entity(preference: Preference) -> WorldEntity:
+        """Project a preference into a graph node (BUILD_SPEC section 15)."""
+        facts = {"key": preference.key, "source": str(preference.source_type)}
+        if preference.confidence is not None:
+            facts["confidence"] = str(preference.confidence)
+        return WorldEntity(
+            id=preference.id,
+            entity_type=WorldEntityType.PREFERENCE,
+            display_name=preference.value,
+            facts=facts,
+            created_at=preference.created_at,
+            # A preference is never edited; a new version opens instead.
+            updated_at=preference.valid_from,
+            created_by_client=preference.created_by_client,
+        )
+
+    async def _current_preference(self, preference_id: str) -> WorldEntity | None:
+        if self._preferences is None:
+            return None
+        found = await self._preferences.get(preference_id)
+        if found is None or found.valid_to is not None:
+            return None
+        return self._preference_entity(found)
+
+    def seed(self, entity: WorldEntity) -> WorldEntity:
+        """Place an entity directly, bypassing the create path.
+
+        Tests use this for persons and for pre-existing worlds; production code
+        must go through ``LifeOpsCore``.
+        """
+        self._entities[entity.id] = copy.deepcopy(entity)
+        return copy.deepcopy(entity)
+
+    async def get(self, entity_id: str) -> WorldEntity | None:
+        # The NornicDB repository resolves a label from the ID prefix before it
+        # can query at all, so a non-world ID raises there. The fake validates
+        # explicitly to keep that behaviour identical.
+        if entity_type_for_id(entity_id) is WorldEntityType.PREFERENCE:
+            return await self._current_preference(entity_id)
+        found = self._entities.get(entity_id)
+        return copy.deepcopy(found) if found else None
+
+    async def exists(self, entity_id: str) -> bool:
+        return await self.get(entity_id) is not None
+
+    async def create(self, entity: WorldEntity) -> WorldEntity:
+        self._entities[entity.id] = copy.deepcopy(entity)
+        return copy.deepcopy(entity)
+
+    async def list_entities(
+        self, *, types: list[WorldEntityType] | None = None, limit: int = 500
+    ) -> list[WorldEntity]:
+        matches = [
+            e for e in self._entities.values() if types is None or e.entity_type in types
+        ]
+        wants_preferences = types is None or WorldEntityType.PREFERENCE in types
+        if wants_preferences and self._preferences is not None:
+            # Current versions only: a superseded preference is not part of the
+            # current world, and its PREFERS edge drops with it.
+            matches.extend(
+                self._preference_entity(p)
+                for p in await self._preferences.list_all_current()
+            )
+        matches.sort(key=lambda e: e.id)
+        return [copy.deepcopy(e) for e in matches[:limit]]
+
+    async def list_edges(
+        self,
+        *,
+        rel_types: list[WorldRelationship] | None = None,
+        limit: int = 2000,
+    ) -> list[WorldEdge]:
+        wanted = set(rel_types) if rel_types is not None else set(WORLD_RELATIONSHIP_TYPES)
+        edges = [
+            WorldEdge(source=s, target=t, type=r)
+            for s, t, r in sorted(self._edges)
+            if r in wanted
+        ]
+        return edges[:limit]
+
+    async def list_edges_for(
+        self, entity_id: str, *, rel_types: list[WorldRelationship] | None = None
+    ) -> list[WorldEdge]:
+        wanted = set(rel_types) if rel_types is not None else set(WORLD_RELATIONSHIP_TYPES)
+        return [
+            WorldEdge(source=s, target=t, type=r)
+            for s, t, r in sorted(self._edges)
+            if r in wanted and entity_id in (s, t)
+        ]
+
+    async def neighborhood(
+        self,
+        entity_id: str,
+        *,
+        depth: int,
+        rel_types: list[WorldRelationship] | None = None,
+    ) -> tuple[list[WorldEntity], list[WorldEdge]]:
+        start = await self.get(entity_id)
+        if start is None:
+            return [], []
+
+        entities: dict[str, WorldEntity] = {start.id: start}
+        edges: dict[tuple[str, str, WorldRelationship], WorldEdge] = {}
+        frontier = [entity_id]
+
+        for _ in range(depth):
+            next_frontier: list[str] = []
+            for current in frontier:
+                for edge in await self.list_edges_for(current, rel_types=rel_types):
+                    edges[(edge.source, edge.target, edge.type)] = edge
+                    for endpoint in (edge.source, edge.target):
+                        # Endpoints owned by other aggregates (a Task, a
+                        # Memory) are not world nodes — same rule as the
+                        # NornicDB repository.
+                        if endpoint in entities or not is_world_entity_id(endpoint):
+                            continue
+                        found = await self.get(endpoint)
+                        if found is not None:
+                            entities[endpoint] = found
+                            next_frontier.append(endpoint)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return list(entities.values()), list(edges.values())
+
+    async def link(
+        self, source_id: str, target_id: str, rel_type: WorldRelationship
+    ) -> WorldEdge:
+        self._edges.add((source_id, target_id, rel_type))
+        return WorldEdge(source=source_id, target=target_id, type=rel_type)
+
+    async def unlink(
+        self, source_id: str, target_id: str, rel_type: WorldRelationship
+    ) -> bool:
+        key = (source_id, target_id, rel_type)
+        if key not in self._edges:
+            return False
+        self._edges.discard(key)
+        return True
+
+
 __all__ = [
     "FakeMemoryRepository",
     "FakePersonRepository",
     "FakePreferenceRepository",
     "FakeTaskRepository",
+    "FakeWorldRepository",
 ]

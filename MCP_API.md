@@ -4,9 +4,12 @@ The portable agent interface. Hermes is the primary consumer; any trusted MCP
 client can connect to the same server and operate on the same personal state,
 subject to its own permissions.
 
-**Phase 2 exposes eight tools and three resources.** The Phase 0 set (BUILD_SPEC
-section 49) plus the memory tools of section 91; the resources are the read
-views of section 48.
+**Phase 3 exposes twelve tools and three resources.** The Phase 0 set
+(BUILD_SPEC section 49), the memory tools of section 91, and the world-graph
+reads of section 92; the resources are the read views of section 48.
+
+The world tools are read-only. Creating entities and relationships stays on the
+Console: shaping the user's world is their act, not a model's.
 
 ---
 
@@ -296,6 +299,71 @@ chain explicitly.
 
 ---
 
+### `find_person`
+
+Locate a person by display name or alias. Call it before creating or linking
+anything about a person, so the work attaches to the canonical record instead
+of a duplicate.
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `name` | string | — | Display name or alias, e.g. `Tori` |
+
+Returns `{ok, people[], total}`. No match is an empty list, not an error.
+For the primary user, no-argument `get_person` is cheaper.
+
+---
+
+### `get_provider`
+
+A provider entity — a company or service the user deals with — and its current
+facts. Accepts a canonical `provider_...` ID or a name.
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `name_or_id` | string | — | `provider_abc_electric` or `ABC Electric` |
+
+A unique name match returns `{ok, provider}` with the full entity detail;
+several matches return `{ok, providers[], total}` so the model asks which one
+rather than guessing.
+
+This is **not** provider *configuration*. API keys, model choices, and
+credentials are managed by the user in the Console and are never reachable
+here.
+
+---
+
+### `get_related_entities`
+
+The one-hop neighbourhood of an entity: what it is connected to, and how. This
+is the tool for a relationship question — "who handles our electricity?",
+"what is linked to the Land Rover?".
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `entity_id` | string | — | `person_gene`, `provider_abc_electric`, … |
+
+Returns `{ok, neighborhood: {nodes[], edges[]}}`. It reports current
+*structure*; `search_memory` recalls past events and notes.
+
+---
+
+### `get_entity_history`
+
+What the record can say about how an entity changed.
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `entity_id` | string | — | |
+
+Returns `{ok, entity_id, memories[], covers[]}`. World entity facts are
+current-only in Phase 3, so the history is the memory record referencing the
+entity, closed versions included. `covers` states that scope in words — an
+empty list means "nothing recorded", never "nothing happened". The durable
+audit log arrives in Phase 4.
+
+---
+
 ## Task states
 
 ```
@@ -303,7 +371,7 @@ CAPTURED  PLANNED  READY  EXECUTING  WAITING_EXTERNAL
 NEEDS_APPROVAL  VERIFYING  COMPLETED  BLOCKED  FAILED  CANCELLED
 ```
 
-Phase 0 exposes no transition tool over MCP — `list_tasks` and `create_task`
+No transition tool is exposed over MCP yet — `list_tasks` and `create_task`
 only. Transitions are available through the Console's HTTP API and arrive on the
 MCP surface in Phase 4 alongside waiting items and the due-work worker.
 
@@ -326,6 +394,5 @@ policy into a model's judgement, which is exactly the wrong place for it.
 
 | Phase | Additions |
 |---|---|
-| 3 | `find_person`, `get_provider`, `get_related_entities`, `get_entity_history` |
 | 4 | `update_task`, `create_waiting_item`, `list_waiting_items` |
 | 7+ | `send_email`, `book_appointment`, `prepare_payment` / `commit_payment` — each approval-gated per BUILD_SPEC section 56 |

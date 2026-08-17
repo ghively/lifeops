@@ -15,7 +15,10 @@ adds read-only resources — ``lifeops://me``, ``lifeops://today``,
 not tools (section 48). Phase 2 adds memory: ``search_memory``, ``remember``,
 and ``invalidate_memory``. Memory can observe the world; it cannot rewrite
 transactional reality (section 44), and these tools carry no path to tasks,
-preferences, approvals, or payments.
+preferences, approvals, or payments. Phase 3 adds world-graph reads —
+``find_person``, ``get_provider``, ``get_related_entities``,
+``get_entity_history`` — over the entity graph of section 92. Provider
+*configuration* stays with the Console; the model only ever sees world facts.
 
 Client identity
 ---------------
@@ -41,7 +44,8 @@ from lifeops.container import Container
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
 from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState
-from lifeops.errors import LifeOpsError
+from lifeops.errors import LifeOpsError, NotFoundError
+from lifeops.ids import PREFIX_PROVIDER
 from lifeops.mcp.resources import register_resources
 from lifeops.observability.logging import configure_logging, trace_context
 from lifeops.policy import ClientIdentity, UnknownClientPolicy, resolve_client
@@ -502,6 +506,152 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     client, memory_id=memory_id, reason=reason
                 )
                 return {"ok": True, "memory": _memory_view(memory)}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    # --- world graph (Phase 3, BUILD_SPEC section 92) -------------------------
+    #
+    # Read-only views over the world graph. Every check lives in LifeOpsCore;
+    # these tools translate the domain read models to JSON and nothing more.
+
+    @server.tool(
+        name="find_person",
+        title="Find person",
+        description=(
+            "Locate a person in the user's world by display name or alias, "
+            "e.g. 'Tori' or 'Dr. Reeves'. Call this before creating or linking "
+            "anything about a person, so you attach it to the canonical "
+            "record instead of inventing a duplicate. Returns every match "
+            "with its canonical ID.\n\n"
+            "Not for the primary user — a no-argument get_person is cheaper. "
+            "For what a person is connected to, use get_related_entities."
+        ),
+    )
+    async def find_person(
+        name: Annotated[
+            str, Field(description="Display name or alias to search for, e.g. 'Tori'.")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                people = await container.core.find_people(client, name=name)
+                return {
+                    "ok": True,
+                    "people": [p.model_dump() for p in people],
+                    "total": len(people),
+                }
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_provider",
+        title="Get provider",
+        description=(
+            "Find a provider entity in the user's world — a company or "
+            "service they deal with, e.g. 'ABC Electric' — and its current "
+            "facts. Accepts a canonical ID (provider_...) or a name.\n\n"
+            "NOT for provider configuration: API keys, model choices, and "
+            "credentials are managed by the user in the Console and are never "
+            "available here."
+        ),
+    )
+    async def get_provider(
+        name_or_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "Canonical provider ID, e.g. provider_abc_electric, or a "
+                    "name to search for, e.g. 'ABC Electric'."
+                )
+            ),
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                # A provider ID resolves straight to the detail; anything else
+                # searches the graph by name, mirroring get_person's branch.
+                # ValidationError covers ids that are not world entities at
+                # all, which a name like "ABC Electric" also is not.
+                if name_or_id.startswith(f"{PREFIX_PROVIDER}_"):
+                    detail = await container.core.get_entity_detail(
+                        client, entity_id=name_or_id
+                    )
+                    return {"ok": True, "provider": detail.model_dump(mode="json")}
+
+                graph = await container.core.world_graph(
+                    client, query=name_or_id, entity_types=["provider"]
+                )
+                if not graph.nodes:
+                    raise NotFoundError(
+                        f"no provider matching {name_or_id!r}", query=name_or_id
+                    )
+                if len(graph.nodes) == 1:
+                    detail = await container.core.get_entity_detail(
+                        client, entity_id=graph.nodes[0].id
+                    )
+                    return {"ok": True, "provider": detail.model_dump(mode="json")}
+                # Several matches: return the candidates rather than guessing,
+                # so the model asks the user which one they meant.
+                return {
+                    "ok": True,
+                    "providers": [node.model_dump(mode="json") for node in graph.nodes],
+                    "total": len(graph.nodes),
+                }
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_related_entities",
+        title="Get related entities",
+        description=(
+            "The neighbourhood of one entity, one hop out: who or what it is "
+            "connected to (people, household, providers, assets) and how. "
+            "Call this before answering a relationship question like 'who "
+            "handles our electricity?' or 'what is linked to the Land "
+            "Rover?'.\n\n"
+            "Not a substitute for search_memory, which recalls past events "
+            "and notes rather than current structure."
+        ),
+    )
+    async def get_related_entities(
+        entity_id: Annotated[
+            str,
+            Field(description="Canonical entity ID, e.g. person_gene or provider_abc_electric."),
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                neighborhood = await container.core.world_neighborhood(
+                    client, entity_id=entity_id
+                )
+                return {"ok": True, "neighborhood": neighborhood.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_entity_history",
+        title="Get entity history",
+        description=(
+            "What changed about an entity over time: supersession chains and "
+            "related invalidations, newest first. Use it when the user asks "
+            "how something used to be — 'who was our mechanic before ABC?'.\n\n"
+            "History is best-effort until the Phase 4 audit log lands: it "
+            "reconstructs change from temporal links rather than a complete "
+            "event record."
+        ),
+    )
+    async def get_entity_history(
+        entity_id: Annotated[
+            str,
+            Field(description="Canonical entity ID, e.g. provider_abc_electric."),
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                history = await container.core.entity_history(client, entity_id=entity_id)
+                # `covers` travels with the answer so the model does not read
+                # an empty history as "nothing ever happened".
+                return {"ok": True, **history.model_dump(mode="json")}
             except LifeOpsError as exc:
                 return _fail(exc)
 

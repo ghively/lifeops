@@ -23,6 +23,7 @@
     "@radix-ui/react-separator": "^1.0.3",
     "@radix-ui/react-slot": "^1.0.2",
     "@tanstack/react-query": "^5.99.2",
+    "@xyflow/react": "^12.11.3",
     "axios": "^1.15.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
@@ -56,5 +57,5 @@
     "vite-plugin-pwa": "^1.2.0",
     "vitest": "^1.0.4"
   },
-  "description": "LifeOps Console \u2014 the visual inspection, configuration, and approval interface for LifeOps."
+  "description": "LifeOps Console — the visual inspection, configuration, and approval interface for LifeOps."
 }

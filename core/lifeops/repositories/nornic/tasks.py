@@ -3,11 +3,12 @@
 Graph shape:
 
     (:Task)-[:ASSIGNED_TO]->(:Person)      owner
-    (:Task)-[:REFERENCES]->(entity)        related entities (Phase 3)
+    (:Task)-[:ABOUT]->(entity)             related entities (Phase 3)
 
-``related_entity_ids`` is stored as a property in Phase 0 because the entity
-types it points at do not exist yet. Phase 3 promotes it to real edges, which
-is a migration of one repository rather than a change to the domain.
+``related_entity_ids`` remains stored as a property and stays the source of
+truth for reads: tasks written before Phase 3 carry only the property, and the
+migration is write-path only (DATA_MODEL.md). The ABOUT edges exist so the
+world graph can traverse task → entity without a property scan.
 """
 
 from __future__ import annotations
@@ -85,6 +86,28 @@ def _row_to_task(row: dict[str, Any]) -> Task:
         source=row.get("source"),
         created_by_client=row.get("created_by_client"),
     )
+
+
+def _about_statements(task: Task) -> list[tuple[str, dict[str, Any]]]:
+    """One MERGE per related entity id.
+
+    List predicates over bound collections are not portable across NornicDB
+    (verified in Phase 2), and a task's related-entity fan-out is small, so
+    each edge gets its own statement inside the surrounding transaction.
+    Entities that do not exist match nothing and are skipped — a dangling id
+    must not fail the task write.
+    """
+    return [
+        (
+            """
+            MATCH (t:Task {id: $task_id})
+            MATCH (e) WHERE e.id = $entity_id
+            MERGE (t)-[:ABOUT]->(e)
+            """,
+            {"task_id": task.id, "entity_id": entity_id},
+        )
+        for entity_id in dict.fromkeys(task.related_entity_ids)
+    ]
 
 
 def _write_params(task: Task) -> dict[str, Any]:
@@ -173,6 +196,37 @@ class NornicTaskRepository:
         )
         return [_row_to_task(r) for r in rows]
 
+    async def list_related_to_entity(self, entity_id: str) -> list[Task]:
+        """Tasks pointing at the entity, from the property and from ABOUT edges.
+
+        The property membership covers pre-Phase-3 tasks that have no edges;
+        the edge match covers anything whose property drifted. Results are
+        unioned by id, so a task visible through both appears once.
+        """
+        found: dict[str, Task] = {}
+        rows = await self._client.read(
+            f"""
+            MATCH (t:Task)
+            WHERE $entity_id IN coalesce(t.related_entity_ids, [])
+            RETURN {_RETURN}
+            """,
+            entity_id=entity_id,
+        )
+        for row in rows:
+            task = _row_to_task(row)
+            found[task.id] = task
+        rows = await self._client.read(
+            f"""
+            MATCH (t:Task)-[:ABOUT]->(e {{id: $entity_id}})
+            RETURN {_RETURN}
+            """,
+            entity_id=entity_id,
+        )
+        for row in rows:
+            task = _row_to_task(row)
+            found.setdefault(task.id, task)
+        return sorted(found.values(), key=lambda t: (t.created_at, t.id), reverse=True)
+
     async def create(self, task: Task) -> Task:
         statements: list[tuple[str, dict[str, Any]]] = [(_WRITE, _write_params(task))]
         if task.owner_entity_id:
@@ -186,6 +240,7 @@ class NornicTaskRepository:
                     {"task_id": task.id, "owner_id": task.owner_entity_id},
                 )
             )
+        statements.extend(_about_statements(task))
         await self._client.write_many(statements)
         stored = await self.get(task.id)
         return stored or task
@@ -217,6 +272,18 @@ class NornicTaskRepository:
                         {"task_id": task.id, "owner_id": task.owner_entity_id},
                     )
                 )
+
+        # Same discipline for ABOUT: when the related set changes, drop the
+        # stale edges before re-adding, so the graph never shows the task
+        # pointing at entities it no longer concerns.
+        if set(existing.related_entity_ids) != set(task.related_entity_ids):
+            statements.append(
+                (
+                    "MATCH (t:Task {id: $task_id})-[r:ABOUT]->() DELETE r",
+                    {"task_id": task.id},
+                )
+            )
+            statements.extend(_about_statements(task))
 
         await self._client.write_many(statements)
         stored = await self.get(task.id)
