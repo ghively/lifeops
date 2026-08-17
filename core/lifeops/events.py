@@ -57,3 +57,9 @@ class EventBus:
                 logger.debug(
                     "dropping %s for a slow subscriber", event.get("type", "event")
                 )
+
+# Phase 4 (durable work). The Waiting and Approval screens are the two places
+# a human is expected to be watching, so both need live updates.
+WAITING_CHANGED = "waiting_changed"
+ACTION_CHANGED = "action_changed"
+APPROVAL_CHANGED = "approval_changed"

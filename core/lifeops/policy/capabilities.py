@@ -78,6 +78,9 @@ class ClientRole(StrEnum):
     INTERACTIVE_ASSISTANT = "interactive_assistant"
     ENGINEERING_ASSISTANT = "engineering_assistant"
     CONSOLE = "console"
+    #: A background process acting on already-recorded intent, not a
+    #: conversation. It originates nothing.
+    WORKER = "worker"
 
 
 class ClientIdentity(BaseModel):
@@ -174,8 +177,32 @@ CONSOLE = ClientIdentity(
     },
 )
 
+#: The due-work worker (BUILD_SPEC section 55).
+#:
+#: It gets an identity of its own rather than borrowing Hermes's. Two reasons,
+#: both load-bearing. Section 62's audit log exists to answer "which client
+#: changed this?" — a worker filing its follow-ups as Hermes makes that answer
+#: false. And it needs exactly two capabilities: reading what is due and
+#: updating it. Running as Hermes would hand a loop that nobody is watching the
+#: ability to write memory, preferences, and the world graph.
+DUE_WORK_WORKER = ClientIdentity(
+    client_id="lifeops-worker",
+    role=ClientRole.WORKER,
+    display_name="LifeOps due-work worker",
+    description="Follows up on waiting items that have come due.",
+    capabilities=frozenset({Capability.READ_TASKS, Capability.UPDATE_TASK}),
+)
+
+
 _REGISTRY: dict[str, ClientIdentity] = {
-    client.client_id: client for client in (HERMES, INTERACTIVE_CLIENT, CODING_CLIENT, CONSOLE)
+    client.client_id: client
+    for client in (
+        HERMES,
+        INTERACTIVE_CLIENT,
+        CODING_CLIENT,
+        CONSOLE,
+        DUE_WORK_WORKER,
+    )
 }
 
 #: Requests arriving without a declared identity are treated as a generic
@@ -261,3 +288,35 @@ class CapabilityGrant(BaseModel):
             description=client.description,
             capabilities=sorted(client.capabilities, key=str),
         )
+
+
+#: Which capability each external action spends (BUILD_SPEC sections 51, 52).
+#:
+#: The risk classes were declared in Phase 0 and left unused precisely so this
+#: mapping could exist without inventing new policy. Preparing an action is
+#: gated on the capability for its class, so a client that may email cannot
+#: book, and one that may book cannot pay — without any new enum member.
+CAPABILITY_FOR_ACTION: dict[str, Capability] = {
+    "send_email": Capability.SEND_EXTERNAL_MESSAGE,
+    "request_quote": Capability.SEND_EXTERNAL_MESSAGE,
+    "place_phone_call": Capability.SEND_EXTERNAL_MESSAGE,
+    "book_appointment": Capability.BOOK_APPOINTMENT,
+    "cancel_appointment": Capability.BOOK_APPOINTMENT,
+    "build_grocery_cart": Capability.SHOPPING_CHECKOUT,
+    "submit_grocery_order": Capability.SHOPPING_CHECKOUT,
+    "prepare_payment": Capability.FINANCIAL_PAYMENT,
+    "commit_payment": Capability.FINANCIAL_PAYMENT,
+}
+
+
+def capability_for_action(action_type: str) -> Capability:
+    """The capability an action type requires.
+
+    Unknown types raise rather than defaulting: a new action reaching this
+    function without a declared risk class is a policy gap, and defaulting it
+    to the weakest capability would be the wrong way to discover that.
+    """
+    try:
+        return CAPABILITY_FOR_ACTION[str(action_type)]
+    except KeyError:
+        raise ValueError(f"no capability declared for action type {action_type!r}") from None

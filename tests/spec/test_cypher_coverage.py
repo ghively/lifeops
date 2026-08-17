@@ -97,9 +97,13 @@ class TestRepository:
     def test_the_check_is_looking_at_real_repositories(self) -> None:
         """Guards against the scan silently finding nothing to check."""
         assert set(repository_classes(NORNIC_DIR)) == {
+            "actions.py",
+            "approvals.py",
+            "audit.py",
             "memory.py",
             "people.py",
             "preferences.py",
             "tasks.py",
+            "waiting.py",
             "world.py",
         }
