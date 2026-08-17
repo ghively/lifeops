@@ -110,3 +110,52 @@ class TestPhase4Schemas:
 
         for field in ("next_action_at", "attempt_count", "lease_owner", "lease_until"):
             assert field in WaitingItem.model_fields, field
+
+
+class TestActionToolSurface:
+    """BUILD_SPEC section 51 names the action tools by name.
+
+    Phases 7-9 shipped `hold_calendar_time` and `request_provider_call` where
+    section 51 says `create_calendar_hold` and `place_phone_call`, and omitted
+    `record_provider`/`record_asset` altogether. A renamed tool is a tool the
+    spec cannot recognise, and section 101 step 14 ("record provider/action
+    history") needs the two that were missing.
+
+    Reads are deliberately not constrained here: sections 48-49, 91, and 92
+    sanction their own read surfaces, and section 96 requires reading a
+    calendar before writing to one. This pins the *action* vocabulary only.
+    """
+
+    #: Not implemented until the phase that executes them (section 99 gates
+    #: payment behind proven infrastructure), so they are excused by name
+    #: rather than by silence.
+    DEFERRED_TO_PHASE_10 = {"prepare_payment", "commit_payment"}
+
+    @staticmethod
+    def _registered_tools() -> set[str]:
+        import re
+
+        from tests.spec.spec_source import REPO_ROOT
+
+        source = (REPO_ROOT / "core/lifeops/mcp/server.py").read_text(encoding="utf-8")
+        # Comment lines may sit between the decorator and its name argument,
+        # so they are skipped rather than terminating the match.
+        return set(
+            re.findall(
+                r'@server\.tool\(\s*(?:#[^\n]*\n\s*)*name="([a-z_]+)"', source
+            )
+        )
+
+    def test_every_section_51_action_tool_exists_under_its_own_name(self) -> None:
+        sanctioned = set(fenced_list(51)) | set(fenced_list(51, block=2))
+        missing = sanctioned - self._registered_tools() - self.DEFERRED_TO_PHASE_10
+        assert missing == set()
+
+    def test_deferred_tools_really_are_absent(self) -> None:
+        """A payment tool must not exist before section 99's gate is closed."""
+        assert self.DEFERRED_TO_PHASE_10 & self._registered_tools() == set()
+
+    def test_no_generic_action_tool_is_exposed(self) -> None:
+        """Section 51: avoid do_action, browser_action, execute_anything."""
+        forbidden = {"do_action", "browser_action", "execute_anything", "run_cypher"}
+        assert forbidden & self._registered_tools() == set()
