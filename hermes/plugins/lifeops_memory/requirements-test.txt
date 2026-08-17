@@ -1,0 +1,5 @@
+# Already satisfied by the repository's .venv — the plugin carries no
+# dependencies of its own into the core project. Pinned here only so a fresh
+# environment can run the tests:
+httpx>=0.24,<1
+pytest>=8

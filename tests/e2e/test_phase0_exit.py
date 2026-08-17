@@ -128,17 +128,26 @@ async def clean_state() -> AsyncIterator[None]:
 
 
 class TestToolSurface:
-    """BUILD_SPEC section 49: Phase 0 exposes exactly five operations."""
+    """BUILD_SPEC sections 49–51: the tool surface grows only by phase.
 
-    async def test_exactly_the_five_phase_zero_tools(self) -> None:
+    Phase 0 pinned exactly five tools; Phase 2 adds the three memory tools.
+    The assertion stays exact so a tool can never slip in unreviewed.
+    """
+
+    async def test_exactly_the_sanctioned_tools(self) -> None:
         async with mcp_session(HERMES) as session:
             tools = {tool.name for tool in (await session.list_tools()).tools}
         assert tools == {
+            # Phase 0 (section 49)
             "get_person",
             "get_preferences",
             "save_preference",
             "create_task",
             "list_tasks",
+            # Phase 2 (section 91)
+            "search_memory",
+            "remember",
+            "invalidate_memory",
         }
 
     async def test_no_raw_database_tool_is_exposed(self) -> None:

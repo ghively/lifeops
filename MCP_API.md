@@ -4,8 +4,9 @@ The portable agent interface. Hermes is the primary consumer; any trusted MCP
 client can connect to the same server and operate on the same personal state,
 subject to its own permissions.
 
-**Phase 1 exposes five tools and three resources.** The tools are the Phase 0
-set (BUILD_SPEC section 49); the resources are the read views of section 48.
+**Phase 2 exposes eight tools and three resources.** The Phase 0 set (BUILD_SPEC
+section 49) plus the memory tools of section 91; the resources are the read
+views of section 48.
 
 ---
 
@@ -241,6 +242,60 @@ later state, because that would be a way to skip the state machine.
 
 ---
 
+### `search_memory`
+
+Recall relevant memories before answering questions about the user's past,
+people, routines, or prior decisions.
+
+Do **not** use it for current transactional state — open tasks, today's
+preferences, approvals — that is what `list_tasks` and `get_preferences` are
+for. Do not use it to store anything; that is `remember`.
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `query` | string | — | What to recall |
+| `subject_id` | string? | primary user | Whose memories |
+| `limit` | int | `10` | |
+
+---
+
+### `remember`
+
+Store a durable memory: a semantic fact, an episodic note, or a low-confidence
+`preference_candidate`.
+
+This records memory only. It cannot change tasks, preferences, approvals, or
+any transactional state (BUILD_SPEC section 44). When the user *states* a
+preference, use `save_preference` instead — a memory is not a preference.
+Never store secrets; the server refuses credential-shaped content.
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `content` | string | — | The memory, in plain terms |
+| `type` | enum | — | `episodic` / `semantic` / `preference_candidate` / `summary` / `association` |
+| `subject_id` | string? | primary user | |
+| `source_type` | enum | `conversation` | Same trust ranking as preferences — do not mark inferences `user_explicit` |
+| `confidence` | float? | — | 0–1 |
+| `importance` | float? | — | 0–1 |
+
+---
+
+### `invalidate_memory`
+
+Mark a memory as no longer valid. This is a temporal close, never a delete —
+the record stays in the history chain.
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `memory_id` | string | — | |
+| `reason` | string | — | Why it no longer holds |
+
+To correct a memory's content, `remember` the corrected version and invalidate
+the old one, or use the Console's correct action, which links the supersession
+chain explicitly.
+
+---
+
 ## Task states
 
 ```
@@ -271,7 +326,6 @@ policy into a model's judgement, which is exactly the wrong place for it.
 
 | Phase | Additions |
 |---|---|
-| 2 | `search_memory`, memory write and invalidate |
 | 3 | `find_person`, `get_provider`, `get_related_entities`, `get_entity_history` |
 | 4 | `update_task`, `create_waiting_item`, `list_waiting_items` |
 | 7+ | `send_email`, `book_appointment`, `prepare_payment` / `commit_payment` — each approval-gated per BUILD_SPEC section 56 |
