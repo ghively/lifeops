@@ -3,7 +3,7 @@ sections 68, 97, 101).
 
 Same discipline as ``test_mcp_world_tools.py``: a real ``LifeOpsCore`` over
 in-memory repositories and a fake telephony provider, with only the
-``Container`` duck-typed. ``create_service_request``, ``request_provider_call``,
+``Container`` duck-typed. ``create_service_request``, ``place_phone_call``,
 ``request_quote``, and ``book_service_request`` are checked for their
 documented shape and for the capability gate every action tool goes through
 (``prepare_action`` -> ``capability_for_action``).
@@ -158,7 +158,7 @@ class TestToolListing:
         assert {
             "create_service_request",
             "get_service_request",
-            "request_provider_call",
+            "place_phone_call",
             "request_quote",
             "book_service_request",
         } <= names
@@ -198,7 +198,7 @@ class TestRequestProviderCall:
 
         called = await _call(
             server,
-            "request_provider_call",
+            "place_phone_call",
             {
                 "service_request_id": sr_id,
                 "provider_entity_id": "provider_abc_electric",
@@ -248,7 +248,7 @@ class TestCapabilityDenial:
 
         called = await _call(
             server,
-            "request_provider_call",
+            "place_phone_call",
             {
                 "service_request_id": sr_id,
                 "provider_entity_id": "provider_abc_hvac",
