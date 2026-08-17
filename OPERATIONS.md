@@ -45,6 +45,31 @@ definition of health.
 
 ---
 
+## Due-work worker
+
+BUILD_SPEC section 55's continuation loop: an asyncio task inside LifeOps
+Core, started by `Container.startup()` and stopped by `Container.shutdown()`.
+No separate process, queue, or scheduler — see `core/lifeops/worker/due_work.py`.
+
+It holds no state of its own. Every tick it re-reads what is due from
+NornicDB, claims a lease, and acts; killing and restarting LifeOps loses
+nothing, which is BUILD_SPEC section 93's acceptance criterion for Phase 4.
+
+Deployment settings (`.env` / environment, not the Console):
+
+```
+LIFEOPS_DUE_WORK_ENABLED=true         # set false to disable the worker entirely
+LIFEOPS_DUE_WORK_POLL_INTERVAL_S=60   # how often it checks for due items
+LIFEOPS_DUE_WORK_BATCH_LIMIT=50       # items claimed per tick
+```
+
+Running more than one LifeOps process against the same NornicDB runs more
+than one worker; this is safe by construction because leases are claimed
+atomically (`repositories/nornic/waiting.py`), so at most one worker acts on a
+given item at a time.
+
+---
+
 ## First run
 
 ```bash
