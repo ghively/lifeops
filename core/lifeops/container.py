@@ -16,15 +16,20 @@ from lifeops.config.service import ConfigurationService
 from lifeops.core import LifeOpsCore
 from lifeops.events import EventBus
 from lifeops.observability.activity import attach_activity_buffer, detach_activity_buffer
+from lifeops.repositories.nornic.actions import NornicActionRepository
+from lifeops.repositories.nornic.approvals import NornicApprovalRepository
+from lifeops.repositories.nornic.audit import NornicAuditRepository
 from lifeops.repositories.nornic.client import NornicClient
 from lifeops.repositories.nornic.memory import NornicMemoryRepository
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
 from lifeops.repositories.nornic.tasks import NornicTaskRepository
+from lifeops.repositories.nornic.waiting import NornicWaitingRepository
 from lifeops.repositories.nornic.world import NornicWorldRepository
 from lifeops.secrets.local_encrypted import LocalEncryptedSecretStore
 from lifeops.settings import Settings, get_settings
 from lifeops.voice.service import VoiceService
+from lifeops.worker.due_work import DueWorkWorker
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,10 @@ class Container:
         self.tasks = NornicTaskRepository(self.nornic)
         self.memory = NornicMemoryRepository(self.nornic)
         self.world = NornicWorldRepository(self.nornic)
+        self.waiting = NornicWaitingRepository(self.nornic)
+        self.actions = NornicActionRepository(self.nornic)
+        self.approvals = NornicApprovalRepository(self.nornic)
+        self.audit = NornicAuditRepository(self.nornic)
 
         # Safe mode may be set at boot or flipped by the user from the
         # Console; the config document is authoritative once it exists.
@@ -72,9 +81,23 @@ class Container:
             tasks=self.tasks,
             memory=self.memory,
             world=self.world,
+            waiting=self.waiting,
+            actions=self.actions,
+            approvals=self.approvals,
+            audit=self.audit,
             clock=self.clock,
             safe_mode=safe_mode,
             events=self.events,
+        )
+
+        # BUILD_SPEC section 55: a small in-process worker, not a queue or a
+        # process supervisor. It holds no state of its own — everything it
+        # needs is read back from NornicDB every tick (section 93: work
+        # survives a LifeOps restart because there is nothing else to lose).
+        self.due_work_worker = DueWorkWorker(
+            self.core,
+            poll_interval_s=self.settings.due_work_poll_interval_s,
+            batch_limit=self.settings.due_work_batch_limit,
         )
 
     async def startup(self) -> None:
@@ -93,9 +116,13 @@ class Container:
             if system.primary_person_id != person.id:
                 self.config.update_system({"primary_person_id": person.id})
 
+        if self.settings.due_work_enabled:
+            self.due_work_worker.start()
+
         logger.info("LifeOps Core started", extra={"safe_mode": self.core.safe_mode})
 
     async def shutdown(self) -> None:
+        await self.due_work_worker.stop()
         detach_activity_buffer(self.activity)
         await self.nornic.close()
 

@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     # later phases inherit it rather than bolting it on.
     safe_mode: bool = False
 
+    # --- Due-work worker (BUILD_SPEC section 55) -----------------------------
+    # The "small LifeOps worker" that ticks over due WaitingItems. Interval is
+    # a poll, not a promise: NornicDB holds the durable wake times, and this
+    # is only how often the worker asks what is due now. Short in tests via
+    # LIFEOPS_DUE_WORK_POLL_INTERVAL_S / an explicit Settings override.
+    due_work_enabled: bool = True
+    due_work_poll_interval_s: float = 60.0
+    due_work_batch_limit: int = 50
+
     # --- Console authentication (SECURITY.md debt #1) ------------------------
     # Master switch for bearer-token auth on the Console API. Auth only
     # *applies* when a console password has also been set via the SecretStore
