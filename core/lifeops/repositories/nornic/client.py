@@ -42,12 +42,40 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "FOR (p:Provider) REQUIRE p.id IS UNIQUE",
     "CREATE CONSTRAINT lifeops_asset_id IF NOT EXISTS "
     "FOR (a:Asset) REQUIRE a.id IS UNIQUE",
+    # Phase 4 durable-work labels get the same id protection, plus the
+    # idempotency-key constraint section 61 depends on: two Action nodes
+    # sharing a key would defeat the mechanism that prevents a blind retry
+    # from double-booking or double-charging.
+    "CREATE CONSTRAINT lifeops_waiting_id IF NOT EXISTS "
+    "FOR (w:WaitingItem) REQUIRE w.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_action_id IF NOT EXISTS "
+    "FOR (a:Action) REQUIRE a.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_action_idempotency_key IF NOT EXISTS "
+    "FOR (a:Action) REQUIRE a.idempotency_key IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_approval_id IF NOT EXISTS "
+    "FOR (ap:Approval) REQUIRE ap.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_audit_id IF NOT EXISTS "
+    "FOR (r:AuditRecord) REQUIRE r.id IS UNIQUE",
     "CREATE INDEX lifeops_preference_subject_key IF NOT EXISTS "
     "FOR (p:Preference) ON (p.subject_id, p.key)",
     "CREATE INDEX lifeops_task_state IF NOT EXISTS FOR (t:Task) ON (t.state)",
     "CREATE INDEX lifeops_task_created IF NOT EXISTS FOR (t:Task) ON (t.created_at)",
     "CREATE INDEX lifeops_memory_subject IF NOT EXISTS "
     "FOR (m:Memory) ON (m.subject_id)",
+    "CREATE INDEX lifeops_waiting_task IF NOT EXISTS "
+    "FOR (w:WaitingItem) ON (w.task_id)",
+    "CREATE INDEX lifeops_waiting_status IF NOT EXISTS "
+    "FOR (w:WaitingItem) ON (w.status)",
+    "CREATE INDEX lifeops_action_task IF NOT EXISTS "
+    "FOR (a:Action) ON (a.task_id)",
+    "CREATE INDEX lifeops_action_status IF NOT EXISTS "
+    "FOR (a:Action) ON (a.status)",
+    "CREATE INDEX lifeops_approval_action IF NOT EXISTS "
+    "FOR (ap:Approval) ON (ap.action_id)",
+    "CREATE INDEX lifeops_approval_status IF NOT EXISTS "
+    "FOR (ap:Approval) ON (ap.status)",
+    "CREATE INDEX lifeops_audit_target IF NOT EXISTS "
+    "FOR (r:AuditRecord) ON (r.target)",
     # BM25 recall for the memory layer (BUILD_SPEC section 47). Embeddings stay
     # off; on a backend without fulltext support this is skipped with a warning
     # and the repository falls back to substring matching.
@@ -140,7 +168,13 @@ class NornicClient:
                         await tx.run(query, **params)
                     await tx.commit()
                 except BaseException:
-                    await tx.rollback()
+                    # A failed commit (a constraint violation, say) already
+                    # closes the transaction. Rolling back a closed
+                    # transaction raises its own DriverError, which would
+                    # mask the real failure below instead of surfacing it as
+                    # a RepositoryError.
+                    if not tx.closed():
+                        await tx.rollback()
                     raise
         except (Neo4jError, ServiceUnavailable) as exc:
             raise RepositoryError(f"NornicDB transaction failed: {exc}") from exc
