@@ -38,6 +38,8 @@ from lifeops.ids import (
     PREFIX_PERSON,
     PREFIX_PREFERENCE,
     PREFIX_PROVIDER,
+    PREFIX_SERVICE_REQUEST,
+    PREFIX_SHOPPING_LIST,
     is_valid_id,
     slug_id,
 )
@@ -53,8 +55,14 @@ class WorldEntityType(StrEnum):
     and ``DOCUMENT`` (section 96): a booked-or-held calendar commitment, a
     read-only projection of what is on the calendar, and a reference to
     something ingested from email or the calendar (an attachment, a
-    confirmation). The remaining section 36 types are owned by phases that
-    have not landed; each arrives with the phase that creates it.
+    confirmation). Phase 8 (section 97) adds ``SERVICE_REQUEST``: the durable
+    record of one provider workflow — research, contact, quote collection,
+    approval-gated booking (section 67, section 101's electrician scenario).
+    Phase 9 (section 98) adds ``SHOPPING_LIST``: a cart being assembled,
+    checked out, and verified through the same outbox two actions drive
+    (``build_grocery_cart``, ``submit_grocery_order``). The remaining section
+    36 types are owned by phases that have not landed; each arrives with the
+    phase that creates it.
     """
 
     PERSON = "person"
@@ -65,6 +73,8 @@ class WorldEntityType(StrEnum):
     APPOINTMENT = "appointment"
     EVENT = "event"
     DOCUMENT = "document"
+    SERVICE_REQUEST = "service_request"
+    SHOPPING_LIST = "shopping_list"
 
 
 #: The types ``create_entity`` accepts from a bare ``EntityDraft`` — the
@@ -89,10 +99,18 @@ CREATABLE_ENTITY_TYPES: frozenset[WorldEntityType] = frozenset(
 #: generic creation path stays closed to them) and need a write path of their
 #: own. This is that path's guard, kept in the domain layer so the NornicDB
 #: and in-memory repositories enforce the identical rule.
+#: ServiceRequest joins the same non-generic path (section 97): it is opened
+#: by ``create_service_request``, which stamps the RESEARCHING status and
+#: links it to a task, never through the bare ``EntityDraft`` creation path.
+#: ShoppingList joins it too (section 98): it is opened by
+#: ``create_shopping_list``, which stamps the DRAFT status, never through
+#: ``EntityDraft``.
 WORLD_MANAGED_ENTITY_TYPES: frozenset[WorldEntityType] = CREATABLE_ENTITY_TYPES | {
     WorldEntityType.APPOINTMENT,
     WorldEntityType.EVENT,
     WorldEntityType.DOCUMENT,
+    WorldEntityType.SERVICE_REQUEST,
+    WorldEntityType.SHOPPING_LIST,
 }
 
 
@@ -145,6 +163,8 @@ _PREFIX_FOR_TYPE: dict[WorldEntityType, str] = {
     WorldEntityType.APPOINTMENT: PREFIX_APPOINTMENT,
     WorldEntityType.EVENT: PREFIX_EVENT,
     WorldEntityType.DOCUMENT: PREFIX_DOCUMENT,
+    WorldEntityType.SERVICE_REQUEST: PREFIX_SERVICE_REQUEST,
+    WorldEntityType.SHOPPING_LIST: PREFIX_SHOPPING_LIST,
 }
 
 _TYPE_FOR_PREFIX: dict[str, WorldEntityType] = {

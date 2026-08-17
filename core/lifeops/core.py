@@ -15,14 +15,17 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from lifeops.browser.service import BrowserProviderService
 from lifeops.calendar.service import CalendarProviderService
 from lifeops.clock import Clock, SystemClock, now_iso
+from lifeops.domain import shopping as shopping_domain
 from lifeops.domain.actions import REQUIRES_APPROVAL as ACTIONS_REQUIRING_APPROVAL
 from lifeops.domain.actions import (
     Action,
     ActionDraft,
     ActionStatus,
     ActionType,
+    payload_hash,
     record_attempt,
     risk_for_action,
 )
@@ -76,6 +79,32 @@ from lifeops.domain.preferences import (
     normalise_key,
 )
 from lifeops.domain.search import SearchResults
+from lifeops.domain.service_request import (
+    ServiceRequest,
+    ServiceRequestDraft,
+    entity_to_service_request,
+    service_request_to_entity,
+)
+from lifeops.domain.service_request import cancel as cancel_service_request
+from lifeops.domain.service_request import complete as complete_service_request
+from lifeops.domain.service_request import open_request as open_service_request
+from lifeops.domain.service_request import record_booked as record_service_booked
+from lifeops.domain.service_request import (
+    record_booking_requested as record_service_booking_requested,
+)
+from lifeops.domain.service_request import record_contact as record_service_contact
+from lifeops.domain.service_request import record_quote as record_service_quote
+from lifeops.domain.service_request import record_waiting as record_service_waiting
+from lifeops.domain.shopping import (
+    ProductResult,
+    ShoppingItem,
+    ShoppingList,
+    ShoppingListDraft,
+    ShoppingListStatus,
+    SubstitutionDraft,
+    entity_to_shopping_list,
+    shopping_list_to_entity,
+)
 from lifeops.domain.tasks import (
     Task,
     TaskDraft,
@@ -84,6 +113,9 @@ from lifeops.domain.tasks import (
     VerificationState,
     apply_transition,
 )
+from lifeops.domain.telephony import CallResult, objective_from_payload
+from lifeops.domain.telephony import build_objective as build_call_objective
+from lifeops.domain.telephony import call_payload as build_call_payload
 from lifeops.domain.waiting import (
     WaitingDraft,
     WaitingItem,
@@ -144,6 +176,7 @@ from lifeops.repositories.interfaces import (
     WaitingRepository,
     WorldRepository,
 )
+from lifeops.telephony.service import TelephonyProviderService
 
 logger = logging.getLogger(__name__)
 
@@ -771,6 +804,46 @@ class ActionService:
         self._notify(ACTION_CHANGED, saved.id)
         return saved
 
+    async def update_payload(
+        self, action_id: str, *, payload: dict[str, object], client_id: str
+    ) -> Action:
+        """Replace a live action's payload, recomputing its hash (section 57).
+
+        Exists for flows where the *plan* an already-prepared Action carries
+        can still change before it commits — section 98's substitutions being
+        the first: a substitution applied to a cart after a human approved
+        checkout must not ride through on that approval. Recomputing the hash
+        is what ``begin_commit`` checks against the stored approval, so a
+        stale approval is refused there automatically; this method also
+        requests a fresh approval immediately, so the Console has something
+        to decide rather than a checkout silently stuck with no valid one.
+
+        Refuses once the action is no longer live: a finished action's record
+        of what actually happened must not be rewritten after the fact.
+        """
+        action = await self.get(action_id)
+        if not action.is_live:
+            raise ConflictError(
+                f"action {action.id} is {action.status}; its payload can no "
+                "longer be changed",
+                action_id=action.id,
+                reason="not_live",
+            )
+        now = now_iso(self._clock)
+        action.payload = dict(payload)
+        action.payload_hash = payload_hash(payload)
+        if action.type in ACTIONS_REQUIRING_APPROVAL:
+            action.status = ActionStatus.NEEDS_APPROVAL
+            approval = request_approval(action, now=now, requested_by=client_id)
+            await self._approvals.create(approval)
+            self._notify(APPROVAL_CHANGED, approval.id)
+        with operation(
+            "action.update_payload", action_id=action.id, client_id=client_id
+        ):
+            saved = await self._actions.update(action)
+        self._notify(ACTION_CHANGED, saved.id)
+        return saved
+
     async def record_result(
         self,
         action_id: str,
@@ -989,6 +1062,338 @@ class AppointmentService:
         return updated
 
 
+class ShoppingService:
+    """Grocery search, cart building, and checkout (BUILD_SPEC section 98).
+
+    Holds two dependencies, the same shape ``AppointmentService`` uses for
+    calendar + world: ``world`` for the durable ``ShoppingList`` record and
+    ``browser`` for the actual site interaction. ``execute_cart_build`` and
+    ``execute_checkout`` are called only from ``LifeOpsCore.execute_action``,
+    after an Action has been committed — this class never calls
+    ``prepare_action`` or ``verify_action`` itself, the discipline
+    ``AppointmentService`` documents for the identical reason.
+    """
+
+    def __init__(
+        self,
+        *,
+        world: WorldRepository,
+        browser: BrowserProviderService,
+        clock: Clock,
+        publish: Callable[[str], None] | None = None,
+    ) -> None:
+        self._world = world
+        self._browser = browser
+        self._clock = clock
+        self._publish_event = publish
+
+    def _notify(self, entity_id: str) -> None:
+        if self._publish_event is not None:
+            self._publish_event(entity_id)
+
+    async def get(self, list_id: str) -> ShoppingList:
+        entity = await self._world.get(list_id)
+        if entity is None:
+            raise NotFoundError(
+                f"no such shopping list: {list_id}", shopping_list_id=list_id
+            )
+        return entity_to_shopping_list(entity)
+
+    async def list(
+        self,
+        *,
+        status: ShoppingListStatus | None = None,
+        task_id: str | None = None,
+    ) -> list[ShoppingList]:
+        entities = await self._world.list_entities(types=[WorldEntityType.SHOPPING_LIST])
+        lists = [entity_to_shopping_list(e) for e in entities]
+        if status is not None:
+            lists = [item for item in lists if item.status is status]
+        if task_id is not None:
+            lists = [item for item in lists if item.task_id == task_id]
+        return sorted(lists, key=lambda item: item.created_at, reverse=True)
+
+    async def create(self, draft: ShoppingListDraft, *, client_id: str) -> ShoppingList:
+        now = now_iso(self._clock)
+        shopping_list = shopping_domain.create(draft, now=now, client_id=client_id)
+        await self._world.create(shopping_list_to_entity(shopping_list))
+        self._notify(shopping_list.id)
+        return shopping_list
+
+    async def add_items(
+        self, list_id: str, items: list[ShoppingItem], *, client_id: str
+    ) -> ShoppingList:
+        current = await self.get(list_id)
+        updated = shopping_domain.add_items(current, items, now=now_iso(self._clock))
+        await self._world.create(shopping_list_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+    async def apply_substitution(
+        self, list_id: str, draft: SubstitutionDraft, *, client_id: str
+    ) -> ShoppingList:
+        """Update the plan. Whether a live checkout Action's payload must be
+        refreshed with it — invalidating a stale approval (section 57) — is
+        decided by ``LifeOpsCore.apply_substitution``, which holds the Action
+        state this service does not."""
+        current = await self.get(list_id)
+        updated = shopping_domain.apply_substitution(
+            current, draft, now=now_iso(self._clock)
+        )
+        await self._world.create(shopping_list_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+    async def search(
+        self, query: str, *, store: str = "", limit: int = 10
+    ) -> list[ProductResult]:
+        return await self._browser.search(query, store=store, limit=limit)
+
+    # --- section 98 steps: execution, called from execute_action -------------
+
+    async def execute_cart_build(self, action: Action) -> tuple[str, str]:
+        list_id = action.payload.get("shopping_list_id")
+        if not list_id:
+            raise ValidationError(
+                "a build_grocery_cart action needs shopping_list_id in its payload",
+                action_id=action.id,
+            )
+        shopping_list = await self.get(str(list_id))
+        items = [ShoppingItem(**item) for item in (action.payload.get("items") or [])]
+        result = await self._browser.build_cart(
+            store=str(action.payload.get("store") or shopping_list.store), items=items
+        )
+        return result.cart_reference, f"cart built via browser worker: {result.cart_reference}"
+
+    async def execute_checkout(self, action: Action) -> tuple[str, str]:
+        list_id = action.payload.get("shopping_list_id")
+        if not list_id:
+            raise ValidationError(
+                "a submit_grocery_order action needs shopping_list_id in its payload",
+                action_id=action.id,
+            )
+        shopping_list = await self.get(str(list_id))
+        cart_reference = action.payload.get("cart_reference") or shopping_list.cart_reference
+        if not cart_reference:
+            raise ValidationError(
+                f"shopping list {list_id} has no cart to check out", action_id=action.id
+            )
+        items = [ShoppingItem(**item) for item in (action.payload.get("items") or [])]
+        result = await self._browser.submit_order(
+            store=str(action.payload.get("store") or shopping_list.store),
+            cart_reference=str(cart_reference),
+            items=items,
+        )
+        return (
+            result.order_reference,
+            f"order submitted via browser worker: {result.order_reference}",
+        )
+
+    # --- independent confirmation, called from verify_action_externally -----
+
+    async def confirm_cart_evidence(
+        self, action: Action, cart_reference: str
+    ) -> tuple[bool, str]:
+        store = await self._store_for(action)
+        return await self._browser.confirm_cart(store=store, cart_reference=cart_reference)
+
+    async def confirm_order_evidence(
+        self, action: Action, order_reference: str
+    ) -> tuple[bool, str]:
+        store = await self._store_for(action)
+        return await self._browser.confirm_order(store=store, order_reference=order_reference)
+
+    async def _store_for(self, action: Action) -> str:
+        store = str(action.payload.get("store") or "")
+        list_id = action.payload.get("shopping_list_id")
+        if not store and list_id:
+            shopping_list = await self.get(str(list_id))
+            store = shopping_list.store
+        return store
+
+    # --- local state sync, called only after verify_action succeeds ---------
+
+    async def mark_cart_building(
+        self, list_id: str, *, action_id: str, now: str
+    ) -> ShoppingList:
+        shopping_list = await self.get(list_id)
+        updated = shopping_domain.mark_cart_building(
+            shopping_list, action_id=action_id, now=now
+        )
+        await self._world.create(shopping_list_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+    async def mark_cart_built(
+        self, list_id: str, *, cart_reference: str, total_estimate: str | None, now: str
+    ) -> ShoppingList:
+        shopping_list = await self.get(list_id)
+        updated = shopping_domain.mark_cart_built(
+            shopping_list, cart_reference=cart_reference, total_estimate=total_estimate, now=now
+        )
+        await self._world.create(shopping_list_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+    async def mark_cart_failed(self, list_id: str, *, now: str) -> ShoppingList:
+        shopping_list = await self.get(list_id)
+        updated = shopping_domain.mark_cart_failed(shopping_list, now=now)
+        await self._world.create(shopping_list_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+    async def mark_submitting(
+        self, list_id: str, *, action_id: str, now: str
+    ) -> ShoppingList:
+        shopping_list = await self.get(list_id)
+        updated = shopping_domain.mark_submitting(shopping_list, action_id=action_id, now=now)
+        await self._world.create(shopping_list_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+    async def mark_order_verified(
+        self, list_id: str, *, order_reference: str, now: str
+    ) -> ShoppingList:
+        shopping_list = await self.get(list_id)
+        updated = shopping_domain.mark_submitted(
+            shopping_list, order_reference=order_reference, now=now
+        )
+        updated = shopping_domain.mark_verified(updated, now=now)
+        await self._world.create(shopping_list_to_entity(updated))
+        self._notify(updated.id)
+        return updated
+
+
+class ServiceRequestService:
+    """The section 67 provider workflow record (BUILD_SPEC sections 36, 97,
+    101), following ``AppointmentService``'s shape: a ``WorldRepository`` for
+    the local record, projected the same way ``Appointment`` is rather than
+    through a dedicated repository — there is nothing this record needs that
+    ``WorldEntity.facts`` cannot carry (section 105: no infrastructure this
+    workflow does not need).
+
+    Holds no reference to ``ActionService`` or ``WaitingService``: those stay
+    on ``LifeOpsCore``, which already orchestrates actions, approvals, and
+    waiting items, so a service request records their *ids* rather than
+    re-implementing calls into them.
+    """
+
+    def __init__(
+        self,
+        *,
+        world: WorldRepository,
+        clock: Clock,
+        publish: Callable[[str], None] | None = None,
+    ) -> None:
+        self._world = world
+        self._clock = clock
+        self._publish_event = publish
+
+    def _notify(self, entity_id: str) -> None:
+        if self._publish_event is not None:
+            self._publish_event(entity_id)
+
+    async def get(self, service_request_id: str) -> ServiceRequest:
+        entity = await self._world.get(service_request_id)
+        if entity is None:
+            raise NotFoundError(
+                f"no such service request: {service_request_id}",
+                service_request_id=service_request_id,
+            )
+        return entity_to_service_request(entity)
+
+    async def list(self, *, task_id: str | None = None) -> list[ServiceRequest]:
+        entities = await self._world.list_entities(types=[WorldEntityType.SERVICE_REQUEST])
+        requests = [entity_to_service_request(e) for e in entities]
+        if task_id is not None:
+            requests = [r for r in requests if r.task_id == task_id]
+        return sorted(requests, key=lambda r: r.created_at, reverse=True)
+
+    async def _save(self, request: ServiceRequest) -> ServiceRequest:
+        await self._world.create(service_request_to_entity(request))
+        self._notify(request.id)
+        return request
+
+    async def open(self, draft: ServiceRequestDraft, *, client_id: str) -> ServiceRequest:
+        """Section 101 step 1: identify the relevant asset, and open the
+        record research starts from."""
+        now = now_iso(self._clock)
+        request = open_service_request(draft, now=now, client_id=client_id)
+        return await self._save(request)
+
+    async def record_contact(
+        self, service_request_id: str, *, action_id: str, provider_entity_id: str | None
+    ) -> ServiceRequest:
+        """Section 101 steps 5-6: a call or quote request went out."""
+        request = await self.get(service_request_id)
+        updated = record_service_contact(
+            request,
+            action_id=action_id,
+            provider_entity_id=provider_entity_id,
+            now=now_iso(self._clock),
+        )
+        return await self._save(updated)
+
+    async def record_waiting(
+        self, service_request_id: str, *, waiting_item_id: str
+    ) -> ServiceRequest:
+        """Section 101 step 8: create a waiting item when necessary."""
+        request = await self.get(service_request_id)
+        updated = record_service_waiting(
+            request, waiting_item_id=waiting_item_id, now=now_iso(self._clock)
+        )
+        return await self._save(updated)
+
+    async def record_quote(
+        self,
+        service_request_id: str,
+        *,
+        availability: list[str] | None = None,
+        diagnostic_fee: str | None = None,
+    ) -> ServiceRequest:
+        """Section 101 steps 6-7: availability and the diagnostic fee."""
+        request = await self.get(service_request_id)
+        updated = record_service_quote(
+            request,
+            availability=availability,
+            diagnostic_fee=diagnostic_fee,
+            now=now_iso(self._clock),
+        )
+        return await self._save(updated)
+
+    async def record_booking_requested(
+        self, service_request_id: str, *, action_id: str
+    ) -> ServiceRequest:
+        """Section 101 step 10: prepare booking."""
+        request = await self.get(service_request_id)
+        updated = record_service_booking_requested(
+            request, action_id=action_id, now=now_iso(self._clock)
+        )
+        return await self._save(updated)
+
+    async def record_booked(
+        self, service_request_id: str, *, appointment_id: str
+    ) -> ServiceRequest:
+        """Section 101 step 13: called only after the booking is
+        independently verified, never merely because it executed."""
+        request = await self.get(service_request_id)
+        updated = record_service_booked(
+            request, appointment_id=appointment_id, now=now_iso(self._clock)
+        )
+        return await self._save(updated)
+
+    async def complete(self, service_request_id: str) -> ServiceRequest:
+        """Section 101 step 16: complete only after verification."""
+        request = await self.get(service_request_id)
+        updated = complete_service_request(request, now=now_iso(self._clock))
+        return await self._save(updated)
+
+    async def cancel(self, service_request_id: str) -> ServiceRequest:
+        request = await self.get(service_request_id)
+        updated = cancel_service_request(request, now=now_iso(self._clock))
+        return await self._save(updated)
+
+
 class LifeOpsCore:
     def __init__(
         self,
@@ -1004,6 +1409,8 @@ class LifeOpsCore:
         audit: AuditRepository | None = None,
         calendar: CalendarProviderService | None = None,
         email: EmailProviderService | None = None,
+        telephony: TelephonyProviderService | None = None,
+        browser: BrowserProviderService | None = None,
         clock: Clock | None = None,
         safe_mode: bool = False,
         events: EventBus | None = None,
@@ -1086,6 +1493,37 @@ class LifeOpsCore:
             else None
         )
         self._email_service = email
+        self._telephony_service = telephony
+        # Phase 8 (BUILD_SPEC section 97): a service request needs only the
+        # world repository, the same as documents — its contact/booking calls
+        # are ordinary ``prepare_action``/``create_waiting_item`` calls on
+        # this class, not a second copy of that orchestration.
+        self._service_request_service = (
+            ServiceRequestService(
+                world=world,
+                clock=self._clock,
+                publish=(
+                    lambda entity_id: self._publish(WORLD_CHANGED, entity_id=entity_id)
+                ),
+            )
+            if world is not None
+            else None
+        )
+        # Phase 9 (BUILD_SPEC section 98): shopping needs both a persistence
+        # path (``world``) and a provider adapter (``browser``), the same
+        # two-dependency shape ``AppointmentService`` uses for world+calendar.
+        self._shopping_service = (
+            ShoppingService(
+                world=world,
+                browser=browser,
+                clock=self._clock,
+                publish=(
+                    lambda entity_id: self._publish(WORLD_CHANGED, entity_id=entity_id)
+                ),
+            )
+            if world is not None and browser is not None
+            else None
+        )
 
     def _require(self, client: ClientIdentity, capability: Capability) -> None:
         require(client, capability, safe_mode=self.safe_mode)
@@ -1683,6 +2121,27 @@ class LifeOpsCore:
             )
         return self._email_service
 
+    def _telephony(self) -> TelephonyProviderService:
+        if self._telephony_service is None:
+            raise ConfigurationError(
+                "no telephony provider is configured", component="telephony"
+            )
+        return self._telephony_service
+
+    def _service_requests(self) -> ServiceRequestService:
+        if self._service_request_service is None:
+            raise ConfigurationError(
+                "no world repository is configured", component="service_requests"
+            )
+        return self._service_request_service
+
+    def _shopping(self) -> ShoppingService:
+        if self._shopping_service is None:
+            raise ConfigurationError(
+                "no browser provider is configured", component="shopping"
+            )
+        return self._shopping_service
+
     async def audit(
         self,
         client: ClientIdentity,
@@ -1949,8 +2408,9 @@ class LifeOpsCore:
 
     async def execute_action(self, client: ClientIdentity, *, action_id: str) -> Action:
         """Commit an action and perform its external effect (section 60 steps
-        2-3), for the three writes this phase implements: booking, cancelling,
-        and sending email.
+        2-3), for the writes this phase implements: booking, cancelling,
+        sending email, and — phase 8 — placing a provider phone call or
+        requesting a quote (BUILD_SPEC section 97).
 
         Deliberately not folded into ``commit_action``: committing spends the
         approval and is safe to call on its own; calling the provider is a
@@ -1966,6 +2426,10 @@ class LifeOpsCore:
             ActionType.BOOK_APPOINTMENT,
             ActionType.CANCEL_APPOINTMENT,
             ActionType.SEND_EMAIL,
+            ActionType.PLACE_PHONE_CALL,
+            ActionType.REQUEST_QUOTE,
+            ActionType.BUILD_GROCERY_CART,
+            ActionType.SUBMIT_GROCERY_ORDER,
         ):
             raise ValidationError(
                 f"no executor is wired for action type {action.type}",
@@ -1981,12 +2445,22 @@ class LifeOpsCore:
                 external_reference, _ = await self._appointments().execute_cancellation(
                     committed
                 )
+            elif committed.type in (ActionType.PLACE_PHONE_CALL, ActionType.REQUEST_QUOTE):
+                external_reference, _ = await self._execute_phone_call(client, committed)
+            elif committed.type is ActionType.BUILD_GROCERY_CART:
+                external_reference, _ = await self._shopping().execute_cart_build(committed)
+            elif committed.type is ActionType.SUBMIT_GROCERY_ORDER:
+                external_reference, _ = await self._shopping().execute_checkout(committed)
             else:
                 external_reference, _ = await self._execute_send_email(committed)
-        except (ProviderError, ValidationError) as exc:
-            return await self.record_action_result(
+        except (ProviderError, ValidationError, ConfigurationError) as exc:
+            result = await self.record_action_result(
                 client, action_id=action_id, succeeded=False, failure_reason=str(exc)
             )
+            list_id = committed.payload.get("shopping_list_id")
+            if committed.type is ActionType.BUILD_GROCERY_CART and list_id:
+                await self._shopping().mark_cart_failed(str(list_id), now=now_iso(self._clock))
+            return result
         return await self.record_action_result(
             client, action_id=action_id, succeeded=True, external_reference=external_reference
         )
@@ -1995,6 +2469,68 @@ class LifeOpsCore:
         draft = EmailSendDraft(**action.payload)
         message_id = await self._email().send(draft)
         return message_id, f"sent via email provider: {message_id}"
+
+    async def _execute_phone_call(
+        self, client: ClientIdentity, action: Action
+    ) -> tuple[str, str]:
+        """Place a PLACE_PHONE_CALL or REQUEST_QUOTE (BUILD_SPEC sections 68,
+        97). ``objective_from_payload`` re-validates the objective against the
+        section 97 hard rule (no charge/repair authority) even though
+        ``prepare_action`` already refused to prepare a payload that violated
+        it — defence in depth against a payload read back from storage having
+        been tampered with between prepare and execute.
+
+        Folds the structured result (section 69) back onto the ServiceRequest
+        the call belongs to, if the payload names one — recording a quote,
+        opening a WaitingItem when the provider did not answer with a usable
+        answer (section 101 step 8), or both.
+        """
+        objective = objective_from_payload(action.payload)
+        result = await self._telephony().dial(objective)
+        service_request_id = action.payload.get("service_request_id")
+        if service_request_id:
+            await self._apply_call_result(client, str(service_request_id), result)
+        reference = result.external_reference or action.idempotency_key
+        message = (
+            f"call {'connected' if result.connected else 'did not connect'}; "
+            f"objective_met={result.objective_met}"
+        )
+        return reference, message
+
+    async def _apply_call_result(
+        self, client: ClientIdentity, service_request_id: str, result: CallResult
+    ) -> None:
+        """Fold section 69's structured result back onto its service request.
+
+        A WaitingItem is section 54's — it always belongs to a Task
+        (``WaitingDraft.task_id`` is required) — so a service request opened
+        without one has nothing to attach a follow-up to and this silently
+        does not open one. Section 101's scenario always has a task (the
+        Electrician request starts from one), so this is a real but narrow
+        gap: a taskless service request that goes unanswered stays in
+        CONTACTING_PROVIDER with no durable follow-up record.
+        """
+        request = await self._service_requests().get(service_request_id)
+        if (not result.connected or result.follow_up_required) and (
+            request.waiting_item_id is None and request.task_id
+        ):
+            waiting = await self.create_waiting_item(
+                client,
+                WaitingDraft(
+                    task_id=request.task_id,
+                    subject=f"waiting to hear back: {request.subject}",
+                    waiting_on_entity_id=request.provider_entity_id,
+                ),
+            )
+            await self._service_requests().record_waiting(
+                service_request_id, waiting_item_id=waiting.id
+            )
+        if result.availability or result.diagnostic_fee:
+            await self._service_requests().record_quote(
+                service_request_id,
+                availability=result.availability or None,
+                diagnostic_fee=result.diagnostic_fee,
+            )
 
     async def verify_action_externally(
         self, client: ClientIdentity, *, action_id: str
@@ -2038,6 +2574,14 @@ class LifeOpsCore:
                 if ok
                 else f"not found in the Sent folder: {action.external_reference}"
             )
+        elif action.type is ActionType.BUILD_GROCERY_CART:
+            ok, evidence = await self._shopping().confirm_cart_evidence(
+                action, action.external_reference
+            )
+        elif action.type is ActionType.SUBMIT_GROCERY_ORDER:
+            ok, evidence = await self._shopping().confirm_order_evidence(
+                action, action.external_reference
+            )
         else:
             raise ValidationError(
                 f"no verifier is wired for action type {action.type}", action_id=action.id
@@ -2064,6 +2608,23 @@ class LifeOpsCore:
             elif verified.type is ActionType.CANCEL_APPOINTMENT:
                 await self._appointments().mark_cancelled(
                     str(appointment_id), action_id=verified.id, now=now
+                )
+
+        shopping_list_id = verified.payload.get("shopping_list_id")
+        if shopping_list_id and verified.external_reference:
+            now = now_iso(self._clock)
+            if verified.type is ActionType.BUILD_GROCERY_CART:
+                await self._shopping().mark_cart_built(
+                    str(shopping_list_id),
+                    cart_reference=verified.external_reference,
+                    total_estimate=None,
+                    now=now,
+                )
+            elif verified.type is ActionType.SUBMIT_GROCERY_ORDER:
+                await self._shopping().mark_order_verified(
+                    str(shopping_list_id),
+                    order_reference=verified.external_reference,
+                    now=now,
                 )
         return verified
 
@@ -2181,6 +2742,192 @@ class LifeOpsCore:
             ),
         )
 
+    # --- service requests (BUILD_SPEC sections 36, 67, 68, 97, 101) ----------
+    #
+    # Section 97's ordering: provider research, information gathering, phone
+    # calls, waiting, quote collection — then approval-gated booking. Reads
+    # and opening a request are gated on WRITE_WORLD/READ_WORLD, the same as
+    # any other world entity; contacting a provider spends whatever capability
+    # ``capability_for_action`` names for PLACE_PHONE_CALL/REQUEST_QUOTE
+    # (SEND_EXTERNAL_MESSAGE — policy/capabilities.py) through
+    # ``prepare_action``, and booking spends BOOK_APPOINTMENT through the
+    # existing calendar flow above. Nothing here invents a second approval
+    # gate or a second outbox; it only ties their outcomes back to the request
+    # that started them.
+
+    async def create_service_request(
+        self, client: ClientIdentity, draft: ServiceRequestDraft
+    ) -> ServiceRequest:
+        """Section 101 step 1: identify the relevant asset and open the
+        record the rest of the workflow updates."""
+        self._require(client, Capability.WRITE_WORLD)
+        request = await self._service_requests().open(draft, client_id=client.client_id)
+        await self.audit(
+            client, result="created", intent="create_service_request", target=request.id
+        )
+        return request
+
+    async def get_service_request(
+        self, client: ClientIdentity, *, service_request_id: str
+    ) -> ServiceRequest:
+        self._require(client, Capability.READ_WORLD)
+        return await self._service_requests().get(service_request_id)
+
+    async def list_service_requests(
+        self, client: ClientIdentity, *, task_id: str | None = None
+    ) -> list[ServiceRequest]:
+        self._require(client, Capability.READ_WORLD)
+        return await self._service_requests().list(task_id=task_id)
+
+    async def _prepare_provider_contact(
+        self,
+        client: ClientIdentity,
+        *,
+        service_request_id: str,
+        provider_entity_id: str,
+        objective: str,
+        collect: list[str] | None,
+        action_type: ActionType,
+    ) -> Action:
+        request = await self._service_requests().get(service_request_id)
+        call_objective = build_call_objective(
+            objective=objective, provider_entity_id=provider_entity_id, collect=collect
+        )
+        payload = build_call_payload(call_objective, service_request_id=service_request_id)
+        action = await self.prepare_action(
+            client,
+            ActionDraft(
+                type=action_type,
+                payload=payload,
+                task_id=request.task_id,
+                target_entity_id=provider_entity_id,
+            ),
+        )
+        await self._service_requests().record_contact(
+            service_request_id, action_id=action.id, provider_entity_id=provider_entity_id
+        )
+        return action
+
+    async def request_provider_call(
+        self,
+        client: ClientIdentity,
+        *,
+        service_request_id: str,
+        provider_entity_id: str,
+        objective: str,
+        collect: list[str] | None = None,
+    ) -> Action:
+        """Section 101 steps 5-6: call the provider (BUILD_SPEC section 68).
+        PLACE_PHONE_CALL is R2 and policy-controlled rather than approval-
+        gated by default (domain/actions.py) — Hermes places this call on its
+        own, matching section 101's flow. The objective's authority never
+        includes ``authorize_charge`` or ``authorize_repairs``
+        (domain/telephony.py's ``build_call_objective`` cannot construct
+        either as True) — section 97's hard rule and section 101 step 9,
+        enforced at construction rather than trusted to a prompt.
+        """
+        return await self._prepare_provider_contact(
+            client,
+            service_request_id=service_request_id,
+            provider_entity_id=provider_entity_id,
+            objective=objective,
+            collect=collect,
+            action_type=ActionType.PLACE_PHONE_CALL,
+        )
+
+    async def request_quote_by_phone(
+        self,
+        client: ClientIdentity,
+        *,
+        service_request_id: str,
+        provider_entity_id: str,
+        objective: str,
+        collect: list[str] | None = None,
+    ) -> Action:
+        """Section 101 step 7's diagnostic-fee collection, via REQUEST_QUOTE.
+        Uses the same telephony transport as ``request_provider_call``:
+        section 105's anti-overengineering gate does not justify a second
+        channel for what is, from LifeOps' side, the same constrained-
+        objective call with a different label.
+        """
+        return await self._prepare_provider_contact(
+            client,
+            service_request_id=service_request_id,
+            provider_entity_id=provider_entity_id,
+            objective=objective,
+            collect=collect,
+            action_type=ActionType.REQUEST_QUOTE,
+        )
+
+    async def request_service_booking(
+        self, client: ClientIdentity, *, service_request_id: str, appointment_id: str
+    ) -> Action:
+        """Section 101 step 10: prepare the booking. BOOK_APPOINTMENT is R3
+        and always requires approval (domain/actions.py) — this only gets the
+        action into NEEDS_APPROVAL; nothing here books anything (section 101
+        step 11: request approval before booking)."""
+        action = await self.book_appointment(client, appointment_id=appointment_id)
+        await self._service_requests().record_booking_requested(
+            service_request_id, action_id=action.id
+        )
+        return action
+
+    async def confirm_service_booking(
+        self, client: ClientIdentity, *, service_request_id: str, appointment_id: str
+    ) -> ServiceRequest:
+        """Section 101 step 13: fold a verified booking into its service
+        request. Requires the appointment to already be BOOKED — reachable
+        only through ``verify_action_externally``'s independent confirmation
+        (AGENTS.md safety invariant 3: external completion requires
+        evidence) — so a caller cannot mark a request booked on the strength
+        of a hold or an unverified action.
+        """
+        self._require(client, Capability.WRITE_WORLD)
+        appointment = await self._appointments().get(appointment_id)
+        if appointment.status is not AppointmentStatus.BOOKED:
+            raise ValidationError(
+                f"appointment {appointment_id} is {appointment.status}, not booked; "
+                "verify the booking before recording it against the service request",
+                appointment_id=appointment_id,
+            )
+        request = await self._service_requests().record_booked(
+            service_request_id, appointment_id=appointment_id
+        )
+        await self.audit(
+            client,
+            result="booked",
+            intent="confirm_service_booking",
+            target=request.id,
+            action=request.booking_action_id,
+        )
+        return request
+
+    async def complete_service_request(
+        self, client: ClientIdentity, *, service_request_id: str
+    ) -> ServiceRequest:
+        """Section 101 step 16: mark the request completed. The status
+        machine (domain/service_request.py) only allows COMPLETED from
+        BOOKED, so this cannot run ahead of ``confirm_service_booking`` — the
+        same "no completion without verification" discipline
+        domain/tasks.py's state machine applies to tasks.
+        """
+        self._require(client, Capability.WRITE_WORLD)
+        request = await self._service_requests().complete(service_request_id)
+        await self.audit(
+            client, result="completed", intent="complete_service_request", target=request.id
+        )
+        return request
+
+    async def cancel_service_request(
+        self, client: ClientIdentity, *, service_request_id: str
+    ) -> ServiceRequest:
+        self._require(client, Capability.WRITE_WORLD)
+        request = await self._service_requests().cancel(service_request_id)
+        await self.audit(
+            client, result="cancelled", intent="cancel_service_request", target=request.id
+        )
+        return request
+
     # --- email (BUILD_SPEC sections 61, 64, 96) -------------------------------
     #
     # Reads are gated on READ_WORLD, the same as calendar reads. Sending and
@@ -2246,6 +2993,170 @@ class LifeOpsCore:
             target=document.id,
         )
         return document
+
+    # --- shopping (BUILD_SPEC section 98) -------------------------------------
+    #
+    # Section 98: authenticated browser worker, search/research, cart
+    # building, substitutions, approval-gated checkout, verification. Cart
+    # building (R1, section 56: a cart is reversible and commits nothing) is
+    # automatic and prepares *and* executes its Action in one call; checkout
+    # (R3: "Shopping checkout" — always approved) only prepares, the same
+    # two-step split ``book_appointment`` and ``prepare_send_email`` use.
+
+    async def search_shopping(
+        self, client: ClientIdentity, *, query: str, store: str = "", limit: int = 10
+    ) -> list[ProductResult]:
+        """Section 98's "search/research". Read-only: gated on
+        SHOPPING_CHECKOUT because it is still the browser worker doing the
+        looking, not a generic web search — the same capability that gates
+        every other shopping step."""
+        self._require(client, Capability.SHOPPING_CHECKOUT)
+        return await self._shopping().search(query, store=store, limit=limit)
+
+    async def create_shopping_list(
+        self, client: ClientIdentity, draft: ShoppingListDraft
+    ) -> ShoppingList:
+        """Open a new list. Local and reversible (R1): no Action, no
+        approval — the same reasoning ``create_appointment_hold`` documents."""
+        self._require(client, Capability.SHOPPING_CHECKOUT)
+        shopping_list = await self._shopping().create(draft, client_id=client.client_id)
+        await self.audit(
+            client, result="created", intent="create_shopping_list", target=shopping_list.id
+        )
+        return shopping_list
+
+    async def get_shopping_list(
+        self, client: ClientIdentity, *, list_id: str
+    ) -> ShoppingList:
+        self._require(client, Capability.SHOPPING_CHECKOUT)
+        return await self._shopping().get(list_id)
+
+    async def list_shopping_lists(
+        self,
+        client: ClientIdentity,
+        *,
+        status: ShoppingListStatus | None = None,
+        task_id: str | None = None,
+    ) -> list[ShoppingList]:
+        self._require(client, Capability.SHOPPING_CHECKOUT)
+        return await self._shopping().list(status=status, task_id=task_id)
+
+    async def add_shopping_items(
+        self, client: ClientIdentity, *, list_id: str, items: list[ShoppingItem]
+    ) -> ShoppingList:
+        self._require(client, Capability.SHOPPING_CHECKOUT)
+        updated = await self._shopping().add_items(
+            list_id, items, client_id=client.client_id
+        )
+        await self.audit(
+            client, result="items_added", intent="add_shopping_items", target=updated.id
+        )
+        return updated
+
+    async def apply_substitution(
+        self, client: ClientIdentity, *, list_id: str, draft: SubstitutionDraft
+    ) -> ShoppingList:
+        """Section 98's substitutions — a safety surface, not a convenience
+        (this is why it is gated the same as checkout itself). If this list
+        has a live checkout Action, its payload is refreshed to the new plan,
+        which invalidates any approval already granted for the old one
+        (section 57's binding, enforced as arithmetic by
+        ``ActionService.update_payload``) — a substitution applied after a
+        human approved the cart cannot ride through on that approval.
+        """
+        self._require(client, Capability.SHOPPING_CHECKOUT)
+        updated = await self._shopping().apply_substitution(
+            list_id, draft, client_id=client.client_id
+        )
+        if updated.checkout_action_id:
+            existing = await self._actions().get(updated.checkout_action_id)
+            if existing.is_live:
+                await self._actions().update_payload(
+                    updated.checkout_action_id,
+                    payload=shopping_domain.checkout_payload(updated),
+                    client_id=client.client_id,
+                )
+        await self.audit(
+            client,
+            result="substitution_applied",
+            intent="apply_substitution",
+            target=updated.id,
+            risk="low",
+            item_name=draft.item_name,
+            substituted_with=draft.substituted_with,
+        )
+        return updated
+
+    async def build_grocery_cart(self, client: ClientIdentity, *, list_id: str) -> Action:
+        """Section 98's cart building — R1, automatic (section 56: "a cart is
+        reversible and commits nothing, so no approval"). This prepares *and*
+        executes the Action in one call, because R1 has no human step to wait
+        for; ``execute_action`` still runs the full commit/execute/record
+        sequence, so the outbox record is identical to any other action.
+        """
+        self._require(client, Capability.SHOPPING_CHECKOUT)
+        shopping_list = await self._shopping().get(list_id)
+        if shopping_list.status not in (
+            ShoppingListStatus.DRAFT,
+            ShoppingListStatus.CART_FAILED,
+        ):
+            raise ValidationError(
+                f"shopping list {list_id} is {shopping_list.status}; a cart "
+                "cannot be (re)built from this state",
+                shopping_list_id=list_id,
+            )
+        if not shopping_list.items:
+            raise ValidationError(
+                f"shopping list {list_id} has no items to build a cart from",
+                shopping_list_id=list_id,
+            )
+        payload = shopping_domain.build_cart_payload(shopping_list)
+        action = await self.prepare_action(
+            client,
+            ActionDraft(
+                type=ActionType.BUILD_GROCERY_CART,
+                payload=payload,
+                task_id=shopping_list.task_id,
+                target_entity_id=shopping_list.id,
+            ),
+        )
+        await self._shopping().mark_cart_building(
+            list_id, action_id=action.id, now=now_iso(self._clock)
+        )
+        result = await self.execute_action(client, action_id=action.id)
+        if result.status is ActionStatus.FAILED:
+            await self._shopping().mark_cart_failed(list_id, now=now_iso(self._clock))
+        return result
+
+    async def submit_grocery_order(self, client: ClientIdentity, *, list_id: str) -> Action:
+        """Section 98's approval-gated checkout — R3, always approved
+        (section 56). This only prepares the Action; a human must approve it
+        in the Console (APPROVE_ACTION) before ``execute_action`` may commit
+        and run it, the same two-step split ``book_appointment`` uses.
+        """
+        self._require(client, Capability.SHOPPING_CHECKOUT)
+        shopping_list = await self._shopping().get(list_id)
+        if shopping_list.status is not ShoppingListStatus.CART_BUILT:
+            raise ValidationError(
+                f"shopping list {list_id} is {shopping_list.status}, not a "
+                "built cart; build_grocery_cart must succeed and be "
+                "independently verified first",
+                shopping_list_id=list_id,
+            )
+        payload = shopping_domain.checkout_payload(shopping_list)
+        action = await self.prepare_action(
+            client,
+            ActionDraft(
+                type=ActionType.SUBMIT_GROCERY_ORDER,
+                payload=payload,
+                task_id=shopping_list.task_id,
+                target_entity_id=shopping_list.id,
+            ),
+        )
+        await self._shopping().mark_submitting(
+            list_id, action_id=action.id, now=now_iso(self._clock)
+        )
+        return action
 
     # --- search -------------------------------------------------------------
 

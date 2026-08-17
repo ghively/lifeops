@@ -280,6 +280,52 @@ for those facts, not a parallel email-specific copy of them.
 
 ---
 
+## Shopping (Phase 9)
+
+```
+(:ShoppingList {id, display_name, facts_json, created_at, updated_at,
+                created_by_client})
+```
+
+Added in Phase 9 (BUILD_SPEC sections 36, 56, 98), projected through the same
+world repository as `Appointment`/`Document` — one more label the `facts_json`
+shape already fit, rather than a dedicated repository. `domain/shopping.py`
+keeps the richer `ShoppingList`/`ShoppingItem` models; the graph node is a
+projection, exactly the pattern `domain/calendar.py` established for
+`Appointment`.
+
+`ShoppingList.facts` carries `store`, `task_id`, `status` (`draft` /
+`cart_building` / `cart_built` / `cart_failed` / `submitting` / `submitted` /
+`verified` / `failed` / `cancelled`), `cart_reference`, `order_reference`,
+`cart_action_id`, `checkout_action_id`, `total_estimate`, and `items_json` — a
+JSON-encoded array of `ShoppingItem`, deliberately bypassing `validate_facts`'
+500-character bound the same way `Appointment`'s and `ServiceRequest`'s facts
+already do; a real cart is exactly the structured content that bound exists to
+keep out of the generic facts bag.
+
+`ShoppingList` is outside `CREATABLE_ENTITY_TYPES` (the generic `POST
+/world/entities` path) for the same reason `Appointment` is: it has a
+dedicated write path (`create_shopping_list`) with its own invariants a bare
+`display_name` + facts bag would bypass. It is in the wider
+`WORLD_MANAGED_ENTITY_TYPES`.
+
+Two Actions drive the lifecycle, both declared in `domain/actions.py` before
+this phase existed: `build_grocery_cart` is R1 (section 56 — "a cart is
+reversible and commits nothing", so no approval) and `submit_grocery_order` is
+R3 (section 56's "Shopping checkout" — always approved). A substitution
+applied to a list with a live checkout Action refreshes that Action's payload
+and its hash (`ActionService.update_payload`), which invalidates any approval
+already granted for the old payload (section 57) — the same "material change
+invalidates approval" arithmetic `TestApprovalBinding` pins for booking,
+mirrored for shopping in `TestSubstitutionInvalidatesApproval`
+(`tests/unit/test_shopping.py`).
+
+The browser worker itself (`browser/provider.py`'s `BrowserWorker` Protocol)
+has no NornicDB presence — it is a runtime capability, not world state, the
+same way the calendar and email providers are not NornicDB nodes either.
+
+---
+
 ## Durable work (Phase 4)
 
 Added in Phase 4 (BUILD_SPEC sections 13, 51, 54, 55, 57-62). Four labels,
@@ -390,6 +436,7 @@ CREATE CONSTRAINT lifeops_audit_id      FOR (r:AuditRecord) REQUIRE r.id IS UNIQ
 CREATE CONSTRAINT lifeops_appointment_id FOR (a:Appointment) REQUIRE a.id IS UNIQUE
 CREATE CONSTRAINT lifeops_event_id      FOR (e:Event)       REQUIRE e.id IS UNIQUE
 CREATE CONSTRAINT lifeops_document_id   FOR (d:Document)    REQUIRE d.id IS UNIQUE
+CREATE CONSTRAINT lifeops_shopping_list_id FOR (s:ShoppingList) REQUIRE s.id IS UNIQUE
 
 CREATE INDEX lifeops_preference_subject_key FOR (p:Preference) ON (p.subject_id, p.key)
 CREATE INDEX lifeops_task_state             FOR (t:Task)       ON (t.state)

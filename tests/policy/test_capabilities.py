@@ -51,14 +51,14 @@ class TestClientResolution:
 
 class TestManifest:
     def test_no_client_holds_a_capability_its_phase_has_not_reached(self) -> None:
-        # FINANCIAL_PAYMENT and SHOPPING_CHECKOUT belong to phases 9 and 10,
-        # which have not landed — a grant here would be authority with no
-        # workflow behind it. BOOK_APPOINTMENT and SEND_EXTERNAL_MESSAGE were
-        # in the same position through phase 6; phase 7 (section 96) is the
-        # one that grants them, and only to Hermes and the Console (below).
+        # FINANCIAL_PAYMENT belongs to phase 10, which has not landed — a
+        # grant here would be authority with no workflow behind it.
+        # BOOK_APPOINTMENT, SEND_EXTERNAL_MESSAGE, and SHOPPING_CHECKOUT were
+        # in the same position before their phases; phase 7 (section 96)
+        # grants the first two and phase 9 (section 98) grants the third, and
+        # only to Hermes and the Console (below).
         for client in all_clients():
             assert not client.has(Capability.FINANCIAL_PAYMENT), client.client_id
-            assert not client.has(Capability.SHOPPING_CHECKOUT), client.client_id
 
     def test_only_hermes_and_the_console_may_book_or_message_externally(self) -> None:
         # Section 96: Hermes is the client that reads a calendar and drafts an
@@ -72,6 +72,17 @@ class TestManifest:
         for client in (INTERACTIVE_CLIENT, CODING_CLIENT):
             assert not client.has(Capability.BOOK_APPOINTMENT), client.client_id
             assert not client.has(Capability.SEND_EXTERNAL_MESSAGE), client.client_id
+
+    def test_only_hermes_and_the_console_may_shop(self) -> None:
+        # Section 98: Hermes builds and submits carts on the user's behalf,
+        # and the Console is the user acting directly — both need to *prepare*
+        # these Actions. SHOPPING_CHECKOUT is not a way around approval:
+        # submit_grocery_order is R3 and always needs APPROVE_ACTION
+        # (Console-only) before execute_action may run it.
+        for client in (HERMES, CONSOLE):
+            assert client.has(Capability.SHOPPING_CHECKOUT), client.client_id
+        for client in (INTERACTIVE_CLIENT, CODING_CLIENT):
+            assert not client.has(Capability.SHOPPING_CHECKOUT), client.client_id
 
     def test_coding_agent_cannot_rewrite_the_users_preferences(self) -> None:
         # Its job is the repository, not the user's life.

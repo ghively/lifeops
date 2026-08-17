@@ -609,3 +609,267 @@ class TestPhase7EntityRoundTrip:
 
         listed = {e.id for e in await repo.list_entities(limit=2000)}
         assert document.id in listed
+
+
+class TestPhase8EntityRoundTrip:
+    """ServiceRequest (BUILD_SPEC sections 36, 67, 97, 101), projected the
+    same way Appointment is — outside ``CREATABLE_ENTITY_TYPES``, built with
+    the domain conversion helpers, accepted by ``WORLD_MANAGED_ENTITY_TYPES``.
+    Reuses ``phase7_cleanup``: its teardown behaviour is not phase-specific.
+    """
+
+    async def test_a_service_request_round_trips_through_its_facts(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.service_request import (
+            ServiceRequest,
+            ServiceRequestStatus,
+            entity_to_service_request,
+            service_request_to_entity,
+        )
+
+        repo, _, _ = world
+        request = ServiceRequest(
+            id=f"servicerequest_{test_label}",
+            subject="Living Room Outlet repair",
+            status=ServiceRequestStatus.QUOTE_COLLECTED,
+            task_id=f"task_{test_label}",
+            asset_entity_id=f"asset_outlet_{test_label}",
+            provider_entity_id=f"provider_abc_electric_{test_label}",
+            availability=["Thursday 1:00-3:00 PM", "Friday 9:00-11:00 AM"],
+            diagnostic_fee="$89",
+            contact_action_id=f"action_{test_label}",
+            notes="Behind the TV",
+            created_at=TS,
+            updated_at=TS,
+            created_by_client="hermes-personal",
+        )
+        phase7_cleanup.append(request.id)
+
+        created = await repo.create(service_request_to_entity(request))
+        assert created.id == request.id
+
+        fetched = await repo.get(request.id)
+        assert fetched is not None
+        roundtripped = entity_to_service_request(fetched)
+        assert roundtripped.subject == request.subject
+        assert roundtripped.status is ServiceRequestStatus.QUOTE_COLLECTED
+        assert roundtripped.task_id == request.task_id
+        assert roundtripped.asset_entity_id == request.asset_entity_id
+        assert roundtripped.provider_entity_id == request.provider_entity_id
+        assert roundtripped.availability == request.availability
+        assert roundtripped.diagnostic_fee == "$89"
+        assert roundtripped.contact_action_id == request.contact_action_id
+        assert roundtripped.booking_action_id is None
+        assert roundtripped.appointment_id is None
+
+    async def test_rewriting_a_service_request_updates_rather_than_duplicates(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        """The section 67 workflow re-persists the same id as it advances
+        (record_contact, record_quote, record_booked, ...); MERGE must update
+        it in place rather than create a second node."""
+        from lifeops.domain.service_request import (
+            ServiceRequestDraft,
+            ServiceRequestStatus,
+            entity_to_service_request,
+            open_request,
+            record_booked,
+            record_booking_requested,
+            record_contact,
+            record_quote,
+            service_request_to_entity,
+        )
+
+        repo, _, _ = world
+        request = open_request(
+            ServiceRequestDraft(subject=f"Furnace repair {test_label}"),
+            now=TS,
+            client_id="hermes-personal",
+        )
+        phase7_cleanup.append(request.id)
+        await repo.create(service_request_to_entity(request))
+
+        request = record_contact(
+            request,
+            action_id=f"action_call_{test_label}",
+            provider_entity_id=f"provider_hvac_{test_label}",
+            now=TS,
+        )
+        await repo.create(service_request_to_entity(request))
+
+        request = record_quote(
+            request, availability=["Monday 9-11 AM"], diagnostic_fee="$120", now=TS
+        )
+        await repo.create(service_request_to_entity(request))
+
+        request = record_booking_requested(
+            request, action_id=f"action_book_{test_label}", now=TS
+        )
+        await repo.create(service_request_to_entity(request))
+
+        request = record_booked(
+            request, appointment_id=f"appointment_{test_label}", now=TS
+        )
+        await repo.create(service_request_to_entity(request))
+
+        listed = [e for e in await repo.list_entities() if e.id == request.id]
+        assert len(listed) == 1
+        roundtripped = entity_to_service_request(listed[0])
+        assert roundtripped.status is ServiceRequestStatus.BOOKED
+        assert roundtripped.appointment_id == f"appointment_{test_label}"
+        assert roundtripped.diagnostic_fee == "$120"
+
+    async def test_service_requests_are_included_in_a_full_listing(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.service_request import (
+            ServiceRequestDraft,
+            open_request,
+            service_request_to_entity,
+        )
+
+        repo, _, _ = world
+        request = open_request(
+            ServiceRequestDraft(subject=f"Listing check {test_label}"),
+            now=TS,
+            client_id="hermes-personal",
+        )
+        phase7_cleanup.append(request.id)
+        await repo.create(service_request_to_entity(request))
+
+        listed = {e.id for e in await repo.list_entities(limit=2000)}
+        assert request.id in listed
+
+
+class TestPhase9EntityRoundTrip:
+    """ShoppingList (BUILD_SPEC sections 36, 56, 98), projected the same way
+    Appointment and ServiceRequest are — outside ``CREATABLE_ENTITY_TYPES``,
+    built with the domain conversion helpers, accepted by
+    ``WORLD_MANAGED_ENTITY_TYPES``. Reuses ``phase7_cleanup``.
+
+    Items and substitutions are JSON-encoded into a single ``items_json``
+    fact (module docstring: NornicDB property values cannot be maps, and this
+    deliberately bypasses ``validate_facts``'s 500-character bound the same
+    way Appointment/ServiceRequest already do) — this is what proves that
+    round-trips through the real Cypher path, not only the fake.
+    """
+
+    async def test_a_shopping_list_round_trips_through_its_facts(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.shopping import (
+            ShoppingItem,
+            ShoppingList,
+            ShoppingListStatus,
+            entity_to_shopping_list,
+            shopping_list_to_entity,
+        )
+
+        repo, _, _ = world
+        shopping_list = ShoppingList(
+            id=f"shoppinglist_{test_label}",
+            title="Weekly groceries",
+            store="fakemart",
+            task_id=f"task_{test_label}",
+            status=ShoppingListStatus.DRAFT,
+            items=[
+                ShoppingItem(name="Milk", quantity="1 gal"),
+                ShoppingItem(
+                    name="Eggs",
+                    quantity="1 dozen",
+                    substituted_with="Egg substitute",
+                    substitution_reason="out of stock",
+                ),
+            ],
+            created_at=TS,
+            updated_at=TS,
+            created_by_client="hermes-personal",
+        )
+        phase7_cleanup.append(shopping_list.id)
+
+        created = await repo.create(shopping_list_to_entity(shopping_list))
+        assert created.id == shopping_list.id
+
+        fetched = await repo.get(shopping_list.id)
+        assert fetched is not None
+        roundtripped = entity_to_shopping_list(fetched)
+        assert roundtripped.title == shopping_list.title
+        assert roundtripped.store == "fakemart"
+        assert roundtripped.task_id == shopping_list.task_id
+        assert roundtripped.status is ShoppingListStatus.DRAFT
+        assert [item.name for item in roundtripped.items] == ["Milk", "Eggs"]
+        assert roundtripped.items[1].substituted_with == "Egg substitute"
+
+    async def test_rewriting_a_shopping_list_updates_rather_than_duplicates(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        """The section 98 flow re-persists the same id as it advances
+        (mark_cart_building, mark_cart_built, mark_submitting,
+        mark_order_verified, ...); MERGE must update it in place rather than
+        create a second node — and a substitution applied mid-flow must
+        survive that update."""
+        from lifeops.domain.shopping import (
+            ShoppingItem,
+            ShoppingListDraft,
+            ShoppingListStatus,
+            SubstitutionDraft,
+            apply_substitution,
+            create,
+            entity_to_shopping_list,
+            mark_cart_built,
+            mark_verified,
+            shopping_list_to_entity,
+        )
+
+        repo, _, _ = world
+        shopping_list = create(
+            ShoppingListDraft(
+                title=f"Groceries {test_label}",
+                store="fakemart",
+                items=[ShoppingItem(name="Milk")],
+            ),
+            now=TS,
+            client_id="hermes-personal",
+        )
+        phase7_cleanup.append(shopping_list.id)
+        await repo.create(shopping_list_to_entity(shopping_list))
+
+        shopping_list = apply_substitution(
+            shopping_list,
+            SubstitutionDraft(item_name="Milk", substituted_with="Oat milk"),
+            now=TS,
+        )
+        await repo.create(shopping_list_to_entity(shopping_list))
+
+        shopping_list = mark_cart_built(
+            shopping_list, cart_reference="cart-1", total_estimate="4.99", now=TS
+        )
+        await repo.create(shopping_list_to_entity(shopping_list))
+
+        shopping_list = mark_verified(shopping_list, now=TS)
+        await repo.create(shopping_list_to_entity(shopping_list))
+
+        listed = [e for e in await repo.list_entities() if e.id == shopping_list.id]
+        assert len(listed) == 1
+        roundtripped = entity_to_shopping_list(listed[0])
+        assert roundtripped.status is ShoppingListStatus.VERIFIED
+        assert roundtripped.cart_reference == "cart-1"
+        assert roundtripped.items[0].substituted_with == "Oat milk"
+
+    async def test_shopping_lists_are_included_in_a_full_listing(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.shopping import ShoppingListDraft, create, shopping_list_to_entity
+
+        repo, _, _ = world
+        shopping_list = create(
+            ShoppingListDraft(title=f"Listing check {test_label}"),
+            now=TS,
+            client_id="hermes-personal",
+        )
+        phase7_cleanup.append(shopping_list.id)
+        await repo.create(shopping_list_to_entity(shopping_list))
+
+        listed = {e.id for e in await repo.list_entities(limit=2000)}
+        assert shopping_list.id in listed
