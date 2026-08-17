@@ -2,8 +2,8 @@
 
 A personal operating system built around the Hermes assistant.
 
-**Status: Phase 0 complete.** The spine is proven end to end; the phases that
-follow build on it. See [Phase status](#phase-status).
+**Status: Phase 3 complete.** The spine is proven end to end and the Console,
+memory, and world layers are built on it. See [Phase status](#phase-status).
 
 ```
 Hermes            the assistant — conversation, planning, tools, skills
@@ -76,7 +76,7 @@ changes/requests/ code change requests raised by Hermes (Phase 11)
 | 0 | Core spine: Hermes → LifeOps MCP → LifeOps Core → NornicDB | **Complete** |
 | 1 | Console foundation: Today, Needs Attention, Waiting, Search, Activity | **Complete** |
 | 2 | Hermes memory provider backed by NornicDB | **Complete** |
-| 3 | World graph and entity inspector | Not started |
+| 3 | World graph and entity inspector | **Complete** |
 | 4 | Durable work: waiting items, due-work worker, verification | Not started |
 | 5 | Configuration and the ElevenLabs voice path | Not started |
 | 6 | Local RTX voice | Not started |
@@ -121,12 +121,38 @@ changes/requests/ code change requests raised by Hermes (Phase 11)
 - The pre-LifeOps `legacy/` tree is deleted; its patterns are ported or in git
   history.
 
+### What Phase 3 adds
+
+- A world model of `Household`, `Provider`, and `Asset` entities alongside the
+  existing `Person`, each with a bag of current facts and canonical slug IDs.
+- Preferences drawn in the graph as BUILD_SPEC section 15 shows them —
+  `Gene ─PREFERS→ "After 10 AM"` — projected from the preference layer rather
+  than duplicated, and only while current.
+- The full BUILD_SPEC section 39 relationship vocabulary — all twenty types,
+  in the spec's order. Several are written by other aggregates already
+  (`ASSIGNED_TO` and `ABOUT` by tasks, `PREFERS` by preferences, `SUPERSEDES`
+  by both temporal chains); the world graph reads one vocabulary rather than
+  each layer keeping its own.
+- The World screen: an interactive graph with zoom, pan, fit-view, entity-type
+  and relationship filters, search-to-node, click-to-expand a neighborhood,
+  and click-again to collapse the branch.
+- The entity inspector (section 16): current facts, named relationships,
+  related tasks and memories, history, and provenance — with unlink as the
+  only write, because the graph is not a database editor.
+- Four read-only MCP tools — `find_person`, `get_provider`,
+  `get_related_entities`, `get_entity_history` — bringing the sanctioned tool
+  surface to twelve. World *writes* stay on the Console: shaping the graph is
+  the user's act, not the model's.
+- Entity history that states its own scope. World facts are current-only in
+  this phase, so history reports the memory record referencing an entity —
+  closed versions included — and says so in a `covers` field rather than
+  implying it is the durable audit log (Phase 4).
+
 ### What Phase 0 deliberately does not deliver
 
-Voice, telephony, email, calendar, browser, shopping, payments, memory, and the
-World graph. Their provider entries exist and are configurable; their adapters
-arrive in the phases above, and the Console says so rather than pretending
-otherwise.
+Voice, telephony, email, calendar, browser, shopping, and payments. Their
+provider entries exist and are configurable; their adapters arrive in the
+phases above, and the Console says so rather than pretending otherwise.
 
 ---
 

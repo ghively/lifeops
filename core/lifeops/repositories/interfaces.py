@@ -19,6 +19,12 @@ from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
 from lifeops.domain.tasks import Task, TaskState
+from lifeops.domain.world import (
+    WorldEdge,
+    WorldEntity,
+    WorldEntityType,
+    WorldRelationship,
+)
 
 
 @runtime_checkable
@@ -87,6 +93,15 @@ class TaskRepository(Protocol):
         """Case-insensitive substring match over title and description."""
         ...
 
+    async def list_related_to_entity(self, entity_id: str) -> list[Task]:
+        """Tasks whose ``related_entity_ids`` contain the entity.
+
+        The property stays the source of truth for reads even though Phase 3
+        also writes ``(:Task)-[:ABOUT]->(entity)`` edges: pre-Phase-3 tasks
+        carry only the property and must stay readable.
+        """
+        ...
+
     async def create(self, task: Task) -> Task: ...
 
     async def update(self, task: Task) -> Task:
@@ -150,6 +165,81 @@ class MemoryRepository(Protocol):
     async def invalidate(
         self, memory_id: str, *, at: str, reason: str | None = None
     ) -> MemoryRecord | None: ...
+
+    async def list_for_entity(
+        self, entity_id: str, *, current_only: bool = True, limit: int = 50
+    ) -> list[MemoryRecord]:
+        """Memories whose ``entity_ids`` reference the entity.
+
+        ``current_only=False`` returns closed versions too — that is what
+        ``entity_history`` reports as the Phase 3 audit-available truth about
+        an entity.
+        """
+        ...
+
+
+@runtime_checkable
+class WorldRepository(Protocol):
+    """Persistence for the world graph (BUILD_SPEC sections 36–39, 92).
+
+    Covers reads across all four Phase 3 entity labels (Person, Household,
+    Provider, Asset) as graph projections, plus the world relationship edges
+    between them. Writes are limited to the three new types — persons keep
+    their own richer model and repository.
+    """
+
+    async def get(self, entity_id: str) -> WorldEntity | None:
+        """Any world entity by canonical id, whatever its label."""
+        ...
+
+    async def exists(self, entity_id: str) -> bool: ...
+
+    async def create(self, entity: WorldEntity) -> WorldEntity:
+        """Persist a Household, Provider, or Asset (never a Person)."""
+        ...
+
+    async def list_entities(
+        self, *, types: list[WorldEntityType] | None = None, limit: int = 500
+    ) -> list[WorldEntity]: ...
+
+    async def list_edges(
+        self,
+        *,
+        rel_types: list[WorldRelationship] | None = None,
+        limit: int = 2000,
+    ) -> list[WorldEdge]:
+        """Every world relationship edge. ``rel_types=None`` means the whole
+        implemented vocabulary, not every edge in the database."""
+        ...
+
+    async def list_edges_for(
+        self, entity_id: str, *, rel_types: list[WorldRelationship] | None = None
+    ) -> list[WorldEdge]:
+        """Edges where the entity is source or target."""
+        ...
+
+    async def neighborhood(
+        self,
+        entity_id: str,
+        *,
+        depth: int,
+        rel_types: list[WorldRelationship] | None = None,
+    ) -> tuple[list[WorldEntity], list[WorldEdge]]:
+        """Entities and edges within ``depth`` hops, walking edges in either
+        direction. Includes the starting entity itself when it exists."""
+        ...
+
+    async def link(
+        self, source_id: str, target_id: str, rel_type: WorldRelationship
+    ) -> WorldEdge:
+        """Create the edge if absent; re-linking an existing pair is a no-op."""
+        ...
+
+    async def unlink(
+        self, source_id: str, target_id: str, rel_type: WorldRelationship
+    ) -> bool:
+        """Remove the edge. Returns False when no such edge existed."""
+        ...
 
 
 @runtime_checkable

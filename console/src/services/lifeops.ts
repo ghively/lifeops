@@ -28,6 +28,10 @@ export const lifeops: AxiosInstance = axios.create({
     'X-LifeOps-Client': 'lifeops-console',
   },
   timeout: 30000,
+  // Repeat array parameters as `types=a&types=b`. Axios defaults to
+  // `types[]=a`, which FastAPI does not bind to a `list[str]` query
+  // parameter — the filter would be silently ignored rather than fail.
+  paramsSerializer: { indexes: null },
 })
 
 /** A LifeOps error carries a stable code the UI can branch on. */
@@ -542,6 +546,183 @@ export const systemApi = {
     lifeops.post('/system/logs', { entries }).then(() => undefined),
 }
 
+// --- world types (BUILD_SPEC sections 15-16, 36-39) ---------------------------
+//
+// These mirror the Core schemas one-for-one. Where the API returns raw graph
+// edges, the Console derives the reading direction itself (see
+// `relationshipsFrom` below) rather than expecting the server to pre-chew it.
+
+/** One node in the world graph: an entity reduced to what the graph needs. */
+export interface WorldGraphNode {
+  id: string
+  entity_type: string
+  label: string
+  status: string
+}
+
+/** One directed, labelled relationship between two entities. */
+export interface WorldGraphEdge {
+  source: string
+  target: string
+  type: string
+}
+
+export interface WorldGraph {
+  nodes: WorldGraphNode[]
+  edges: WorldGraphEdge[]
+}
+
+/** Entity types the Console may create directly (BUILD_SPEC section 15). */
+export type WorldCreatableType = 'household' | 'provider' | 'asset'
+
+/**
+ * The BUILD_SPEC section 39 relationship vocabulary, in the spec's order.
+ * Mirrors the Core schema exactly, so the picker never offers a type the
+ * server would reject and never hides one it accepts.
+ */
+export const WORLD_RELATIONSHIP_TYPES = [
+  'MEMBER_OF',
+  'RELATED_TO',
+  'PREFERS',
+  'OWNS',
+  'USES_PROVIDER',
+  'ASSIGNED_TO',
+  'ABOUT',
+  'WITH_PROVIDER',
+  'FOR_ASSET',
+  'WAITING_ON',
+  'REQUIRES_APPROVAL',
+  'AUTHORIZES',
+  'CREATED_BY',
+  'REQUESTED_BY',
+  'EXECUTED_BY',
+  'VERIFIED_BY',
+  'DERIVED_FROM',
+  'SUPERSEDES',
+  'RELATED_MEMORY',
+  'REFERENCES',
+] as const
+
+export type WorldRelationshipType = (typeof WORLD_RELATIONSHIP_TYPES)[number]
+
+/** A world entity with its current facts. */
+export interface WorldEntity {
+  id: string
+  entity_type: string
+  display_name: string
+  facts: Record<string, string>
+  created_at: string
+  updated_at: string
+  created_by_client: string | null
+}
+
+export interface WorldEntityDetail {
+  entity: WorldEntity
+  relationships: WorldGraphEdge[]
+  neighbors: WorldGraphNode[]
+  related_tasks: Task[]
+  related_memories: MemoryRecord[]
+}
+
+export interface WorldEntityHistory {
+  entity_id: string
+  memories: MemoryRecord[]
+  /** What this history does and does not cover, stated by the server. */
+  covers: string[]
+}
+
+/** One relationship read from the perspective of the inspected entity. */
+export interface WorldRelationshipView {
+  type: string
+  direction: 'outgoing' | 'incoming'
+  otherId: string
+  otherLabel: string
+  otherEntityType: string | null
+}
+
+/**
+ * Turn raw edges into rows the inspector can render.
+ *
+ * The far endpoint is whichever end is not the inspected entity; its label
+ * comes from `neighbors`, falling back to the id so a partially-resolved
+ * graph still renders something truthful.
+ */
+export function relationshipsFrom(
+  entityId: string,
+  detail: WorldEntityDetail,
+): WorldRelationshipView[] {
+  const byId = new Map(detail.neighbors.map((node) => [node.id, node]))
+  return detail.relationships.map((edge) => {
+    const outgoing = edge.source === entityId
+    const otherId = outgoing ? edge.target : edge.source
+    const other = byId.get(otherId)
+    return {
+      type: edge.type,
+      direction: outgoing ? 'outgoing' : 'incoming',
+      otherId,
+      otherLabel: other?.label ?? otherId,
+      otherEntityType: other?.entity_type ?? null,
+    }
+  })
+}
+
+export const worldApi = {
+  /**
+   * The current world graph. `types` narrows which entity types are included
+   * and `query` filters by name.
+   */
+  graph: (params?: { types?: string[]; query?: string; limit?: number }) =>
+    lifeops
+      .get<WorldGraph>('/world/graph', {
+        params: {
+          // Repeated `types=` parameters, not a comma-joined string: a display
+          // name containing a comma must not become two filters.
+          types: params?.types && params.types.length > 0 ? params.types : undefined,
+          query: params?.query || undefined,
+          limit: params?.limit,
+        },
+      })
+      .then((r) => r.data),
+
+  /** The graph around one entity, for click-to-expand. */
+  neighborhood: (entityId: string, depth = 1) =>
+    lifeops
+      .get<WorldGraph>('/world/neighborhood', {
+        params: { entity_id: entityId, depth },
+      })
+      .then((r) => r.data),
+
+  /** The full inspector payload for one entity (BUILD_SPEC section 16). */
+  entity: (id: string) =>
+    lifeops.get<WorldEntityDetail>(`/world/entities/${id}`).then((r) => r.data),
+
+  history: (id: string) =>
+    lifeops
+      .get<WorldEntityHistory>(`/world/entities/${id}/history`)
+      .then((r) => r.data),
+
+  /**
+   * A domain operation, not raw editing: create a household, provider, or
+   * asset with its initial facts (BUILD_SPEC section 15).
+   */
+  createEntity: (payload: {
+    entity_type: WorldCreatableType
+    display_name: string
+    facts?: Record<string, string>
+  }) => lifeops.post<WorldEntity>('/world/entities', payload).then((r) => r.data),
+
+  /** Link two entities with a typed relationship. */
+  link: (payload: { source_id: string; target_id: string; rel_type: string }) =>
+    lifeops.post<WorldGraphEdge>('/world/relationships', payload).then((r) => r.data),
+
+  /**
+   * Remove a typed relationship. The triple travels as query parameters
+   * because DELETE bodies are dropped by some proxies and HTTP clients.
+   */
+  unlink: (payload: { source_id: string; target_id: string; rel_type: string }) =>
+    lifeops.delete('/world/relationships', { params: payload }).then(() => undefined),
+}
+
 // --- display helpers ---------------------------------------------------------
 
 export const TASK_STATE_LABELS: Record<TaskState, string> = {
@@ -556,6 +737,32 @@ export const TASK_STATE_LABELS: Record<TaskState, string> = {
   BLOCKED: 'Blocked',
   FAILED: 'Failed',
   CANCELLED: 'Cancelled',
+}
+
+/** Display names for the world-model entity types (BUILD_SPEC section 36). */
+export const WORLD_TYPE_LABELS: Record<string, string> = {
+  person: 'Person',
+  household: 'Household',
+  preference: 'Preference',
+  task: 'Task',
+  waiting_item: 'Waiting item',
+  provider: 'Provider',
+  appointment: 'Appointment',
+  event: 'Event',
+  asset: 'Asset',
+  service_request: 'Service request',
+  bill: 'Bill',
+  shopping_list: 'Shopping list',
+  action: 'Action',
+  approval: 'Approval',
+  memory: 'Memory',
+  knowledge: 'Knowledge',
+  document: 'Document',
+  workflow_template: 'Workflow template',
+}
+
+export function worldTypeLabel(entityType: string): string {
+  return WORLD_TYPE_LABELS[entityType] ?? entityType
 }
 
 export const MEMORY_TYPE_LABELS: Record<MemoryType, string> = {

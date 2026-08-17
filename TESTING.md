@@ -64,7 +64,8 @@ was wrong.
 | I. No parallel source of truth | `TestNoParallelSourceOfTruth` |
 | J. The Console boots with no provider credentials | `TestFreshDeploymentNeedsNoCredentials` |
 
-Plus: exactly five tools are exposed, no raw-database tool exists, the
+Plus: exactly the sanctioned tools are exposed — five from Phase 0, three
+from Phase 2, four from Phase 3 — no raw-database tool exists, the
 capability manifest holds across the MCP boundary, and an unknown client
 identity is refused at launch.
 

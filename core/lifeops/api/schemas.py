@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -281,6 +282,149 @@ class CorrectMemoryRequest(BaseModel):
     # Correction is supersession: the old record closes and a new one carries
     # this content. Never an in-place edit.
     content: str = Field(min_length=1, max_length=8000)
+
+
+# --- world (BUILD_SPEC sections 36, 39, 92) ------------------------------------
+#
+# These mirror ``lifeops.domain.world`` one-for-one. The wire contract is
+# restated here rather than reusing the domain models directly so the Console's
+# API can stay stable while the domain evolves — but the shapes must not
+# diverge in meaning, and every field below has a domain counterpart.
+
+
+class WorldEntityType(StrEnum):
+    """Entity types the world API may create.
+
+    The graph *reads* every type in BUILD_SPEC section 36 including persons;
+    writes here are narrower on purpose — persons carry primary-user semantics
+    and go through the person surface — so an invalid value is a 422 at the
+    schema rather than a surprise in the domain.
+    """
+
+    HOUSEHOLD = "household"
+    PROVIDER = "provider"
+    ASSET = "asset"
+
+
+class WorldRelationshipType(StrEnum):
+    """The BUILD_SPEC section 39 relationship vocabulary, in the spec's order.
+
+    Syntactic validity only: this mirrors ``domain.world.WorldRelationship``
+    so the wire contract and the domain accept exactly the same set. Which
+    types are meaningful between which entity kinds is deliberately not
+    encoded — section 39 warns against predefining every relationship in a
+    human life, and a rule invented here would be one the spec never asked
+    for.
+    """
+
+    MEMBER_OF = "MEMBER_OF"
+    RELATED_TO = "RELATED_TO"
+    PREFERS = "PREFERS"
+    OWNS = "OWNS"
+    USES_PROVIDER = "USES_PROVIDER"
+    ASSIGNED_TO = "ASSIGNED_TO"
+    ABOUT = "ABOUT"
+    WITH_PROVIDER = "WITH_PROVIDER"
+    FOR_ASSET = "FOR_ASSET"
+    WAITING_ON = "WAITING_ON"
+    REQUIRES_APPROVAL = "REQUIRES_APPROVAL"
+    AUTHORIZES = "AUTHORIZES"
+    CREATED_BY = "CREATED_BY"
+    REQUESTED_BY = "REQUESTED_BY"
+    EXECUTED_BY = "EXECUTED_BY"
+    VERIFIED_BY = "VERIFIED_BY"
+    DERIVED_FROM = "DERIVED_FROM"
+    SUPERSEDES = "SUPERSEDES"
+    RELATED_MEMORY = "RELATED_MEMORY"
+    REFERENCES = "REFERENCES"
+
+
+class WorldNode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    entity_type: str
+    label: str
+    status: str
+
+
+class WorldEdge(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    target: str
+    type: str
+
+
+class WorldGraphResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[WorldNode]
+    edges: list[WorldEdge]
+
+
+class WorldEntityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    entity_type: str
+    display_name: str
+    facts: dict[str, str] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+    created_by_client: str | None = None
+
+
+class CreateEntityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entity_type: WorldEntityType
+    display_name: str = Field(min_length=1, max_length=200)
+    facts: dict[str, str] = Field(default_factory=dict)
+
+
+class LinkRelationshipRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(min_length=1, max_length=200)
+    target_id: str = Field(min_length=1, max_length=200)
+    rel_type: WorldRelationshipType
+
+
+class EntityDetailResponse(BaseModel):
+    """The entity inspector aggregate (BUILD_SPEC section 16).
+
+    ``relationships`` carries the raw edges and ``neighbors`` the same
+    endpoints with their labels, so the panel can name a relation without a
+    second round trip.
+
+    A client that cannot read tasks or memory gets those lists empty rather
+    than a 403: the inspector degrades to what the caller may see.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity: WorldEntityResponse
+    relationships: list[WorldEdge] = Field(default_factory=list)
+    neighbors: list[WorldNode] = Field(default_factory=list)
+    related_tasks: list[TaskResponse] = Field(default_factory=list)
+    related_memories: list[MemoryResponse] = Field(default_factory=list)
+
+
+class EntityHistoryResponse(BaseModel):
+    """What Phase 3 can honestly report about an entity's past.
+
+    ``covers`` states the scope in words. World entity facts are current-only
+    until a later phase, so the history is the memory record referencing the
+    entity — closed versions included — and never claims to be the durable
+    audit log (Phase 4, section 62).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    memories: list[MemoryResponse] = Field(default_factory=list)
+    covers: list[str] = Field(default_factory=list)
 
 
 # --- configuration -----------------------------------------------------------

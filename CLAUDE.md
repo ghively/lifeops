@@ -10,10 +10,12 @@ anything here disagrees with it, the spec wins.
 
 ## Where things stand
 
-**Phase 0 is complete.** The spine — Hermes → LifeOps MCP → LifeOps Core →
-NornicDB — is proven end to end, and every Phase 0 exit criterion passes.
+**Phases 0 through 3 are complete.** The spine — Hermes → LifeOps MCP →
+LifeOps Core → NornicDB — is proven end to end and every Phase 0 exit criterion
+still passes. Phase 1 added the Console foundation, Phase 2 the memory
+provider, Phase 3 the world graph and entity inspector.
 
-Phases 1 through 11 have not started. `README.md` tracks status.
+Phases 4 through 11 have not started. `README.md` tracks status.
 
 Do not begin the next phase without the user asking for it.
 
@@ -39,6 +41,7 @@ Do not begin the next phase without the user asking for it.
 core/lifeops/     LifeOps Core
   domain/         models and pure rules — no Cypher, no HTTP, no MCP
   core.py         the single application service; all orchestration lives here
+                  (MemoryService and WorldService are narrowed by construction)
   policy/         capabilities and trust — pure functions
   repositories/   interfaces + the only Cypher in the codebase
   api/            HTTP for the Console — shape translation only
@@ -47,7 +50,7 @@ core/lifeops/     LifeOps Core
   secrets/        AES-GCM secret store; secrets never enter NornicDB
 
 console/src/      LifeOps Console (React), talks only to LifeOps Core
-  pages/lifeops/  Today, Tasks, Configuration, System
+  pages/lifeops/  Today, Tasks, Memory, World, Configuration, System
   services/lifeops.ts
 
 tests/            unit · policy · integration · persistence · e2e
@@ -107,17 +110,49 @@ illegal transition must raise and write nothing.
 **Client identity is bound per connection**, never passed as a tool argument — a
 tool argument is model-controlled, which would let any agent claim to be Hermes.
 
+**The world graph is read-only over MCP.** Entities and relationships are
+created from the Console. Hermes holds `write_world`, but no tool spends it —
+shaping the user's world is their act, not a model's.
+
+**The relationship vocabulary is BUILD_SPEC section 39, all twenty types.**
+The warning there — "do not attempt to predefine every relationship in a human
+life" — bounds *inventing new* types; it is not licence to implement fewer.
+Section 36 reads the same way for entity types. Implement the spec's list; do
+not add to it.
+
+**Not every edge endpoint is a world node.** `ASSIGNED_TO` and `ABOUT` point at
+Tasks. Graph traversal asks `is_world_entity_id()` and skips them, and
+`assemble_world_graph` drops the edge — so the World screen never draws an
+arrow into a node it does not render. Section 16 gives tasks, waiting items,
+documents, and memories their own inspector panels; that is where they belong,
+not as unlabelled relationship rows.
+
+**The world graph projects; it does not own.** Persons and preferences are
+written by their own repositories and read by the world repository through a
+per-label projection. `create_entity` accepts only Household, Provider, and
+Asset (`CREATABLE_ENTITY_TYPES`), and the NornicDB repository refuses the rest
+so a future caller cannot write a `:Preference` with the wrong property shape.
+
+**Undirected and variable-length Cypher patterns return phantom rows on
+NornicDB.** Neighbourhood expansion is an explicit breadth-first walk of
+directed single hops for that reason. Only `tests/persistence/` catches a
+regression here — the fakes will stay green.
+
 **NornicDB's admin password is fixed at data-directory initialisation.** A new
 `nornicdb.env` pointed at existing data will fail to authenticate.
 
 ---
 
-## Known gaps in Phase 0
+## Known gaps
 
 Recorded in [SECURITY.md](SECURITY.md), not hidden:
 
-- The Console has no authentication. Loopback only; Phase 1 closes it.
-- No durable audit log yet. Phase 4.
+- No durable audit log yet. Phase 4. Until then `get_entity_history` reports
+  only what it can defend and says so in its `covers` field.
+- World entity facts are current-only: there is no per-fact supersession
+  chain yet, unlike preferences and memories.
+- The World screen shows the *current* view. Section 15 also lists a
+  temporal/current toggle; that is not built.
 - No provider adapters. `test` and `discover` report honestly that they are not
   implemented rather than faking success.
 - Hermes itself has not been attached on this machine — it is not installed

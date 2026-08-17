@@ -38,6 +38,22 @@ from lifeops.domain.tasks import (
     VerificationState,
     apply_transition,
 )
+from lifeops.domain.world import (
+    EntityDetail,
+    EntityDraft,
+    EntityHistory,
+    WorldEdge,
+    WorldEntity,
+    WorldEntityType,
+    WorldGraph,
+    WorldNode,
+    WorldRelationship,
+    assemble_world_graph,
+    is_world_entity_id,
+    parse_entity_types,
+    parse_relationship,
+    validate_facts,
+)
 from lifeops.errors import (
     ConfigurationError,
     ConflictError,
@@ -49,6 +65,7 @@ from lifeops.events import (
     PERSON_CHANGED,
     PREFERENCE_CHANGED,
     TASK_CHANGED,
+    WORLD_CHANGED,
     EventBus,
 )
 from lifeops.ids import PREFIX_PERSON, slug_id
@@ -60,6 +77,7 @@ from lifeops.repositories.interfaces import (
     PersonRepository,
     PreferenceRepository,
     TaskRepository,
+    WorldRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,6 +174,19 @@ class MemoryService:
             raise NotFoundError(f"no such memory: {memory_id}", memory_id=memory_id)
         return memory
 
+    async def list_for_entity(
+        self, entity_id: str, *, current_only: bool = True, limit: int = 50
+    ) -> list[MemoryRecord]:
+        """Memories referencing a world entity, newest first.
+
+        Entity-scoped rather than subject-scoped: this is what the Phase 3
+        entity inspector and entity history read. It stays a memory operation
+        — the world service never gets a memory repository of its own.
+        """
+        return await self._memories.list_for_entity(
+            entity_id, current_only=current_only, limit=limit
+        )
+
     async def history(self, memory_id: str) -> list[MemoryRecord]:
         memory = await self._memories.get(memory_id)
         if memory is None:
@@ -244,6 +275,201 @@ class MemoryService:
         return saved
 
 
+class WorldService:
+    """World-graph operations (BUILD_SPEC sections 36–39, 92).
+
+    Built with the same discipline as ``MemoryService``: it holds only a
+    ``WorldRepository``, so no world write can reach tasks, preferences,
+    approvals, or payments. The entity inspector does show related tasks and
+    memories, but that aggregate is assembled by ``LifeOpsCore`` — which
+    already owns those repositories — rather than by widening this service's
+    reach to build one read model.
+
+    Capability checks stay on ``LifeOpsCore``, which delegates here once they
+    pass.
+    """
+
+    def __init__(
+        self,
+        *,
+        world: WorldRepository,
+        clock: Clock,
+        publish: Callable[[str], None] | None = None,
+    ) -> None:
+        self._world = world
+        self._clock = clock
+        self._publish_event = publish
+
+    def _notify(self, entity_id: str) -> None:
+        if self._publish_event is not None:
+            self._publish_event(entity_id)
+
+    # --- reads ---------------------------------------------------------------
+
+    async def get(self, entity_id: str) -> WorldEntity:
+        entity = await self._world.get(entity_id)
+        if entity is None:
+            raise NotFoundError(f"no such entity: {entity_id}", entity_id=entity_id)
+        return entity
+
+    async def graph(
+        self,
+        *,
+        query: str = "",
+        entity_types: list[WorldEntityType] | None = None,
+        limit: int = 500,
+    ) -> WorldGraph:
+        """The World screen's graph, narrowed by type filter and search text.
+
+        The text filter is applied to entities before edges are assembled, so
+        a search that hides a node also hides the arrows into it rather than
+        leaving them pointing at nothing.
+        """
+        entities = await self._world.list_entities(types=entity_types, limit=limit)
+        needle = query.strip().lower()
+        if needle:
+            entities = [
+                entity
+                for entity in entities
+                if needle in entity.display_name.lower() or needle in entity.id.lower()
+            ]
+        edges = await self._world.list_edges()
+        return assemble_world_graph(entities, edges, limit=limit)
+
+    async def neighborhood(self, entity_id: str, *, depth: int) -> WorldGraph:
+        # Resolve the entity first: an unknown id is a 404, not an empty graph
+        # that the Console would render as "this thing exists but is lonely".
+        await self.get(entity_id)
+        entities, edges = await self._world.neighborhood(entity_id, depth=depth)
+        return assemble_world_graph(entities, edges, limit=len(entities))
+
+    async def relationships_for(
+        self, entity_id: str
+    ) -> tuple[list[WorldEdge], list[WorldNode]]:
+        """Edges touching an entity, with their far endpoints labelled.
+
+        Only edges between entities the World screen actually renders are
+        returned. An ``ABOUT`` edge to a Task, or a ``PREFERS`` edge to a
+        superseded preference, is left out — section 16 gives tasks, waiting
+        items, documents, and memories their own panels, so repeating them
+        here as unlabelled ids would duplicate them badly rather than inform.
+
+        Edges and neighbours are built in one pass so the two can never
+        disagree about which relationships the panel is showing.
+        """
+        edges: list[WorldEdge] = []
+        neighbors: dict[str, WorldNode] = {}
+
+        for edge in await self._world.list_edges_for(entity_id):
+            other_id = edge.target if edge.source == entity_id else edge.source
+            if other_id == entity_id or not is_world_entity_id(other_id):
+                continue
+            if other_id not in neighbors:
+                found = await self._world.get(other_id)
+                if found is None:
+                    continue
+                neighbors[other_id] = WorldNode(
+                    id=found.id,
+                    entity_type=found.entity_type,
+                    label=found.display_name,
+                )
+            edges.append(edge)
+
+        return edges, list(neighbors.values())
+
+    # --- writes --------------------------------------------------------------
+
+    async def create(self, draft: EntityDraft, *, client_id: str) -> WorldEntity:
+        facts = validate_facts(draft.facts)
+        display_name = draft.display_name.strip()
+        try:
+            entity_id = WorldEntity.make_id(draft.entity_type, display_name)
+        except ValueError as exc:
+            # A name of pure punctuation passes min_length but yields no slug.
+            raise ValidationError(str(exc), field="display_name") from None
+
+        if await self._world.exists(entity_id):
+            raise ConflictError(
+                f"entity {entity_id} already exists", entity_id=entity_id
+            )
+
+        now = now_iso(self._clock)
+        entity = WorldEntity(
+            id=entity_id,
+            entity_type=draft.entity_type,
+            display_name=display_name,
+            facts=facts,
+            created_at=now,
+            updated_at=now,
+            created_by_client=client_id,
+        )
+        with operation(
+            "world.create_entity",
+            entity_id=entity_id,
+            entity_type=str(draft.entity_type),
+            client_id=client_id,
+        ):
+            created = await self._world.create(entity)
+        self._notify(created.id)
+        return created
+
+    async def link(
+        self,
+        source_id: str,
+        target_id: str,
+        rel_type: WorldRelationship,
+        *,
+        client_id: str,
+    ) -> WorldEdge:
+        if source_id == target_id:
+            raise ValidationError(
+                "an entity cannot be related to itself", field="target_id"
+            )
+        # Both endpoints are checked before writing so a typo produces a 404
+        # rather than an edge into an entity that does not exist.
+        for field, entity_id in (("source_id", source_id), ("target_id", target_id)):
+            if not await self._world.exists(entity_id):
+                raise NotFoundError(
+                    f"no such entity: {entity_id}", entity_id=entity_id, field=field
+                )
+
+        with operation(
+            "world.link",
+            source_id=source_id,
+            target_id=target_id,
+            rel_type=str(rel_type),
+            client_id=client_id,
+        ):
+            edge = await self._world.link(source_id, target_id, rel_type)
+        self._notify(source_id)
+        return edge
+
+    async def unlink(
+        self,
+        source_id: str,
+        target_id: str,
+        rel_type: WorldRelationship,
+        *,
+        client_id: str,
+    ) -> None:
+        with operation(
+            "world.unlink",
+            source_id=source_id,
+            target_id=target_id,
+            rel_type=str(rel_type),
+            client_id=client_id,
+        ):
+            removed = await self._world.unlink(source_id, target_id, rel_type)
+        if not removed:
+            raise NotFoundError(
+                f"no {rel_type} relationship from {source_id} to {target_id}",
+                source_id=source_id,
+                target_id=target_id,
+                rel_type=str(rel_type),
+            )
+        self._notify(source_id)
+
+
 class LifeOpsCore:
     def __init__(
         self,
@@ -252,6 +478,7 @@ class LifeOpsCore:
         preferences: PreferenceRepository,
         tasks: TaskRepository,
         memory: MemoryRepository | None = None,
+        world: WorldRepository | None = None,
         clock: Clock | None = None,
         safe_mode: bool = False,
         events: EventBus | None = None,
@@ -273,6 +500,17 @@ class LifeOpsCore:
                 ),
             )
             if memory is not None
+            else None
+        )
+        self._world_service = (
+            WorldService(
+                world=world,
+                clock=self._clock,
+                publish=(
+                    lambda entity_id: self._publish(WORLD_CHANGED, entity_id=entity_id)
+                ),
+            )
+            if world is not None
             else None
         )
 
@@ -711,6 +949,136 @@ class LifeOpsCore:
         updated = await self._tasks.update(working)
         self._publish(TASK_CHANGED, task_id=updated.id)
         return updated
+
+    # --- world (BUILD_SPEC sections 36–39, 92) --------------------------------
+
+    def _world(self) -> WorldService:
+        if self._world_service is None:
+            raise ConfigurationError(
+                "no world repository is configured", component="world"
+            )
+        return self._world_service
+
+    async def world_graph(
+        self,
+        client: ClientIdentity,
+        *,
+        query: str = "",
+        entity_types: list[str] | None = None,
+        limit: int = 500,
+    ) -> WorldGraph:
+        """The world graph, optionally narrowed by search text and type filter."""
+        self._require(client, Capability.READ_WORLD)
+        types = parse_entity_types(entity_types)
+        with operation("world.graph", client_id=client.client_id):
+            return await self._world().graph(query=query, entity_types=types, limit=limit)
+
+    async def world_neighborhood(
+        self, client: ClientIdentity, *, entity_id: str, depth: int = 1
+    ) -> WorldGraph:
+        """The subgraph around one entity, out to ``depth`` hops."""
+        self._require(client, Capability.READ_WORLD)
+        with operation(
+            "world.neighborhood", entity_id=entity_id, client_id=client.client_id
+        ):
+            return await self._world().neighborhood(entity_id, depth=depth)
+
+    async def get_entity_detail(
+        self, client: ClientIdentity, *, entity_id: str
+    ) -> EntityDetail:
+        """The entity inspector aggregate (section 16).
+
+        Assembled here rather than in ``WorldService`` because it spans three
+        repositories; the world service is kept narrow on purpose. Related
+        tasks and memories are read through the same capabilities that guard
+        them elsewhere, so a client that may see the graph but not the task
+        list gets an inspector without a task panel instead of a 403.
+        """
+        self._require(client, Capability.READ_WORLD)
+
+        with operation("world.entity_detail", entity_id=entity_id, client_id=client.client_id):
+            world = self._world()
+            entity = await world.get(entity_id)
+            edges, neighbors = await world.relationships_for(entity_id)
+
+            tasks: list[Task] = []
+            if Capability.READ_TASKS in client.capabilities:
+                tasks = await self._tasks.list_related_to_entity(entity_id)
+
+            memories: list[MemoryRecord] = []
+            if Capability.READ_MEMORY in client.capabilities and self._memory_service:
+                memories = await self._memory().list_for_entity(
+                    entity_id, current_only=True
+                )
+
+        return EntityDetail(
+            entity=entity,
+            relationships=edges,
+            neighbors=neighbors,
+            related_tasks=tasks,
+            related_memories=memories,
+        )
+
+    async def entity_history(
+        self, client: ClientIdentity, *, entity_id: str
+    ) -> EntityHistory:
+        """What the record can honestly say about how an entity changed.
+
+        World entity facts are current-only in Phase 3, so the history is the
+        full memory record referencing the entity — closed versions included.
+        ``covers`` travels with the answer so no consumer mistakes it for the
+        durable audit log (Phase 4, section 62).
+        """
+        self._require(client, Capability.READ_WORLD)
+
+        with operation("world.entity_history", entity_id=entity_id, client_id=client.client_id):
+            await self._world().get(entity_id)
+
+            covers = ["memories referencing this entity, including closed versions"]
+            memories: list[MemoryRecord] = []
+            if Capability.READ_MEMORY in client.capabilities and self._memory_service:
+                memories = await self._memory().list_for_entity(
+                    entity_id, current_only=False
+                )
+            else:
+                covers = ["nothing: this client cannot read memory"]
+
+        return EntityHistory(entity_id=entity_id, memories=memories, covers=covers)
+
+    async def create_entity(
+        self, client: ClientIdentity, draft: EntityDraft
+    ) -> WorldEntity:
+        """Create a household, provider, or asset.
+
+        This records world state; it executes nothing. Persons keep their own
+        surface (``create_person``) because they carry primary-user semantics.
+        """
+        self._require(client, Capability.WRITE_WORLD)
+        return await self._world().create(draft, client_id=client.client_id)
+
+    async def link_entities(
+        self, client: ClientIdentity, *, source_id: str, target_id: str, rel_type: str
+    ) -> WorldEdge:
+        """Relate two existing entities with a relationship from the vocabulary."""
+        self._require(client, Capability.WRITE_WORLD)
+        return await self._world().link(
+            source_id,
+            target_id,
+            parse_relationship(rel_type),
+            client_id=client.client_id,
+        )
+
+    async def unlink_entities(
+        self, client: ClientIdentity, *, source_id: str, target_id: str, rel_type: str
+    ) -> None:
+        """Remove a relationship, identified by its (source, target, type) triple."""
+        self._require(client, Capability.WRITE_WORLD)
+        await self._world().unlink(
+            source_id,
+            target_id,
+            parse_relationship(rel_type),
+            client_id=client.client_id,
+        )
 
     # --- search -------------------------------------------------------------
 

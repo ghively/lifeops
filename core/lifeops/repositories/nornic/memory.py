@@ -316,6 +316,24 @@ class NornicMemoryRepository:
         )
         return _row_to_memory(rows[0]) if rows else None
 
+    async def list_for_entity(
+        self, entity_id: str, *, current_only: bool = True, limit: int = 50
+    ) -> list[MemoryRecord]:
+        current_filter = "AND m.valid_to IS NULL" if current_only else ""
+        rows = await self._client.read(
+            f"""
+            MATCH (m:Memory)
+            WHERE $entity_id IN coalesce(m.entity_ids, [])
+            {current_filter}
+            RETURN {_RETURN}
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT $limit
+            """,
+            entity_id=entity_id,
+            limit=limit,
+        )
+        return [_row_to_memory(r) for r in rows]
+
     async def save_superseding(
         self, memory: MemoryRecord, *, supersedes: MemoryRecord | None
     ) -> MemoryRecord:

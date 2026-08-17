@@ -21,6 +21,7 @@ from lifeops.repositories.nornic.memory import NornicMemoryRepository
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
 from lifeops.repositories.nornic.tasks import NornicTaskRepository
+from lifeops.repositories.nornic.world import NornicWorldRepository
 from lifeops.secrets.local_encrypted import LocalEncryptedSecretStore
 from lifeops.settings import Settings, get_settings
 
@@ -54,6 +55,7 @@ class Container:
         self.preferences = NornicPreferenceRepository(self.nornic)
         self.tasks = NornicTaskRepository(self.nornic)
         self.memory = NornicMemoryRepository(self.nornic)
+        self.world = NornicWorldRepository(self.nornic)
 
         # Safe mode may be set at boot or flipped by the user from the
         # Console; the config document is authoritative once it exists.
@@ -64,6 +66,7 @@ class Container:
             preferences=self.preferences,
             tasks=self.tasks,
             memory=self.memory,
+            world=self.world,
             clock=self.clock,
             safe_mode=safe_mode,
             events=self.events,

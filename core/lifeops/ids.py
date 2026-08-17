@@ -26,6 +26,8 @@ from ulid import ULID
 # them to route an opaque ID back to its entity type.
 PREFIX_PERSON = "person"
 PREFIX_HOUSEHOLD = "household"
+PREFIX_PROVIDER = "provider"
+PREFIX_ASSET = "asset"
 PREFIX_PREFERENCE = "preference"
 PREFIX_TASK = "task"
 PREFIX_MEMORY = "memory"

@@ -34,6 +34,14 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "FOR (t:Task) REQUIRE t.id IS UNIQUE",
     "CREATE CONSTRAINT lifeops_memory_id IF NOT EXISTS "
     "FOR (m:Memory) REQUIRE m.id IS UNIQUE",
+    # The Phase 3 world entities get the same protection: two nodes sharing
+    # provider_abc_electric would split the graph around one real provider.
+    "CREATE CONSTRAINT lifeops_household_id IF NOT EXISTS "
+    "FOR (h:Household) REQUIRE h.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_provider_id IF NOT EXISTS "
+    "FOR (p:Provider) REQUIRE p.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_asset_id IF NOT EXISTS "
+    "FOR (a:Asset) REQUIRE a.id IS UNIQUE",
     "CREATE INDEX lifeops_preference_subject_key IF NOT EXISTS "
     "FOR (p:Preference) ON (p.subject_id, p.key)",
     "CREATE INDEX lifeops_task_state IF NOT EXISTS FOR (t:Task) ON (t.state)",

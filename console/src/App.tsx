@@ -3,8 +3,9 @@
  *
  * The Knowledge-OS frontend, rewired onto LifeOps Core. Phase 1 routes:
  * Today, Needs Attention, Waiting, Tasks, Search, Configuration, System, and
- * Activity (BUILD_SPEC section 90). The remaining navigation entries route to
- * a placeholder naming their phase.
+ * Activity (BUILD_SPEC section 90); Phase 2 adds Memory and Phase 3 the World
+ * graph. The remaining navigation entries route to a placeholder naming their
+ * phase.
  *
  * Authentication: if LifeOps Core has Console auth enabled it answers 401 to
  * unauthenticated requests; the axios interceptor (services/lifeops.ts) then
@@ -32,6 +33,7 @@ import { LifeOpsTasksPage } from './pages/lifeops/TasksPage'
 import { SystemPage } from './pages/lifeops/SystemPage'
 import { TodayPage } from './pages/lifeops/TodayPage'
 import { WaitingPage } from './pages/lifeops/WaitingPage'
+import { WorldPage } from './pages/lifeops/WorldPage'
 import { LifeOpsError, authApi } from './services/lifeops'
 
 const queryClient = new QueryClient({
@@ -66,13 +68,6 @@ const PENDING_ROUTES: Array<{
     title: 'Calendar',
     phase: 7,
     description: 'Availability, holds, and events linked to LifeOps entities.',
-  },
-  {
-    path: '/world',
-    title: 'World',
-    phase: 3,
-    description:
-      'The interactive graph of people, providers, assets, and their relationships.',
   },
   {
     path: '/knowledge',
@@ -146,6 +141,7 @@ function App() {
                   <Route path="/tasks" element={<LifeOpsTasksPage />} />
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/memory" element={<MemoryPage />} />
+                  <Route path="/world" element={<WorldPage />} />
                   <Route path="/configuration" element={<ConfigurationPage />} />
                   <Route path="/system" element={<SystemPage />} />
                   <Route path="/activity" element={<ActivityPage />} />
