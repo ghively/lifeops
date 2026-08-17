@@ -103,6 +103,42 @@ REQUIRES_APPROVAL: frozenset[ActionType] = frozenset(
 )
 
 
+#: What each action does NOT authorise, rendered verbatim by the Approval
+#: screen (section 58's mockup lists these as explicit crosses).
+#:
+#: The point is not decoration. Section 101 step 9 is "never authorize
+#: repairs", and the way a human enforces that is by seeing it stated on the
+#: screen where they say yes. An approval whose boundary is implicit invites
+#: the reader to assume the adjacent thing was included.
+NOT_AUTHORISED_BY: dict[ActionType, tuple[str, ...]] = {
+    ActionType.BOOK_APPOINTMENT: (
+        "Authorize repair work",
+        "Authorize additional charges",
+    ),
+    ActionType.CANCEL_APPOINTMENT: ("Rebook at a different time",),
+    ActionType.SUBMIT_GROCERY_ORDER: (
+        "Change the order after submission",
+        "Authorize substitutions beyond those listed",
+    ),
+    ActionType.PREPARE_PAYMENT: ("Send the payment",),
+    ActionType.COMMIT_PAYMENT: (
+        "Authorize any further payment",
+        "Change the amount",
+    ),
+}
+
+
+def authorised_scope(action_type: ActionType) -> tuple[str, tuple[str, ...]]:
+    """What this action authorises, and what it explicitly does not.
+
+    Returns ``(may, may_not)``. A type with no declared exclusions returns an
+    empty tuple rather than a guess — inventing a denial would be as
+    misleading as omitting a real one.
+    """
+    may = str(action_type).replace("_", " ").capitalize()
+    return may, NOT_AUTHORISED_BY.get(action_type, ())
+
+
 class Action(BaseModel):
     """One intended external write (section 60)."""
 

@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from lifeops.domain.actions import Action
+from lifeops.domain.actions import Action, authorised_scope
 from lifeops.ids import new_approval_id
 
 #: How long an approval stays usable. Long enough to walk away from the
@@ -55,6 +55,10 @@ class Approval(BaseModel):
     action_type: str
     target_entity_id: str | None = None
     amount: str | None = None
+    #: Section 58's two lists. Carried on the record rather than derived in an
+    #: adapter, so HTTP and any future surface show the same boundary.
+    authorises_action: str
+    does_not_authorise: list[str] = Field(default_factory=list)
 
     created_at: str
 
@@ -75,6 +79,7 @@ def expires_at(now: str, *, minutes: int = DEFAULT_APPROVAL_TTL_MINUTES) -> str:
 
 def request(action: Action, *, now: str, requested_by: str) -> Approval:
     """Open an approval bound to this action's exact payload."""
+    _may, _may_not = authorised_scope(action.type)
     return Approval(
         id=Approval.make_id(),
         action_id=action.id,
@@ -82,6 +87,8 @@ def request(action: Action, *, now: str, requested_by: str) -> Approval:
         requested_by=requested_by,
         expires_at=expires_at(now),
         action_type=str(action.type),
+        authorises_action=_may,
+        does_not_authorise=list(_may_not),
         target_entity_id=action.target_entity_id,
         amount=_amount_of(action),
         created_at=now,

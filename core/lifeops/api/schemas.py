@@ -603,6 +603,11 @@ class ApprovalResponse(BaseModel):
     consumed_at: str | None
     status: ApprovalStatus
     action_type: str
+    #: Section 58's two lists: what saying yes authorises, and what it
+    #: explicitly does not. Carried from the domain rather than composed here,
+    #: so the boundary the human sees is the boundary the domain enforces.
+    authorises_action: str
+    does_not_authorise: list[str] = Field(default_factory=list)
     target_entity_id: str | None
     amount: str | None
     created_at: str

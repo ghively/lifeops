@@ -10,10 +10,14 @@
  * Hermes may do, what it may not, and the two buttons. "What will happen" is
  * the exact payload the server attached to the approval (`action_payload`) —
  * the same payload the payload-hash binding is computed from, so nothing
- * shown here can drift from what gets committed. "Hermes may not" is stated
- * generically rather than per action type: every approval in this system
- * authorises exactly one exact request, and nothing else, by construction
- * (section 57's "material change invalidates approval").
+ * shown here can drift from what gets committed.
+ *
+ * Both "may" and "may not" come from the server too. The mockup lists specific
+ * exclusions ("Authorize repair work"), and section 101 step 9 is "never
+ * authorize repairs" — so the boundary a human reads before saying yes has to
+ * be the boundary the domain actually enforces, not a sentence the Console
+ * composed. A generic disclaimer would let the reader assume the adjacent
+ * thing was included.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -87,8 +91,14 @@ function ApprovalCard({
         </p>
         <p className="flex items-center gap-1.5 text-emerald-600">
           <Check className="h-3.5 w-3.5" />
-          {actionTypeLabel(approval.action_type)}
+          {approval.authorises_action || actionTypeLabel(approval.action_type)}
         </p>
+        {approval.does_not_authorise.map((item) => (
+          <p key={item} className="flex items-center gap-1.5 text-red-600">
+            <X className="h-3.5 w-3.5" />
+            {item}
+          </p>
+        ))}
         <p className="flex items-center gap-1.5 text-red-600">
           <X className="h-3.5 w-3.5" />
           Anything other than this exact request

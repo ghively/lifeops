@@ -435,6 +435,9 @@ export interface Approval {
   consumed_at: string | null
   status: ApprovalStatus
   action_type: string
+  /** Section 58's two lists, decided by the domain, rendered verbatim here. */
+  authorises_action: string
+  does_not_authorise: string[]
   target_entity_id: string | null
   amount: string | null
   created_at: string
