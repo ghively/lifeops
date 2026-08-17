@@ -225,6 +225,16 @@ client sees is identical — that is the whole point.
 
 ## Choices worth recording
 
+**React Flow for the World graph.** BUILD_SPEC section 15 asks for "an
+interactive graph library appropriate for the existing React stack" and names
+React Flow as acceptable, so the choice is the spec's rather than ours. Recording
+it here because AGENTS.md requires every dependency to be justified in writing:
+the concrete problem is section 15's zoom, pan, fit-view, and click-to-expand
+requirements; no existing capability covers canvas interaction; the operational
+cost is one Console-only package with no runtime or server footprint; and the
+removal plan is that it is confined to `console/src/components/world/`, so
+replacing it touches four files and no domain code.
+
 **NornicDB built from source.** Upstream ships Docker images and macOS packages;
 neither fits a Linux host without Docker. Building the Go binary was shorter
 than adding a container runtime to satisfy one dependency.

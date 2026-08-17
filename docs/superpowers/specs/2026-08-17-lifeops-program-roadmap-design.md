@@ -43,8 +43,7 @@ Phases 0 through 3 are complete:
 
 Twelve MCP tools, 427 Python tests, 106 Console tests, `make check` green.
 
-**Phase 3 is complete and verified but not yet committed** — it sits in the
-working tree. Committing it is step 0 of this roadmap (see section 6).
+**Phase 3 is committed** (3110c44), which was step 0 of this roadmap.
 
 ---
 
@@ -199,7 +198,7 @@ for phases that look independent.
 **Step 0 — Commit Phase 3.** It is complete and verified but sitting in the
 working tree.
 
-**Step 1 — Build the enforcement harness** (section 4).
+**Step 1 — Build the enforcement harness** (section 4). *Complete: `tests/spec`, 29 tests, wired into `make test-fast`.*
 
 **Step 2 onward — the phases.**
 

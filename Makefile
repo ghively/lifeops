@@ -58,8 +58,8 @@ health:  ## Report component health
 
 # --- tests -------------------------------------------------------------------
 
-test-fast:  ## Unit and policy tests (no database)
-	@$(PYTEST) tests/unit tests/policy tests/integration -q
+test-fast:  ## Unit, policy, spec, and integration tests (no database)
+	@$(PYTEST) tests/unit tests/policy tests/spec tests/integration -q
 
 test-integration:  ## Repository tests against a live NornicDB
 	@$(WITH_NORNIC) $(PYTEST) tests/persistence -q
