@@ -27,6 +27,8 @@ from lifeops.repositories.fakes import (
 )
 from lifeops.secrets.local_encrypted import InMemorySecretStore
 from lifeops.settings import Settings
+from lifeops.voice.fake import FakeTTSProvider
+from lifeops.voice.service import VoiceService
 
 PRIMARY = "person_api_user"
 
@@ -44,6 +46,7 @@ class StubContainer:
             secret_store=self.secret_store,
             clock=self.clock,
         )
+        self.voice = VoiceService(config=self.config, secret_store=self.secret_store)
         self.people = FakePersonRepository()
         self.preferences = FakePreferenceRepository()
         self.tasks = FakeTaskRepository()
@@ -317,9 +320,19 @@ class TestConfiguration:
         self, client: httpx.AsyncClient
     ) -> None:
         # A Test button that fakes success is worse than one that says "not yet".
+        body = (await client.post(f"{API}/config/providers/telegram/test")).json()
+        assert body["healthy"] is False
+        assert "phase 1" in body["message"]
+
+    async def test_elevenlabs_test_button_reports_not_configured_without_a_key(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        # ElevenLabs has a real adapter as of phase 5, but development and CI
+        # never hold a credential (AGENTS.md), so the honest answer is "not
+        # configured" rather than a live network call.
         body = (await client.post(f"{API}/config/providers/elevenlabs/test")).json()
         assert body["healthy"] is False
-        assert "phase 5" in body["message"]
+        assert "no text-to-speech provider" in body["message"]
 
     async def test_system_config_round_trip(self, client: httpx.AsyncClient) -> None:
         await client.put(
@@ -328,6 +341,24 @@ class TestConfiguration:
         assert (await client.get(f"{API}/config/system")).json()["display_name"] == (
             "Gene's LifeOps"
         )
+
+    async def test_voice_mode_defaults_to_quick_cloud(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        assert (await client.get(f"{API}/config/system")).json()["voice_mode"] == (
+            "quick_cloud"
+        )
+
+    async def test_voice_mode_round_trips(self, client: httpx.AsyncClient) -> None:
+        response = await client.put(f"{API}/config/system", json={"voice_mode": "hybrid"})
+        assert response.status_code == 200
+        assert response.json()["voice_mode"] == "hybrid"
+        assert (await client.get(f"{API}/config/system")).json()["voice_mode"] == "hybrid"
+
+    async def test_invalid_voice_mode_is_422(self, client: httpx.AsyncClient) -> None:
+        response = await client.put(f"{API}/config/system", json={"voice_mode": "telepathic"})
+        assert response.status_code == 422
+        assert response.json()["code"] == "validation_error"
 
     async def test_safe_mode_takes_effect_immediately(
         self, client: httpx.AsyncClient
@@ -343,3 +374,86 @@ class TestConfiguration:
         by_id = {c["client_id"]: c for c in body["clients"]}
         assert "write_preference" not in by_id["claude-code"]["capabilities"]
         assert "write_preference" in by_id["hermes-personal"]["capabilities"]
+
+
+@pytest.fixture
+async def voice_client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+    """A client with ElevenLabs enabled behind ``FakeTTSProvider``.
+
+    This is the test double AGENTS.md requires: real ElevenLabs credentials
+    never exist in development or CI, so every assertion here proves the
+    plumbing (routing, streaming, error shapes) rather than the live API.
+    """
+    container = StubContainer(tmp_path)
+    container.voice = VoiceService(
+        config=container.config,
+        secret_store=container.secret_store,
+        factories={"elevenlabs": lambda _settings, _secrets: FakeTTSProvider()},
+    )
+    container.config.update_provider(
+        "elevenlabs",
+        {"api_key": "el-test-key", "voice_id": "voice-fake-1", "enabled": True},
+    )
+    app = create_app(container=container, settings=container.settings)  # type: ignore[arg-type]
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://lifeops.test"
+        ) as http_client:
+            yield http_client
+
+
+class TestElevenLabsVoice:
+    """BUILD_SPEC section 27's Test/Refresh/Preview buttons, behind the fake."""
+
+    async def test_button_reports_healthy_once_enabled_and_configured(
+        self, voice_client: httpx.AsyncClient
+    ) -> None:
+        body = (await voice_client.post(f"{API}/config/providers/elevenlabs/test")).json()
+        assert body["healthy"] is True
+        assert body["state"] == "healthy"
+
+    async def test_discover_lists_voices_from_the_provider(
+        self, voice_client: httpx.AsyncClient
+    ) -> None:
+        response = await voice_client.post(
+            f"{API}/config/providers/elevenlabs/discover", params={"field": "voice_id"}
+        )
+        body = response.json()
+        assert {opt["value"] for opt in body["options"]} == {"voice-fake-1", "voice-fake-2"}
+
+    async def test_discover_lists_models_from_the_provider(
+        self, voice_client: httpx.AsyncClient
+    ) -> None:
+        response = await voice_client.post(
+            f"{API}/config/providers/elevenlabs/discover", params={"field": "model_id"}
+        )
+        body = response.json()
+        assert {opt["value"] for opt in body["options"]} == {
+            "model-fake-flash",
+            "model-fake-multilingual",
+        }
+
+    async def test_preview_streams_playable_audio(
+        self, voice_client: httpx.AsyncClient
+    ) -> None:
+        response = await voice_client.post(
+            f"{API}/voice/tts/preview", json={"text": "hello from the preview button"}
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("audio/")
+        assert b"hello from the preview button" in response.content
+
+    async def test_preview_requires_non_empty_text(
+        self, voice_client: httpx.AsyncClient
+    ) -> None:
+        response = await voice_client.post(f"{API}/voice/tts/preview", json={"text": ""})
+        assert response.status_code == 422
+
+    async def test_preview_fails_cleanly_without_configuration(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        # The default `client` fixture has no provider enabled at all.
+        response = await client.post(f"{API}/voice/tts/preview", json={"text": "hi"})
+        assert response.status_code == 400
+        assert response.json()["code"] == "provider_not_configured"

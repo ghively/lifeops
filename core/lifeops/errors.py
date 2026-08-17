@@ -92,3 +92,26 @@ class RepositoryError(LifeOpsError):
 
     code = "repository_error"
     http_status = 503
+
+
+class ProviderError(LifeOpsError):
+    """An external provider adapter failed (BUILD_SPEC sections 27-28).
+
+    Distinct from RepositoryError, which is specifically NornicDB — this
+    covers ElevenLabs, DeepSeek, or any other outside service a provider
+    adapter calls.
+    """
+
+    code = "provider_error"
+    http_status = 502
+
+
+class ProviderNotConfiguredError(ConfigurationError):
+    """The requested capability has no enabled, fully-configured provider.
+
+    Distinguishes "nobody turned this on yet" from "the adapter is broken" —
+    the Console and an MCP client need to react to those differently, and
+    AGENTS.md forbids ever standing in for the missing credential.
+    """
+
+    code = "provider_not_configured"
