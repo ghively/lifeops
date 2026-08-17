@@ -16,6 +16,23 @@ import logging
 from collections.abc import Callable
 
 from lifeops.clock import Clock, SystemClock, now_iso
+from lifeops.domain.actions import REQUIRES_APPROVAL as ACTIONS_REQUIRING_APPROVAL
+from lifeops.domain.actions import (
+    Action,
+    ActionDraft,
+    ActionStatus,
+    record_attempt,
+)
+from lifeops.domain.actions import prepare as prepare_action
+from lifeops.domain.approvals import (
+    Approval,
+    ApprovalStatus,
+    authorises,
+)
+from lifeops.domain.approvals import consume as consume_approval
+from lifeops.domain.approvals import decide as decide_approval
+from lifeops.domain.approvals import request as request_approval
+from lifeops.domain.audit import AuditRecord
 from lifeops.domain.memory import (
     MemoryDraft,
     MemoryRecord,
@@ -38,6 +55,14 @@ from lifeops.domain.tasks import (
     VerificationState,
     apply_transition,
 )
+from lifeops.domain.waiting import (
+    WaitingDraft,
+    WaitingItem,
+    WaitingStatus,
+    next_followup_at,
+)
+from lifeops.domain.waiting import record_followup as record_followup_rule
+from lifeops.domain.waiting import resolve as resolve_waiting
 from lifeops.domain.world import (
     EntityDetail,
     EntityDraft,
@@ -61,22 +86,30 @@ from lifeops.errors import (
     ValidationError,
 )
 from lifeops.events import (
+    ACTION_CHANGED,
+    APPROVAL_CHANGED,
     MEMORY_CHANGED,
     PERSON_CHANGED,
     PREFERENCE_CHANGED,
     TASK_CHANGED,
+    WAITING_CHANGED,
     WORLD_CHANGED,
     EventBus,
 )
 from lifeops.ids import PREFIX_PERSON, slug_id
 from lifeops.observability.logging import operation
 from lifeops.policy import Capability, ClientIdentity, require
+from lifeops.policy.capabilities import capability_for_action
 from lifeops.policy.trust import may_supersede
 from lifeops.repositories.interfaces import (
+    ActionRepository,
+    ApprovalRepository,
+    AuditRepository,
     MemoryRepository,
     PersonRepository,
     PreferenceRepository,
     TaskRepository,
+    WaitingRepository,
     WorldRepository,
 )
 
@@ -470,6 +503,281 @@ class WorldService:
         self._notify(source_id)
 
 
+class WaitingService:
+    """Waiting items and the due-work lease (BUILD_SPEC sections 13, 54, 55).
+
+    Holds only a ``WaitingRepository``, like the memory and world services.
+    Following up on a provider must not be able to move money or rewrite a
+    task's state as a side effect; keeping the reach narrow is what makes that
+    true by construction rather than by review.
+    """
+
+    def __init__(
+        self,
+        *,
+        waiting: WaitingRepository,
+        clock: Clock,
+        publish: Callable[[str], None] | None = None,
+    ) -> None:
+        self._waiting = waiting
+        self._clock = clock
+        self._publish_event = publish
+
+    def _notify(self, waiting_id: str) -> None:
+        if self._publish_event is not None:
+            self._publish_event(waiting_id)
+
+    async def get(self, waiting_id: str) -> WaitingItem:
+        item = await self._waiting.get(waiting_id)
+        if item is None:
+            raise NotFoundError(
+                f"no such waiting item: {waiting_id}", waiting_id=waiting_id
+            )
+        return item
+
+    async def create(self, draft: WaitingDraft, *, client_id: str) -> WaitingItem:
+        now = now_iso(self._clock)
+        item = WaitingItem(
+            id=WaitingItem.make_id(),
+            task_id=draft.task_id,
+            subject=draft.subject.strip(),
+            waiting_on_entity_id=draft.waiting_on_entity_id,
+            waiting_since=now,
+            expected_by=draft.expected_by,
+            next_action_at=next_followup_at(0, now=now),
+            max_followups=draft.max_followups,
+            created_by_client=client_id,
+        )
+        with operation("waiting.create", waiting_id=item.id, client_id=client_id):
+            created = await self._waiting.create(item)
+        self._notify(created.id)
+        return created
+
+    async def list(
+        self, *, statuses: list[WaitingStatus] | None = None, limit: int = 100
+    ) -> list[WaitingItem]:
+        return await self._waiting.list_by_status(statuses=statuses, limit=limit)
+
+    async def list_for_task(self, task_id: str) -> list[WaitingItem]:
+        return await self._waiting.list_for_task(task_id)
+
+    async def record_followup(self, waiting_id: str, *, client_id: str) -> WaitingItem:
+        item = await self.get(waiting_id)
+        updated = record_followup_rule(item, now=now_iso(self._clock))
+        with operation(
+            "waiting.followup",
+            waiting_id=waiting_id,
+            followup_count=updated.followup_count,
+            status=str(updated.status),
+            client_id=client_id,
+        ):
+            saved = await self._waiting.update(updated)
+        self._notify(saved.id)
+        return saved
+
+    async def resolve(self, waiting_id: str, *, client_id: str) -> WaitingItem:
+        item = await self.get(waiting_id)
+        with operation("waiting.resolve", waiting_id=waiting_id, client_id=client_id):
+            saved = await self._waiting.update(resolve_waiting(item, now=now_iso(self._clock)))
+        self._notify(saved.id)
+        return saved
+
+    async def due(self, *, limit: int = 50) -> list[WaitingItem]:
+        return await self._waiting.list_due(now=now_iso(self._clock), limit=limit)
+
+    async def claim(
+        self, waiting_id: str, *, owner: str, lease_seconds: int = 300
+    ) -> WaitingItem | None:
+        """Take the lease, or return None when another worker already holds it."""
+        from datetime import datetime, timedelta
+
+        now = now_iso(self._clock)
+        until = (
+            datetime.fromisoformat(now.replace("Z", "+00:00"))
+            + timedelta(seconds=lease_seconds)
+        ).isoformat().replace("+00:00", "Z")
+        return await self._waiting.claim(waiting_id, owner=owner, until=until, now=now)
+
+
+class ActionService:
+    """The action outbox and its approvals (BUILD_SPEC sections 57-61).
+
+    Actions and approvals live in one service because section 57's
+    PREPARE -> APPROVE -> COMMIT -> VERIFY is a single flow: an approval that
+    could be granted without reference to the action it authorises would not be
+    an approval of anything. Splitting them would put the binding check on the
+    caller, which is exactly where it must not be.
+    """
+
+    def __init__(
+        self,
+        *,
+        actions: ActionRepository,
+        approvals: ApprovalRepository,
+        clock: Clock,
+        publish: Callable[[str, str], None] | None = None,
+    ) -> None:
+        self._actions = actions
+        self._approvals = approvals
+        self._clock = clock
+        self._publish_event = publish
+
+    def _notify(self, kind: str, entity_id: str) -> None:
+        if self._publish_event is not None:
+            self._publish_event(kind, entity_id)
+
+    async def get(self, action_id: str) -> Action:
+        action = await self._actions.get(action_id)
+        if action is None:
+            raise NotFoundError(f"no such action: {action_id}", action_id=action_id)
+        return action
+
+    async def prepare(self, draft: ActionDraft, *, client_id: str) -> Action:
+        """Persist the intent before anything external happens (section 60).
+
+        An identical intent already recorded is returned as-is rather than
+        duplicated: two Actions carrying one idempotency key would be two
+        chances to book the same appointment.
+        """
+        now = now_iso(self._clock)
+        candidate = prepare_action(draft, now=now, client_id=client_id)
+
+        existing = await self._actions.get_by_idempotency_key(candidate.idempotency_key)
+        if existing is not None and existing.is_live:
+            return existing
+
+        with operation(
+            "action.prepare",
+            action_id=candidate.id,
+            action_type=str(candidate.type),
+            client_id=client_id,
+        ):
+            created = await self._actions.create(candidate)
+
+        if created.status is ActionStatus.NEEDS_APPROVAL:
+            approval = request_approval(created, now=now, requested_by=client_id)
+            await self._approvals.create(approval)
+            self._notify(APPROVAL_CHANGED, approval.id)
+
+        self._notify(ACTION_CHANGED, created.id)
+        return created
+
+    async def list(
+        self, *, statuses: list[ActionStatus] | None = None, limit: int = 100
+    ) -> list[Action]:
+        return await self._actions.list_by_status(statuses=statuses, limit=limit)
+
+    async def pending_approvals(self, *, limit: int = 50) -> list[Approval]:
+        return await self._approvals.list_pending(limit=limit)
+
+    async def approval_for(self, action_id: str) -> Approval | None:
+        return await self._approvals.get_for_action(action_id)
+
+    async def decide(
+        self, approval_id: str, *, approved: bool, by: str
+    ) -> Approval:
+        """Record a human decision and move the action with it."""
+        approval = await self._approvals.get(approval_id)
+        if approval is None:
+            raise NotFoundError(
+                f"no such approval: {approval_id}", approval_id=approval_id
+            )
+        now = now_iso(self._clock)
+        decided = decide_approval(approval, approved=approved, by=by, now=now)
+
+        with operation(
+            "approval.decide",
+            approval_id=approval_id,
+            status=str(decided.status),
+            client_id=by,
+        ):
+            saved = await self._approvals.update(decided)
+
+        action = await self._actions.get(saved.action_id)
+        if action is not None:
+            if saved.status is ApprovalStatus.APPROVED:
+                action.status = ActionStatus.APPROVED
+            elif saved.status is ApprovalStatus.DECLINED:
+                action.status = ActionStatus.CANCELLED
+                action.failure_reason = "declined by the user"
+            await self._actions.update(action)
+            self._notify(ACTION_CHANGED, action.id)
+
+        self._notify(APPROVAL_CHANGED, saved.id)
+        return saved
+
+    async def begin_commit(self, action_id: str, *, client_id: str) -> Action:
+        """Clear an action to go out, spending its approval (section 57).
+
+        The approval is re-checked against the action's *current* payload hash,
+        so a payload edited after approval no longer matches and the commit is
+        refused. That is "material change invalidates approval" enforced rather
+        than documented.
+        """
+        action = await self.get(action_id)
+        now = now_iso(self._clock)
+
+        if action.type in ACTIONS_REQUIRING_APPROVAL:
+            approval = await self._approvals.get_for_action(action.id)
+            if approval is None or not authorises(approval, action, now=now):
+                raise ConflictError(
+                    f"action {action.id} has no valid approval for its current payload",
+                    action_id=action.id,
+                    reason="approval_required",
+                )
+            await self._approvals.update(consume_approval(approval, now=now))
+            self._notify(APPROVAL_CHANGED, approval.id)
+
+        with operation(
+            "action.commit",
+            action_id=action.id,
+            action_type=str(action.type),
+            attempt=action.attempt_count + 1,
+            client_id=client_id,
+        ):
+            saved = await self._actions.update(record_attempt(action, now=now))
+        self._notify(ACTION_CHANGED, saved.id)
+        return saved
+
+    async def record_result(
+        self,
+        action_id: str,
+        *,
+        succeeded: bool,
+        external_reference: str | None = None,
+        failure_reason: str | None = None,
+    ) -> Action:
+        """Persist what the external system said (section 60 step 3)."""
+        action = await self.get(action_id)
+        action.status = ActionStatus.EXECUTED if succeeded else ActionStatus.FAILED
+        action.external_reference = external_reference
+        action.failure_reason = failure_reason
+        saved = await self._actions.update(action)
+        self._notify(ACTION_CHANGED, saved.id)
+        return saved
+
+    async def verify(self, action_id: str, *, evidence: str) -> Action:
+        """Confirm the thing actually happened (section 6).
+
+        Executed is not verified: an accepted request is a claim, and evidence
+        from the target system is what turns it into a fact.
+        """
+        action = await self.get(action_id)
+        if action.status is not ActionStatus.EXECUTED:
+            raise ConflictError(
+                f"action {action.id} is {action.status}; only an executed action "
+                "can be verified",
+                action_id=action.id,
+                reason="not_executed",
+            )
+        action.status = ActionStatus.VERIFIED
+        action.verification_state = VerificationState.VERIFIED
+        action.external_reference = action.external_reference or evidence
+        saved = await self._actions.update(action)
+        self._notify(ACTION_CHANGED, saved.id)
+        return saved
+
+
 class LifeOpsCore:
     def __init__(
         self,
@@ -479,6 +787,10 @@ class LifeOpsCore:
         tasks: TaskRepository,
         memory: MemoryRepository | None = None,
         world: WorldRepository | None = None,
+        waiting: WaitingRepository | None = None,
+        actions: ActionRepository | None = None,
+        approvals: ApprovalRepository | None = None,
+        audit: AuditRepository | None = None,
         clock: Clock | None = None,
         safe_mode: bool = False,
         events: EventBus | None = None,
@@ -513,6 +825,33 @@ class LifeOpsCore:
             if world is not None
             else None
         )
+        self._waiting_service = (
+            WaitingService(
+                waiting=waiting,
+                clock=self._clock,
+                publish=(
+                    lambda waiting_id: self._publish(
+                        WAITING_CHANGED, waiting_id=waiting_id
+                    )
+                ),
+            )
+            if waiting is not None
+            else None
+        )
+        # Actions and approvals are one service: section 57's two-phase commit
+        # is a single flow, and an approval that cannot see its action cannot
+        # bind to it.
+        self._action_service = (
+            ActionService(
+                actions=actions,
+                approvals=approvals,
+                clock=self._clock,
+                publish=(lambda kind, entity_id: self._publish(kind, id=entity_id)),
+            )
+            if actions is not None and approvals is not None
+            else None
+        )
+        self._audit_repo = audit
 
     def _require(self, client: ClientIdentity, capability: Capability) -> None:
         require(client, capability, safe_mode=self.safe_mode)
@@ -1080,7 +1419,288 @@ class LifeOpsCore:
             client_id=client.client_id,
         )
 
+    # --- durable work (BUILD_SPEC sections 13, 54-62) --------------------------
+
+    def _waiting(self) -> WaitingService:
+        if self._waiting_service is None:
+            raise ConfigurationError(
+                "no waiting repository is configured", component="waiting"
+            )
+        return self._waiting_service
+
+    def _actions(self) -> ActionService:
+        if self._action_service is None:
+            raise ConfigurationError(
+                "no action repository is configured", component="actions"
+            )
+        return self._action_service
+
+    async def audit(
+        self,
+        client: ClientIdentity,
+        *,
+        result: str,
+        intent: str | None = None,
+        tool: str | None = None,
+        risk: str | None = None,
+        approval: str | None = None,
+        action: str | None = None,
+        target: str | None = None,
+        verification: str | None = None,
+        user: str | None = None,
+        session: str | None = None,
+        trace_id: str | None = None,
+        **details: str,
+    ) -> AuditRecord | None:
+        """Append one audit record (section 62).
+
+        Best-effort like event publishing: a failure to record must not undo
+        the thing that happened. Returns None when no audit repository is
+        configured, which is the case in unit tests.
+        """
+        if self._audit_repo is None:
+            return None
+        record = AuditRecord(
+            id=AuditRecord.make_id(),
+            requester=client.client_id,
+            user=user,
+            client=client.client_id,
+            session=session,
+            intent=intent,
+            tool=tool,
+            risk=risk,
+            approval=approval,
+            action=action,
+            target=target,
+            result=result,
+            verification=verification,
+            timestamp=now_iso(self._clock),
+            trace_id=trace_id,
+            details={k: str(v) for k, v in details.items()},
+        )
+        return await self._audit_repo.append(record)
+
+    async def read_audit(
+        self, client: ClientIdentity, *, target: str | None = None, limit: int = 100
+    ) -> list[AuditRecord]:
+        """The audit log — "why did Hermes do that?" (section 62)."""
+        self._require(client, Capability.READ_TASKS)
+        if self._audit_repo is None:
+            raise ConfigurationError(
+                "no audit repository is configured", component="audit"
+            )
+        if target is not None:
+            return await self._audit_repo.list_for_target(target, limit=limit)
+        return await self._audit_repo.list_recent(limit=limit)
+
+    # --- waiting items --------------------------------------------------------
+
+    async def create_waiting_item(
+        self, client: ClientIdentity, draft: WaitingDraft
+    ) -> WaitingItem:
+        """Record that a task is blocked on someone else (section 54).
+
+        Low-risk (section 51): this captures a fact about the world, it sends
+        nothing and commits the user to nothing.
+        """
+        self._require(client, Capability.CREATE_TASK)
+        task = await self._tasks.get(draft.task_id)
+        if task is None:
+            raise NotFoundError(f"no such task: {draft.task_id}", task_id=draft.task_id)
+        item = await self._waiting().create(draft, client_id=client.client_id)
+        await self.audit(
+            client, result="created", intent="create_waiting_item",
+            target=item.id, risk="low",
+        )
+        return item
+
+    async def get_waiting_item(
+        self, client: ClientIdentity, *, waiting_id: str
+    ) -> WaitingItem:
+        self._require(client, Capability.READ_TASKS)
+        return await self._waiting().get(waiting_id)
+
+    async def list_waiting(
+        self,
+        client: ClientIdentity,
+        *,
+        statuses: list[WaitingStatus] | None = None,
+        limit: int = 100,
+    ) -> list[WaitingItem]:
+        """The Waiting screen's list (section 13)."""
+        self._require(client, Capability.READ_TASKS)
+        return await self._waiting().list(statuses=statuses, limit=limit)
+
+    async def record_followup(
+        self, client: ClientIdentity, *, waiting_id: str
+    ) -> WaitingItem:
+        """Log a follow-up, escalating when the budget is spent."""
+        self._require(client, Capability.UPDATE_TASK)
+        item = await self._waiting().record_followup(
+            waiting_id, client_id=client.client_id
+        )
+        await self.audit(
+            client, result=str(item.status), intent="record_followup",
+            target=item.id, risk="low", followup_count=str(item.followup_count),
+        )
+        return item
+
+    async def resolve_waiting_item(
+        self, client: ClientIdentity, *, waiting_id: str
+    ) -> WaitingItem:
+        self._require(client, Capability.UPDATE_TASK)
+        item = await self._waiting().resolve(waiting_id, client_id=client.client_id)
+        await self.audit(
+            client, result="resolved", intent="resolve_waiting_item", target=item.id
+        )
+        return item
+
+    async def due_waiting_items(
+        self, client: ClientIdentity, *, limit: int = 50
+    ) -> list[WaitingItem]:
+        """What the due-work worker should act on now (section 55)."""
+        self._require(client, Capability.READ_TASKS)
+        return await self._waiting().due(limit=limit)
+
+    async def claim_waiting_item(
+        self, client: ClientIdentity, *, waiting_id: str, owner: str
+    ) -> WaitingItem | None:
+        """Lease an item for this worker, or None if another holds it."""
+        self._require(client, Capability.UPDATE_TASK)
+        return await self._waiting().claim(waiting_id, owner=owner)
+
+    # --- actions and approvals ------------------------------------------------
+
+    async def prepare_action(
+        self, client: ClientIdentity, draft: ActionDraft
+    ) -> Action:
+        """Record an intended external write before it happens (section 60).
+
+        Gated on the capability for the action's risk class, so a client that
+        may send email still cannot book or pay.
+        """
+        self._require(client, capability_for_action(str(draft.type)))
+        action = await self._actions().prepare(draft, client_id=client.client_id)
+        await self.audit(
+            client,
+            result=str(action.status),
+            intent="prepare_action",
+            tool=str(action.type),
+            risk=str(capability_for_action(str(draft.type))),
+            action=action.id,
+            target=action.target_entity_id,
+        )
+        return action
+
+    async def get_action(self, client: ClientIdentity, *, action_id: str) -> Action:
+        self._require(client, Capability.READ_TASKS)
+        return await self._actions().get(action_id)
+
+    async def list_actions(
+        self,
+        client: ClientIdentity,
+        *,
+        statuses: list[ActionStatus] | None = None,
+        limit: int = 100,
+    ) -> list[Action]:
+        self._require(client, Capability.READ_TASKS)
+        return await self._actions().list(statuses=statuses, limit=limit)
+
+    async def list_pending_approvals(
+        self, client: ClientIdentity, *, limit: int = 50
+    ) -> list[Approval]:
+        """What the Approval screen shows (section 58)."""
+        self._require(client, Capability.READ_TASKS)
+        return await self._actions().pending_approvals(limit=limit)
+
+    async def decide_approval(
+        self, client: ClientIdentity, *, approval_id: str, approved: bool
+    ) -> Approval:
+        """Approve or decline one exact action (sections 57-58).
+
+        Only a client holding APPROVE_ACTION may do this, which in practice
+        means the Console: an agent approving its own action would defeat the
+        gate entirely.
+        """
+        self._require(client, Capability.APPROVE_ACTION)
+        approval = await self._actions().decide(
+            approval_id, approved=approved, by=client.client_id
+        )
+        await self.audit(
+            client,
+            result=str(approval.status),
+            intent="decide_approval",
+            approval=approval.id,
+            action=approval.action_id,
+            risk="approval",
+        )
+        return approval
+
+    async def commit_action(self, client: ClientIdentity, *, action_id: str) -> Action:
+        """Clear an action to execute, spending its approval (section 57)."""
+        action = await self._actions().get(action_id)
+        self._require(client, capability_for_action(str(action.type)))
+        committed = await self._actions().begin_commit(
+            action_id, client_id=client.client_id
+        )
+        await self.audit(
+            client,
+            result="committing",
+            intent="commit_action",
+            tool=str(committed.type),
+            action=committed.id,
+            target=committed.target_entity_id,
+            risk=str(capability_for_action(str(committed.type))),
+        )
+        return committed
+
+    async def record_action_result(
+        self,
+        client: ClientIdentity,
+        *,
+        action_id: str,
+        succeeded: bool,
+        external_reference: str | None = None,
+        failure_reason: str | None = None,
+    ) -> Action:
+        """Persist what the external system returned (section 60 step 3)."""
+        action = await self._actions().get(action_id)
+        self._require(client, capability_for_action(str(action.type)))
+        saved = await self._actions().record_result(
+            action_id,
+            succeeded=succeeded,
+            external_reference=external_reference,
+            failure_reason=failure_reason,
+        )
+        await self.audit(
+            client,
+            result=str(saved.status),
+            intent="record_action_result",
+            action=saved.id,
+            tool=str(saved.type),
+            verification=str(saved.verification_state),
+        )
+        return saved
+
+    async def verify_action(
+        self, client: ClientIdentity, *, action_id: str, evidence: str
+    ) -> Action:
+        """Turn an executed action into a verified one, with evidence."""
+        action = await self._actions().get(action_id)
+        self._require(client, capability_for_action(str(action.type)))
+        verified = await self._actions().verify(action_id, evidence=evidence)
+        await self.audit(
+            client,
+            result="verified",
+            intent="verify_action",
+            action=verified.id,
+            tool=str(verified.type),
+            verification=str(verified.verification_state),
+        )
+        return verified
+
     # --- search -------------------------------------------------------------
+
 
     async def search(
         self, client: ClientIdentity, *, query: str, limit: int = 10

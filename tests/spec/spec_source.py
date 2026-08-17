@@ -55,3 +55,12 @@ def snake(camel: str) -> str:
     lowercase enum values. This is the bridge between the two spellings.
     """
     return re.sub(r"(?<!^)(?=[A-Z])", "_", camel).lower()
+
+
+def fenced_fields(section: int) -> list[str]:
+    """Field names from a ``key:``-style fenced block (sections 54, 59, 60, 62).
+
+    The spec writes schemas as bare YAML keys with empty values; this strips
+    the trailing colon so the result compares directly against model fields.
+    """
+    return [line.rstrip(":").strip() for line in fenced_list(section)]

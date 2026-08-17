@@ -10,7 +10,7 @@ red build.
 from __future__ import annotations
 
 from lifeops.domain.world import WorldEntityType, WorldRelationship
-from tests.spec.spec_source import fenced_list, snake
+from tests.spec.spec_source import fenced_fields, fenced_list, snake
 
 #: Every section 36 canonical entity type, mapped to the phase that owns it.
 #: Mirrors section 7 of the program roadmap. A type may be deferred, but only
@@ -60,3 +60,53 @@ class TestEntityTypes:
         by_snake = {snake(name): phase for name, phase in PHASE_FOR_ENTITY_TYPE.items()}
         for entity_type in WorldEntityType:
             assert by_snake[str(entity_type)] != "unscheduled"
+
+
+class TestPhase4Schemas:
+    """Phase 4's schemas, pinned before they are implemented.
+
+    AGENTS.md: when a phase adds an enumeration to BUILD_SPEC, pin it here
+    first. These are the section 54/59/60 records the durable-work phase
+    builds; the assertions fail until the models carry every field the spec
+    names, and keep failing if one is later dropped.
+    """
+
+    def test_waiting_item_carries_every_section_54_field(self) -> None:
+        from lifeops.domain.waiting import WaitingItem
+
+        assert set(fenced_fields(54)) <= set(WaitingItem.model_fields)
+
+    def test_action_carries_every_section_60_field(self) -> None:
+        from lifeops.domain.actions import Action
+
+        # The spec names the identifier `action_id`; the model calls it `id`,
+        # as every other LifeOps record does. Compare the rest verbatim.
+        spec = {f for f in fenced_fields(60) if f != "action_id"}
+        assert spec <= set(Action.model_fields)
+        assert "id" in Action.model_fields
+
+    def test_approval_carries_every_section_59_field(self) -> None:
+        from lifeops.domain.approvals import Approval
+
+        spec = {f for f in fenced_fields(59) if f != "approval_id"}
+        assert spec <= set(Approval.model_fields)
+        assert "id" in Approval.model_fields
+
+    def test_audit_record_carries_every_section_62_field(self) -> None:
+        from lifeops.domain.audit import AuditRecord
+
+        assert set(fenced_fields(62)) <= set(AuditRecord.model_fields)
+
+    def test_continuation_state_lives_on_the_waiting_item(self) -> None:
+        """Section 55: durable continuation state is stored in NornicDB, with
+        a lease so one worker claims an item at a time.
+
+        Section 55's ``wake_at`` is section 54's ``next_action_at`` — the same
+        instant under two names — so the model carries one field, not two.
+        ``attempt_count`` stays distinct from ``followup_count``: a worker
+        attempt that fails is not a follow-up the provider ever saw.
+        """
+        from lifeops.domain.waiting import WaitingItem
+
+        for field in ("next_action_at", "attempt_count", "lease_owner", "lease_until"):
+            assert field in WaitingItem.model_fields, field

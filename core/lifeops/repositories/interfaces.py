@@ -15,10 +15,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
+from lifeops.domain.actions import Action, ActionStatus
+from lifeops.domain.approvals import Approval
+from lifeops.domain.audit import AuditRecord
 from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
 from lifeops.domain.tasks import Task, TaskState
+from lifeops.domain.waiting import WaitingItem, WaitingStatus
 from lifeops.domain.world import (
     WorldEdge,
     WorldEntity,
@@ -239,6 +243,105 @@ class WorldRepository(Protocol):
         self, source_id: str, target_id: str, rel_type: WorldRelationship
     ) -> bool:
         """Remove the edge. Returns False when no such edge existed."""
+        ...
+
+
+@runtime_checkable
+class WaitingRepository(Protocol):
+    """Persistence for waiting items (BUILD_SPEC sections 13, 54, 55)."""
+
+    async def get(self, waiting_id: str) -> WaitingItem | None: ...
+
+    async def list_for_task(self, task_id: str) -> list[WaitingItem]: ...
+
+    async def list_by_status(
+        self, *, statuses: list[WaitingStatus] | None = None, limit: int = 100
+    ) -> list[WaitingItem]:
+        """Waiting items for the Waiting screen, newest first."""
+        ...
+
+    async def list_due(self, *, now: str, limit: int = 50) -> list[WaitingItem]:
+        """Active items whose next action has come due and whose lease is free.
+
+        The due-work worker's only read. Filtering in the query rather than in
+        Python keeps a growing backlog from being pulled into memory every
+        tick.
+        """
+        ...
+
+    async def claim(
+        self, waiting_id: str, *, owner: str, until: str, now: str
+    ) -> WaitingItem | None:
+        """Take the lease on an item, or return None if another worker holds it.
+
+        Section 55: the claim must be atomic, because two workers following up
+        with the same provider is exactly the duplicate-contact failure the
+        lease exists to prevent.
+        """
+        ...
+
+    async def create(self, item: WaitingItem) -> WaitingItem: ...
+
+    async def update(self, item: WaitingItem) -> WaitingItem: ...
+
+
+@runtime_checkable
+class ActionRepository(Protocol):
+    """Persistence for the action outbox (BUILD_SPEC sections 60, 61)."""
+
+    async def get(self, action_id: str) -> Action | None: ...
+
+    async def get_by_idempotency_key(self, key: str) -> Action | None:
+        """The existing action for this key, if any.
+
+        Section 60: before retrying, inspect whether the previous request may
+        have succeeded. This is that inspection.
+        """
+        ...
+
+    async def list_for_task(self, task_id: str) -> list[Action]: ...
+
+    async def list_by_status(
+        self, *, statuses: list[ActionStatus] | None = None, limit: int = 100
+    ) -> list[Action]: ...
+
+    async def create(self, action: Action) -> Action: ...
+
+    async def update(self, action: Action) -> Action: ...
+
+
+@runtime_checkable
+class ApprovalRepository(Protocol):
+    """Persistence for approvals (BUILD_SPEC sections 57-59)."""
+
+    async def get(self, approval_id: str) -> Approval | None: ...
+
+    async def get_for_action(self, action_id: str) -> Approval | None: ...
+
+    async def list_pending(self, *, limit: int = 50) -> list[Approval]: ...
+
+    async def create(self, approval: Approval) -> Approval: ...
+
+    async def update(self, approval: Approval) -> Approval: ...
+
+
+@runtime_checkable
+class AuditRepository(Protocol):
+    """The durable audit log (BUILD_SPEC section 62).
+
+    Append-only by construction: there is deliberately no update or delete.
+    An audit log a caller can rewrite answers no question worth asking.
+    """
+
+    async def append(self, record: AuditRecord) -> AuditRecord: ...
+
+    async def list_recent(self, *, limit: int = 100) -> list[AuditRecord]: ...
+
+    async def list_for_target(
+        self, target: str, *, limit: int = 100
+    ) -> list[AuditRecord]:
+        """Every recorded action against one entity — "why did Hermes do that?"
+        asked of a specific thing."""
         ...
 
 

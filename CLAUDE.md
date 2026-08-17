@@ -133,6 +133,14 @@ per-label projection. `create_entity` accepts only Household, Provider, and
 Asset (`CREATABLE_ENTITY_TYPES`), and the NornicDB repository refuses the rest
 so a future caller cannot write a `:Preference` with the wrong property shape.
 
+**A node written by auto-commit `write()` may not be visible to a `MATCH`
+inside an immediately following `write_many()` transaction.** Transaction-to-
+transaction is fine; auto-commit-to-transaction races. Found in Phase 4. Where
+an edge depends on a node another call just created, either write both in the
+same `write_many`, or make the edge redundant — `Task.related_entity_ids` is
+the source of truth precisely so a dropped `ABOUT` edge degrades instead of
+losing the relationship.
+
 **Undirected and variable-length Cypher patterns return phantom rows on
 NornicDB.** Neighbourhood expansion is an explicit breadth-first walk of
 directed single hops for that reason. Only `tests/persistence/` catches a
