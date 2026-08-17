@@ -52,6 +52,16 @@ _LABEL_FOR_TYPE: dict[WorldEntityType, str] = {
     WorldEntityType.APPOINTMENT: "Appointment",
     WorldEntityType.EVENT: "Event",
     WorldEntityType.DOCUMENT: "Document",
+    # Phase 8 (section 97): a ServiceRequest carries its own workflow status
+    # the same way Appointment carries a booking status, so it is written
+    # through ``WORLD_MANAGED_ENTITY_TYPES`` rather than the generic-create
+    # path too.
+    WorldEntityType.SERVICE_REQUEST: "ServiceRequest",
+    # Phase 9 (section 98): a ShoppingList carries its own cart/checkout
+    # status the same way Appointment carries a booking status, so it is
+    # written through ``WORLD_MANAGED_ENTITY_TYPES`` rather than the
+    # generic-create path too.
+    WorldEntityType.SHOPPING_LIST: "ShoppingList",
 }
 
 # Labels come from this module's own constant map keyed on the ID prefix —

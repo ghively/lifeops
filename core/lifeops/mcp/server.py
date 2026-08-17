@@ -23,7 +23,12 @@ Phase 4 adds durable work: ``create_waiting_item`` records that a task is
 blocked on someone else (section 54), and ``update_task`` drives a task
 through the state machine (section 14). Both are low-risk (section 51) and
 write only through LifeOpsCore, which enforces the same capability checks and
-transition rules for every client.
+transition rules for every client. Phase 8 adds section 97's provider
+workflow: ``create_service_request`` opens the record, ``request_provider_call``
+and ``request_quote`` contact a provider with a constrained objective that can
+never authorise a charge or repair work (section 97's hard rule,
+domain/telephony.py), and ``book_service_request`` only *prepares* a booking —
+it still needs a human's approval before anything is booked (sections 57-58).
 
 Client identity
 ---------------
@@ -50,6 +55,8 @@ from lifeops.domain.calendar import AppointmentHoldDraft
 from lifeops.domain.email import EmailSendDraft
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
+from lifeops.domain.service_request import ServiceRequestDraft
+from lifeops.domain.shopping import ShoppingItem, ShoppingListDraft, SubstitutionDraft
 from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState, TaskUpdate
 from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingDraft
 from lifeops.errors import LifeOpsError, NotFoundError
@@ -1082,6 +1089,314 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         target_entity_id=target_entity_id,
                     ),
                 )
+                return {"ok": True, "action": action.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="create_service_request",
+        title="Create service request",
+        description=(
+            "Open the durable record for one provider workflow — a repair, "
+            "an appointment, anything section 67 describes as 'find a "
+            "provider and get something done' (BUILD_SPEC section 101 step "
+            "1). Identify the relevant asset first if there is one, e.g. "
+            "the outlet or the water heater.\n\n"
+            "This records intent; it contacts nobody and executes nothing."
+        ),
+    )
+    async def create_service_request(
+        subject: Annotated[str, Field(description="What needs doing, e.g. 'Living Room "
+                                                     "Outlet repair'.")],
+        task_id: Annotated[
+            str | None, Field(description="The task this workflow fulfils, if any.")
+        ] = None,
+        asset_entity_id: Annotated[
+            str | None, Field(description="The asset this is about, if any.")
+        ] = None,
+        provider_entity_id: Annotated[
+            str | None, Field(description="A known provider to use, if already decided.")
+        ] = None,
+        notes: Annotated[str, Field(description="Anything worth recording.")] = "",
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                request = await container.core.create_service_request(
+                    client,
+                    ServiceRequestDraft(
+                        subject=subject,
+                        task_id=task_id,
+                        asset_entity_id=asset_entity_id,
+                        provider_entity_id=provider_entity_id,
+                        notes=notes,
+                    ),
+                )
+                return {"ok": True, "service_request": request.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_service_request",
+        title="Get service request",
+        description=(
+            "Check the status of a provider workflow — has it collected "
+            "availability and a fee, is it waiting on the provider, has a "
+            "booking been requested (BUILD_SPEC section 101).\n\n"
+            "Read-only."
+        ),
+    )
+    async def get_service_request(
+        service_request_id: Annotated[
+            str, Field(description="From create_service_request.")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                request = await container.core.get_service_request(
+                    client, service_request_id=service_request_id
+                )
+                return {"ok": True, "service_request": request.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="request_provider_call",
+        title="Call a provider",
+        description=(
+            "Place a phone call to a provider with a constrained objective "
+            "(BUILD_SPEC sections 68, 101 steps 5-6) — ask what you need to "
+            "know, e.g. availability. This is not approval-gated: Hermes "
+            "places this call on its own.\n\n"
+            "The call can never authorise a charge or repair work, no "
+            "matter what is said on the call (section 97's hard rule) — "
+            "that authority does not exist for a phone call to enlarge."
+        ),
+    )
+    async def request_provider_call(
+        service_request_id: Annotated[str, Field(description="From create_service_request.")],
+        provider_entity_id: Annotated[str, Field(description="Who to call.")],
+        objective: Annotated[
+            str, Field(description="What this call is for, e.g. 'schedule_electrician'.")
+        ],
+        collect: Annotated[
+            list[str],
+            Field(description="Facts to gather, e.g. ['availability', 'diagnostic_fee']."),
+        ] = [],  # noqa: B006 - MCP schema default, never mutated
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                action = await container.core.request_provider_call(
+                    client,
+                    service_request_id=service_request_id,
+                    provider_entity_id=provider_entity_id,
+                    objective=objective,
+                    collect=collect,
+                )
+                return {"ok": True, "action": action.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="request_quote",
+        title="Request a quote",
+        description=(
+            "Ask a provider for a fee or estimate (BUILD_SPEC section 101 "
+            "step 7), the same way request_provider_call asks for "
+            "availability. Not approval-gated, and carries the same section "
+            "97 hard rule: it can never authorise payment."
+        ),
+    )
+    async def request_quote(
+        service_request_id: Annotated[str, Field(description="From create_service_request.")],
+        provider_entity_id: Annotated[str, Field(description="Who to ask.")],
+        objective: Annotated[
+            str, Field(description="What this call is for, e.g. 'diagnostic_fee'.")
+        ],
+        collect: Annotated[
+            list[str], Field(description="Facts to gather, e.g. ['diagnostic_fee'].")
+        ] = [],  # noqa: B006 - MCP schema default, never mutated
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                action = await container.core.request_quote_by_phone(
+                    client,
+                    service_request_id=service_request_id,
+                    provider_entity_id=provider_entity_id,
+                    objective=objective,
+                    collect=collect,
+                )
+                return {"ok": True, "action": action.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="book_service_request",
+        title="Book service request",
+        description=(
+            "Record intent to book the appointment a service request has "
+            "been researching (BUILD_SPEC section 101 step 10). Like "
+            "book_appointment, this only prepares an action a human must "
+            "approve in the Console (sections 57-58) — it does not book "
+            "anything by itself. Requires an existing hold from "
+            "hold_calendar_time.\n\n"
+            "Do not tell the user this is booked until it is approved, "
+            "executed, and independently verified."
+        ),
+    )
+    async def book_service_request(
+        service_request_id: Annotated[str, Field(description="From create_service_request.")],
+        appointment_id: Annotated[
+            str, Field(description="The held appointment's ID, from hold_calendar_time.")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                action = await container.core.request_service_booking(
+                    client,
+                    service_request_id=service_request_id,
+                    appointment_id=appointment_id,
+                )
+                return {"ok": True, "action": action.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="search_shopping",
+        title="Search shopping",
+        description=(
+            "Search a store's site for candidate products (BUILD_SPEC "
+            "section 98's search/research). Read-only: looks and reports "
+            "what it found, never adds anything to a cart."
+        ),
+    )
+    async def search_shopping(
+        query: Annotated[str, Field(description="What to look for.")],
+        store: Annotated[str, Field(description="Which store's site to search.")] = "",
+        limit: Annotated[int, Field(ge=1, le=50)] = 10,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                results = await container.core.search_shopping(
+                    client, query=query, store=store, limit=limit
+                )
+                return {
+                    "ok": True,
+                    "results": [r.model_dump(mode="json") for r in results],
+                    "total": len(results),
+                }
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="create_shopping_list",
+        title="Create shopping list",
+        description=(
+            "Open a new shopping list with its items (BUILD_SPEC section "
+            "98). Local and reversible: this records intent, it does not "
+            "build a cart or buy anything. Call build_grocery_cart next."
+        ),
+    )
+    async def create_shopping_list(
+        title: Annotated[str, Field(description="What this run is for, e.g. 'Weekly groceries'.")],
+        items: Annotated[
+            list[dict[str, Any]],
+            Field(
+                description=(
+                    "Each item: {name, quantity?, notes?, substitution_allowed?}. "
+                    "substitution_allowed defaults true."
+                )
+            ),
+        ],
+        store: Annotated[str, Field(description="Which store to shop at.")] = "",
+        task_id: Annotated[str | None, Field(description="Related task, if any.")] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                shopping_list = await container.core.create_shopping_list(
+                    client,
+                    ShoppingListDraft(
+                        title=title,
+                        store=store,
+                        task_id=task_id,
+                        items=[ShoppingItem(**item) for item in items],
+                    ),
+                )
+                return {"ok": True, "shopping_list": shopping_list.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="build_grocery_cart",
+        title="Build grocery cart",
+        description=(
+            "Build a cart from a shopping list's items (BUILD_SPEC section "
+            "98). Reversible and automatic — a cart commits nothing, so "
+            "this does not need approval (section 56: R1) and runs "
+            "immediately rather than waiting on one. Call "
+            "submit_grocery_order afterwards to actually check out.\n\n"
+            "Do not tell the user anything was purchased after calling this."
+        ),
+    )
+    async def build_grocery_cart(
+        list_id: Annotated[str, Field(description="From create_shopping_list.")],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                action = await container.core.build_grocery_cart(client, list_id=list_id)
+                return {"ok": True, "action": action.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="apply_substitution",
+        title="Apply substitution",
+        description=(
+            "Record a substitution for an out-of-stock item on a shopping "
+            "list (BUILD_SPEC section 98). If a checkout is already awaiting "
+            "approval, this changes what that approval covers and the human "
+            "must approve the updated cart again before it can be submitted "
+            "(section 57) — a substitution never rides through on an "
+            "approval given for the old items."
+        ),
+    )
+    async def apply_substitution(
+        list_id: Annotated[str, Field(description="From create_shopping_list.")],
+        item_name: Annotated[str, Field(description="The listed item being replaced.")],
+        substituted_with: Annotated[str, Field(description="What to buy instead.")],
+        reason: Annotated[str, Field(description="Why, e.g. 'out of stock'.")] = "",
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                shopping_list = await container.core.apply_substitution(
+                    client,
+                    list_id=list_id,
+                    draft=SubstitutionDraft(
+                        item_name=item_name, substituted_with=substituted_with, reason=reason
+                    ),
+                )
+                return {"ok": True, "shopping_list": shopping_list.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="submit_grocery_order",
+        title="Submit grocery order",
+        description=(
+            "Record intent to check out a built cart (BUILD_SPEC section "
+            "98). This only prepares an action a human must approve in the "
+            "Console (sections 57-58) before it can execute — it does not "
+            "place the order by itself. Requires a cart from "
+            "build_grocery_cart that has been independently verified.\n\n"
+            "Do not tell the user this was ordered until it is approved, "
+            "executed, and independently verified."
+        ),
+    )
+    async def submit_grocery_order(
+        list_id: Annotated[str, Field(description="From create_shopping_list.")],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                action = await container.core.submit_grocery_order(client, list_id=list_id)
                 return {"ok": True, "action": action.model_dump(mode="json")}
             except LifeOpsError as exc:
                 return _fail(exc)

@@ -120,6 +120,14 @@ _READ_ONLY: frozenset[Capability] = frozenset(
 #: still needs a human's APPROVE_ACTION (Console-only, below), and a hold
 #: still cannot become a booking without independent verification
 #: (domain/calendar.py, section 63's warning).
+#:
+#: Phase 9 (section 98) adds SHOPPING_CHECKOUT. Hermes is the client that
+#: searches, builds a grocery cart, and applies substitutions, so it needs the
+#: one capability both ``build_grocery_cart`` (R1, automatic) and
+#: ``submit_grocery_order`` (R3, always approved) spend
+#: (``CAPABILITY_FOR_ACTION`` below) — granting it does not skip approval:
+#: checkout still needs a human's APPROVE_ACTION before ``execute_action`` may
+#: run it, same as booking.
 HERMES = ClientIdentity(
     client_id="hermes-personal",
     role=ClientRole.PRIMARY_ASSISTANT,
@@ -135,6 +143,7 @@ HERMES = ClientIdentity(
         Capability.WRITE_MEMORY,
         Capability.BOOK_APPOINTMENT,
         Capability.SEND_EXTERNAL_MESSAGE,
+        Capability.SHOPPING_CHECKOUT,
     },
 )
 
@@ -177,6 +186,12 @@ CODING_CLIENT = ClientIdentity(
 #: user directly for every other write. It also holds APPROVE_ACTION, so a
 #: Console-prepared booking still needs the human's own decision before it
 #: can execute; nothing here is a way around the approval gate.
+#:
+#: SHOPPING_CHECKOUT (Phase 9, section 98) is granted for the same reason: the
+#: human operating the Console can build and submit a cart themselves, not
+#: only approve one Hermes assembled. APPROVE_ACTION stays the only path to
+#: actually clearing a checkout to run — the Console holding both is not a way
+#: around that, the same way it already is not for booking.
 CONSOLE = ClientIdentity(
     client_id="lifeops-console",
     role=ClientRole.CONSOLE,
@@ -194,6 +209,7 @@ CONSOLE = ClientIdentity(
         Capability.APPROVE_ACTION,
         Capability.BOOK_APPOINTMENT,
         Capability.SEND_EXTERNAL_MESSAGE,
+        Capability.SHOPPING_CHECKOUT,
     },
 )
 

@@ -127,3 +127,22 @@ def new_event_id() -> str:
 
 def new_document_id() -> str:
     return new_ulid_id(PREFIX_DOCUMENT)
+
+
+# Phase 9 (browser + shopping, BUILD_SPEC section 98) prefix. Single-word,
+# same constraint as the waiting/action/approval/audit prefixes above.
+PREFIX_SHOPPING_LIST = "shoppinglist"
+
+
+def new_shopping_list_id() -> str:
+    return new_ulid_id(PREFIX_SHOPPING_LIST)
+
+
+# Phase 8 (provider workflows + telephony) prefix. Single word, no
+# underscore — ``entity_type_for_id`` splits on the *first* underscore, so a
+# prefix spelled ``service_request`` would parse back as ``service``.
+PREFIX_SERVICE_REQUEST = "servicerequest"
+
+
+def new_service_request_id() -> str:
+    return new_ulid_id(PREFIX_SERVICE_REQUEST)

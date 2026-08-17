@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 
 from lifeops.auth import ConsoleAuth
+from lifeops.browser.service import BrowserProviderService
 from lifeops.calendar.service import CalendarProviderService
 from lifeops.clock import Clock, SystemClock
 from lifeops.config.service import ConfigurationService
@@ -30,6 +31,7 @@ from lifeops.repositories.nornic.waiting import NornicWaitingRepository
 from lifeops.repositories.nornic.world import NornicWorldRepository
 from lifeops.secrets.local_encrypted import LocalEncryptedSecretStore
 from lifeops.settings import Settings, get_settings
+from lifeops.telephony.service import TelephonyProviderService
 from lifeops.voice.service import VoiceService
 from lifeops.worker.due_work import DueWorkWorker
 
@@ -66,6 +68,20 @@ class Container:
             config=self.config, secret_store=self.secret_store
         )
         self.email = EmailProviderService(config=self.config, secret_store=self.secret_store)
+        # Phase 8 (BUILD_SPEC section 97). No real backend is wired — section
+        # 88 forbids adding a telephony SDK dependency or asking for a
+        # credential — so this stays honestly disabled until a later phase
+        # adds a factory (telephony/service.py).
+        self.telephony = TelephonyProviderService(
+            config=self.config, secret_store=self.secret_store
+        )
+        # Phase 9 (BUILD_SPEC section 98). No real adapter is wired — section
+        # 88 forbids adding a browser automation dependency or asking for a
+        # credential — so this stays honestly disabled until a real runtime
+        # is installed (browser/real.py detects one; it never assumes one).
+        self.browser = BrowserProviderService(
+            config=self.config, secret_store=self.secret_store
+        )
         self.events = EventBus()
         # Ephemeral view of recent semantic operations for the Activity screen.
         # Not the audit log — it dies with the process (observability/activity.py).
@@ -98,6 +114,8 @@ class Container:
             audit=self.audit,
             calendar=self.calendar,
             email=self.email,
+            telephony=self.telephony,
+            browser=self.browser,
             clock=self.clock,
             safe_mode=safe_mode,
             events=self.events,

@@ -606,7 +606,14 @@ class FakeApprovalRepository:
         matches = [a for a in self._approvals.values() if a.action_id == action_id]
         if not matches:
             return None
-        matches.sort(key=lambda a: a.created_at, reverse=True)
+        # Tiebreak on id (ULIDs sort by real creation time even under a
+        # frozen domain clock), matching NornicApprovalRepository's
+        # ``ORDER BY created_at DESC, id DESC`` — otherwise two approvals
+        # created under FrozenClock, with identical ``created_at``, would
+        # resolve to whichever happened to be inserted first rather than the
+        # most recent one (BUILD_SPEC section 57: a refreshed approval must
+        # actually supersede the stale one it replaces).
+        matches.sort(key=lambda a: (a.created_at, a.id), reverse=True)
         return copy.deepcopy(matches[0])
 
     async def list_pending(self, *, limit: int = 50) -> list[Approval]:

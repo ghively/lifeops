@@ -21,6 +21,7 @@ from lifeops.api.events import router as events_router
 from lifeops.api.schemas import (
     ActionListResponse,
     ActionResponse,
+    AddShoppingItemsRequest,
     AppointmentListResponse,
     AppointmentResponse,
     ApprovalListResponse,
@@ -29,12 +30,15 @@ from lifeops.api.schemas import (
     AuditRecordResponse,
     CalendarEventListResponse,
     CalendarEventResponse,
+    ConfirmServiceBookingRequest,
     ConsoleLogBatch,
     CorrectMemoryRequest,
     CreateAppointmentHoldRequest,
     CreateDocumentRequest,
     CreateEntityRequest,
     CreatePersonRequest,
+    CreateServiceRequestRequest,
+    CreateShoppingListRequest,
     CreateTaskRequest,
     CreateWaitingItemRequest,
     DecideApprovalRequest,
@@ -59,11 +63,20 @@ from lifeops.api.schemas import (
     PersonResponse,
     PreferenceListResponse,
     PreferenceResponse,
+    ProductResultResponse,
     RememberRequest,
+    RequestProviderContactRequest,
+    RequestServiceBookingRequest,
     SavePreferenceRequest,
     SendEmailRequest,
+    ServiceRequestListResponse,
+    ServiceRequestResponse,
     SetPasswordRequest,
     SetPasswordResponse,
+    ShoppingListListResponse,
+    ShoppingListResponse,
+    ShoppingSearchResponse,
+    SubstitutionRequest,
     SynthesizeSpeechRequest,
     TaskListResponse,
     TaskResponse,
@@ -96,6 +109,14 @@ from lifeops.domain.email import EmailMessage, EmailSendDraft, EmailThread
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
+from lifeops.domain.service_request import ServiceRequest, ServiceRequestDraft
+from lifeops.domain.shopping import (
+    ShoppingItem,
+    ShoppingList,
+    ShoppingListDraft,
+    ShoppingListStatus,
+    SubstitutionDraft,
+)
 from lifeops.domain.tasks import Task, TaskDraft, TaskState, TaskUpdate, transition_table
 from lifeops.domain.voice import SynthesisOptions
 from lifeops.domain.waiting import WaitingDraft, WaitingItem, WaitingStatus
@@ -239,6 +260,14 @@ def _email_thread_out(thread: EmailThread) -> EmailThreadResponse:
 
 def _document_out(document: Document) -> DocumentResponse:
     return DocumentResponse(**document.model_dump())
+
+
+def _service_request_out(request: ServiceRequest) -> ServiceRequestResponse:
+    return ServiceRequestResponse(**request.model_dump())
+
+
+def _shopping_list_out(shopping_list: ShoppingList) -> ShoppingListResponse:
+    return ShoppingListResponse(**shopping_list.model_dump())
 
 
 def _publish_config_changed(container: Container, **fields: Any) -> None:
@@ -1120,6 +1149,287 @@ async def read_audit(
     )
 
 
+# --- service requests (BUILD_SPEC sections 36, 67, 68, 97, 101) --------------
+#
+# Section 101's electrician scenario end to end: open a request, contact a
+# provider by phone or with a quote request (through the same outbox and
+# approval machinery every other action uses), prepare a booking, and fold
+# the independently-verified booking back into the request once it happened.
+
+
+@router.get(
+    "/service-requests", response_model=ServiceRequestListResponse, tags=["service-requests"]
+)
+async def list_service_requests(
+    container: ContainerDep,
+    client: ClientDep,
+    task_id: Annotated[str | None, Query()] = None,
+) -> ServiceRequestListResponse:
+    requests = await container.core.list_service_requests(client, task_id=task_id)
+    return ServiceRequestListResponse(
+        service_requests=[_service_request_out(r) for r in requests], total=len(requests)
+    )
+
+
+@router.get(
+    "/service-requests/{service_request_id}",
+    response_model=ServiceRequestResponse,
+    tags=["service-requests"],
+)
+async def get_service_request(
+    service_request_id: str, container: ContainerDep, client: ClientDep
+) -> ServiceRequestResponse:
+    return _service_request_out(
+        await container.core.get_service_request(
+            client, service_request_id=service_request_id
+        )
+    )
+
+
+@router.post(
+    "/service-requests",
+    response_model=ServiceRequestResponse,
+    status_code=201,
+    tags=["service-requests"],
+)
+async def create_service_request(
+    payload: CreateServiceRequestRequest, container: ContainerDep, client: ClientDep
+) -> ServiceRequestResponse:
+    """Section 101 step 1: identify the relevant asset and open the record."""
+    draft = ServiceRequestDraft(**payload.model_dump())
+    request = await container.core.create_service_request(client, draft)
+    return _service_request_out(request)
+
+
+@router.post(
+    "/service-requests/{service_request_id}/call",
+    response_model=ActionResponse,
+    tags=["service-requests"],
+)
+async def request_provider_call(
+    service_request_id: str,
+    payload: RequestProviderContactRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> ActionResponse:
+    """Section 101 steps 5-6: call the provider (BUILD_SPEC section 68)."""
+    action = await container.core.request_provider_call(
+        client, service_request_id=service_request_id, **payload.model_dump()
+    )
+    return _action_out(action)
+
+
+@router.post(
+    "/service-requests/{service_request_id}/quote",
+    response_model=ActionResponse,
+    tags=["service-requests"],
+)
+async def request_quote_by_phone(
+    service_request_id: str,
+    payload: RequestProviderContactRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> ActionResponse:
+    """Section 101 step 7: collect the diagnostic fee."""
+    action = await container.core.request_quote_by_phone(
+        client, service_request_id=service_request_id, **payload.model_dump()
+    )
+    return _action_out(action)
+
+
+@router.post(
+    "/service-requests/{service_request_id}/book",
+    response_model=ActionResponse,
+    tags=["service-requests"],
+)
+async def request_service_booking(
+    service_request_id: str,
+    payload: RequestServiceBookingRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> ActionResponse:
+    """Section 101 step 10: prepare booking, through the outbox — this does
+    not book anything by itself. Approve via ``/approvals``, then
+    ``/actions/{id}/execute``, then ``/service-requests/{id}/confirm-booking``."""
+    action = await container.core.request_service_booking(
+        client,
+        service_request_id=service_request_id,
+        appointment_id=payload.appointment_id,
+    )
+    return _action_out(action)
+
+
+@router.post(
+    "/service-requests/{service_request_id}/confirm-booking",
+    response_model=ServiceRequestResponse,
+    tags=["service-requests"],
+)
+async def confirm_service_booking(
+    service_request_id: str,
+    payload: ConfirmServiceBookingRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> ServiceRequestResponse:
+    """Section 101 step 13: fold an independently-verified booking (via
+    ``/actions/{id}/verify-externally``) into its service request."""
+    request = await container.core.confirm_service_booking(
+        client,
+        service_request_id=service_request_id,
+        appointment_id=payload.appointment_id,
+    )
+    return _service_request_out(request)
+
+
+@router.post(
+    "/service-requests/{service_request_id}/complete",
+    response_model=ServiceRequestResponse,
+    tags=["service-requests"],
+)
+async def complete_service_request(
+    service_request_id: str, container: ContainerDep, client: ClientDep
+) -> ServiceRequestResponse:
+    """Section 101 step 16: complete only after the booking is verified — the
+    status machine (domain/service_request.py) refuses this from anywhere but
+    BOOKED."""
+    request = await container.core.complete_service_request(
+        client, service_request_id=service_request_id
+    )
+    return _service_request_out(request)
+
+
+# --- shopping (BUILD_SPEC sections 36, 56, 98) --------------------------------
+#
+# Search is read-only. Creating a list and adding items are local and
+# reversible (R1) — no Action. Building a cart and submitting an order go
+# through the outbox (build_grocery_cart / submit_grocery_order below), the
+# same shape book_appointment and prepare_send_email use; the generic
+# ``/actions/{id}/execute`` and ``/actions/{id}/verify-externally`` routes
+# above already commit, execute, and verify either action type.
+
+
+@router.get("/shopping/search", response_model=ShoppingSearchResponse, tags=["shopping"])
+async def search_shopping(
+    container: ContainerDep,
+    client: ClientDep,
+    query: Annotated[str, Query(min_length=1)],
+    store: Annotated[str, Query()] = "",
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+) -> ShoppingSearchResponse:
+    """Section 98's "search/research". Read-only."""
+    results = await container.core.search_shopping(client, query=query, store=store, limit=limit)
+    return ShoppingSearchResponse(
+        results=[ProductResultResponse(**r.model_dump()) for r in results], total=len(results)
+    )
+
+
+@router.get(
+    "/shopping/lists", response_model=ShoppingListListResponse, tags=["shopping"]
+)
+async def list_shopping_lists(
+    container: ContainerDep,
+    client: ClientDep,
+    status: Annotated[ShoppingListStatus | None, Query()] = None,
+    task_id: Annotated[str | None, Query()] = None,
+) -> ShoppingListListResponse:
+    lists = await container.core.list_shopping_lists(client, status=status, task_id=task_id)
+    return ShoppingListListResponse(
+        shopping_lists=[_shopping_list_out(item) for item in lists], total=len(lists)
+    )
+
+
+@router.get(
+    "/shopping/lists/{list_id}", response_model=ShoppingListResponse, tags=["shopping"]
+)
+async def get_shopping_list(
+    list_id: str, container: ContainerDep, client: ClientDep
+) -> ShoppingListResponse:
+    return _shopping_list_out(await container.core.get_shopping_list(client, list_id=list_id))
+
+
+@router.post(
+    "/shopping/lists", response_model=ShoppingListResponse, status_code=201, tags=["shopping"]
+)
+async def create_shopping_list(
+    payload: CreateShoppingListRequest, container: ContainerDep, client: ClientDep
+) -> ShoppingListResponse:
+    """Open a new list. Local and reversible (R1): no approval."""
+    shopping_list = await container.core.create_shopping_list(
+        client,
+        ShoppingListDraft(
+            title=payload.title,
+            store=payload.store,
+            task_id=payload.task_id,
+            items=[ShoppingItem(**item.model_dump()) for item in payload.items],
+        ),
+    )
+    return _shopping_list_out(shopping_list)
+
+
+@router.post(
+    "/shopping/lists/{list_id}/items",
+    response_model=ShoppingListResponse,
+    tags=["shopping"],
+)
+async def add_shopping_items(
+    list_id: str,
+    payload: AddShoppingItemsRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> ShoppingListResponse:
+    shopping_list = await container.core.add_shopping_items(
+        client,
+        list_id=list_id,
+        items=[ShoppingItem(**item.model_dump()) for item in payload.items],
+    )
+    return _shopping_list_out(shopping_list)
+
+
+@router.post(
+    "/shopping/lists/{list_id}/substitutions",
+    response_model=ShoppingListResponse,
+    tags=["shopping"],
+)
+async def apply_substitution(
+    list_id: str,
+    payload: SubstitutionRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> ShoppingListResponse:
+    """Section 98's substitutions — a safety surface. If this list has a live
+    checkout Action, applying one refreshes that Action's payload, which
+    invalidates any approval already granted for the old payload (section
+    57)."""
+    shopping_list = await container.core.apply_substitution(
+        client, list_id=list_id, draft=SubstitutionDraft(**payload.model_dump())
+    )
+    return _shopping_list_out(shopping_list)
+
+
+@router.post(
+    "/shopping/lists/{list_id}/build-cart", response_model=ActionResponse, tags=["shopping"]
+)
+async def build_grocery_cart(
+    list_id: str, container: ContainerDep, client: ClientDep
+) -> ActionResponse:
+    """Section 98's cart building — R1, automatic (BUILD_SPEC section 56):
+    prepares and executes the Action in one call, no approval required."""
+    action = await container.core.build_grocery_cart(client, list_id=list_id)
+    return _action_out(action)
+
+
+@router.post(
+    "/shopping/lists/{list_id}/checkout", response_model=ActionResponse, tags=["shopping"]
+)
+async def submit_grocery_order(
+    list_id: str, container: ContainerDep, client: ClientDep
+) -> ActionResponse:
+    """Section 98's approval-gated checkout — R3, always approved (BUILD_SPEC
+    section 56). Only prepares the Action; approve via
+    ``/approvals/{id}/decide``, then run it via ``/actions/{id}/execute``."""
+    action = await container.core.submit_grocery_order(client, list_id=list_id)
+    return _action_out(action)
+
+
 # --- search (BUILD_SPEC section 19) ------------------------------------------
 
 
@@ -1210,6 +1520,8 @@ async def test_provider(provider_id: str, container: ContainerDep) -> TestProvid
         return await _test_voice_provider(container, provider_id)
     if provider_id in ("calendar", "email"):
         return await _test_calendar_or_email(container, provider_id)
+    if provider_id == "browser":
+        return await _test_browser(container)
 
     status = container.config.get_status(provider_id)
     message = (
@@ -1248,6 +1560,27 @@ async def _test_voice_provider(container: Container, provider_id: str) -> TestPr
     status = container.config.get_status(provider_id)
     return TestProviderResponse(
         provider=provider_id,
+        healthy=report.healthy,
+        state=str(status.state),
+        message=report.message,
+        checked_at=report.checked_at,
+    )
+
+
+async def _test_browser(container: Container) -> TestProviderResponse:
+    """Actually call the browser provider (phase 9) when it is enabled; it
+    honestly detects whether a browser automation runtime is installed and
+    reports that it is not integrated even if one is (AGENTS.md never fakes
+    success — same pattern as the local voice adapters)."""
+    try:
+        report = await container.browser.health()
+    except ProviderNotConfiguredError as exc:
+        report = container.config.record_health(
+            "browser", healthy=False, message=str(exc), reason="not_configured"
+        )
+    status = container.config.get_status("browser")
+    return TestProviderResponse(
+        provider="browser",
         healthy=report.healthy,
         state=str(status.state),
         message=report.message,
