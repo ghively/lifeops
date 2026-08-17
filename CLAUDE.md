@@ -10,12 +10,18 @@ anything here disagrees with it, the spec wins.
 
 ## Where things stand
 
-**Phases 0 through 3 are complete.** The spine — Hermes → LifeOps MCP →
+**Phases 0 through 7 are complete.** The spine — Hermes → LifeOps MCP →
 LifeOps Core → NornicDB — is proven end to end and every Phase 0 exit criterion
 still passes. Phase 1 added the Console foundation, Phase 2 the memory
-provider, Phase 3 the world graph and entity inspector.
+provider, Phase 3 the world graph, Phase 4 durable work with the action outbox
+and approvals, Phases 5-6 voice, and Phase 7 calendar and email.
 
-Phases 4 through 11 have not started. `README.md` tracks status.
+LifeOps can now act outward. `BOOK_APPOINTMENT` and `SEND_EXTERNAL_MESSAGE` are
+held by Hermes and the Console; `APPROVE_ACTION` is Console-only, so no agent
+approves its own action. Shopping and payment capabilities are still held by
+nobody.
+
+Phases 8 through 11 have not started. `README.md` tracks status.
 
 Do not begin the next phase without the user asking for it.
 
