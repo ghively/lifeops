@@ -13,12 +13,20 @@ is precisely the one where drift is least visible.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from lifeops.clock import Clock, SystemClock, now_iso
+from lifeops.domain.memory import (
+    MemoryDraft,
+    MemoryRecord,
+    MemoryType,
+    validate_durable_content,
+)
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import (
     Preference,
     PreferenceDraft,
+    PreferenceSource,
     normalise_key,
 )
 from lifeops.domain.search import SearchResults
@@ -30,19 +38,210 @@ from lifeops.domain.tasks import (
     VerificationState,
     apply_transition,
 )
-from lifeops.errors import ConflictError, NotFoundError, ValidationError
-from lifeops.events import PERSON_CHANGED, PREFERENCE_CHANGED, TASK_CHANGED, EventBus
+from lifeops.errors import (
+    ConfigurationError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
+from lifeops.events import (
+    MEMORY_CHANGED,
+    PERSON_CHANGED,
+    PREFERENCE_CHANGED,
+    TASK_CHANGED,
+    EventBus,
+)
 from lifeops.ids import PREFIX_PERSON, slug_id
 from lifeops.observability.logging import operation
 from lifeops.policy import Capability, ClientIdentity, require
 from lifeops.policy.trust import may_supersede
 from lifeops.repositories.interfaces import (
+    MemoryRepository,
     PersonRepository,
     PreferenceRepository,
     TaskRepository,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class MemoryService:
+    """Memory operations (BUILD_SPEC sections 42–47).
+
+    Section 44 is enforced by construction: this service holds only a
+    ``MemoryRepository`` (plus clock and event publishing). It has no
+    reference to tasks, preferences, approvals, payments, or idempotency
+    state, so no memory operation — whatever a caller asks for — can rewrite
+    transactional reality. Subject resolution and capability checks stay on
+    ``LifeOpsCore``, which delegates here once they pass.
+    """
+
+    def __init__(
+        self,
+        *,
+        memories: MemoryRepository,
+        clock: Clock,
+        publish: Callable[[str], None] | None = None,
+    ) -> None:
+        self._memories = memories
+        self._clock = clock
+        self._publish_event = publish
+
+    def _notify(self, memory: MemoryRecord) -> None:
+        if self._publish_event is not None:
+            self._publish_event(memory.id)
+
+    async def remember(
+        self, draft: MemoryDraft, *, subject_id: str, client_id: str
+    ) -> MemoryRecord:
+        """Persist a memory after the section 47 durability rules pass."""
+        content = validate_durable_content(draft.content)
+
+        # Re-stating an identical memory is a no-op rather than a new record,
+        # so repeated conversation turns do not pile up duplicates.
+        duplicate = await self._memories.get_current_duplicate(
+            subject_id, draft.type, content
+        )
+        if duplicate is not None:
+            return duplicate
+
+        now = now_iso(self._clock)
+        memory = MemoryRecord(
+            id=MemoryRecord.make_id(),
+            subject_id=subject_id,
+            type=draft.type,
+            content=content,
+            source_type=draft.source_type,
+            source_id=draft.source_id,
+            confidence=draft.confidence,
+            importance=draft.importance,
+            observed_at=draft.observed_at or now,
+            created_at=now,
+            valid_from=now,
+            valid_to=None,
+            supersedes=None,
+            entity_ids=draft.entity_ids,
+            created_by_client=client_id,
+        )
+        with operation(
+            "memory.write",
+            memory_type=str(memory.type),
+            subject_id=subject_id,
+            client_id=client_id,
+        ):
+            saved = await self._memories.save_superseding(memory, supersedes=None)
+        self._notify(saved)
+        return saved
+
+    async def recall(
+        self,
+        *,
+        query: str = "",
+        subject_id: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 10,
+    ) -> list[MemoryRecord]:
+        """Current memories matching a query; blank query lists the most relevant."""
+        if query.strip():
+            return await self._memories.search(
+                query, subject_id=subject_id, memory_types=memory_types, limit=limit
+            )
+        return await self._memories.list_current(
+            subject_id, memory_types=memory_types, limit=limit
+        )
+
+    async def get(self, memory_id: str) -> MemoryRecord:
+        memory = await self._memories.get(memory_id)
+        if memory is None:
+            raise NotFoundError(f"no such memory: {memory_id}", memory_id=memory_id)
+        return memory
+
+    async def history(self, memory_id: str) -> list[MemoryRecord]:
+        memory = await self._memories.get(memory_id)
+        if memory is None:
+            raise NotFoundError(f"no such memory: {memory_id}", memory_id=memory_id)
+        return await self._memories.list_history(memory_id)
+
+    async def invalidate(
+        self, memory_id: str, *, reason: str | None, client_id: str
+    ) -> MemoryRecord:
+        """Close a memory's validity window without replacing it."""
+        with operation("memory.invalidate", memory_id=memory_id, client_id=client_id):
+            updated = await self._memories.invalidate(
+                memory_id, at=now_iso(self._clock), reason=reason
+            )
+        if updated is None:
+            raise NotFoundError(f"no such memory: {memory_id}", memory_id=memory_id)
+        self._notify(updated)
+        return updated
+
+    async def correct(
+        self,
+        memory_id: str,
+        *,
+        new_content: str,
+        source_type: PreferenceSource,
+        confidence: float,
+        importance: float | None,
+        client_id: str,
+    ) -> MemoryRecord:
+        """Replace a memory's content through temporal supersession.
+
+        Nothing is edited in place: the old record's window closes and the
+        correction opens a new record pointing back with SUPERSEDES.
+        """
+        existing = await self._memories.get(memory_id)
+        if existing is None:
+            raise NotFoundError(f"no such memory: {memory_id}", memory_id=memory_id)
+        if not existing.is_current:
+            raise ConflictError(
+                f"memory {memory_id} is already invalidated or superseded; "
+                "correct the current version instead",
+                memory_id=memory_id,
+                reason="memory_not_current",
+            )
+        # A weaker source may not silently displace a stronger one (section 46).
+        if not may_supersede(source_type, existing.source_type):
+            raise ConflictError(
+                f"memory was recorded from a more authoritative source "
+                f"({existing.source_type}); this correction ({source_type}) "
+                "cannot replace it",
+                memory_id=memory_id,
+                existing_source=str(existing.source_type),
+                incoming_source=str(source_type),
+            )
+
+        content = validate_durable_content(new_content)
+        if existing.content == content:
+            return existing
+
+        now = now_iso(self._clock)
+        correction = MemoryRecord(
+            id=MemoryRecord.make_id(),
+            subject_id=existing.subject_id,
+            type=existing.type,
+            content=content,
+            source_type=source_type,
+            source_id=None,
+            confidence=confidence,
+            importance=importance if importance is not None else existing.importance,
+            observed_at=now,
+            created_at=now,
+            valid_from=now,
+            valid_to=None,
+            supersedes=existing.id,
+            entity_ids=list(existing.entity_ids),
+            created_by_client=client_id,
+        )
+        with operation(
+            "memory.correct",
+            memory_id=memory_id,
+            supersedes=existing.id,
+            client_id=client_id,
+        ):
+            saved = await self._memories.save_superseding(correction, supersedes=existing)
+        self._notify(saved)
+        return saved
 
 
 class LifeOpsCore:
@@ -52,6 +251,7 @@ class LifeOpsCore:
         people: PersonRepository,
         preferences: PreferenceRepository,
         tasks: TaskRepository,
+        memory: MemoryRepository | None = None,
         clock: Clock | None = None,
         safe_mode: bool = False,
         events: EventBus | None = None,
@@ -62,6 +262,19 @@ class LifeOpsCore:
         self._clock = clock or SystemClock()
         self.safe_mode = safe_mode
         self._events = events
+        # Memory is deliberately segregated behind its own service (section
+        # 44): nothing here hands it the task or preference repositories.
+        self._memory_service = (
+            MemoryService(
+                memories=memory,
+                clock=self._clock,
+                publish=(
+                    lambda memory_id: self._publish(MEMORY_CHANGED, memory_id=memory_id)
+                ),
+            )
+            if memory is not None
+            else None
+        )
 
     def _require(self, client: ClientIdentity, capability: Capability) -> None:
         require(client, capability, safe_mode=self.safe_mode)
@@ -174,6 +387,88 @@ class LifeOpsCore:
                 "preferences"
             )
         return primary.id
+
+    # --- memory (BUILD_SPEC sections 42–47) -----------------------------------
+
+    def _memory(self) -> MemoryService:
+        if self._memory_service is None:
+            raise ConfigurationError(
+                "no memory repository is configured", component="memory"
+            )
+        return self._memory_service
+
+    async def remember(self, client: ClientIdentity, draft: MemoryDraft) -> MemoryRecord:
+        """Store a durable memory (section 47 durability rules apply).
+
+        This records an observation; it executes nothing and changes no
+        transactional state (section 44).
+        """
+        self._require(client, Capability.WRITE_MEMORY)
+        resolved = await self._resolve_subject(draft.subject_id)
+        return await self._memory().remember(
+            draft, subject_id=resolved, client_id=client.client_id
+        )
+
+    async def recall(
+        self,
+        client: ClientIdentity,
+        *,
+        query: str = "",
+        subject_id: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 10,
+    ) -> list[MemoryRecord]:
+        """Search current memories. A blank query lists the most relevant."""
+        self._require(client, Capability.READ_MEMORY)
+        if subject_id is not None:
+            resolved: str | None = await self._resolve_subject(subject_id)
+        else:
+            resolved = None  # recall spans subjects unless one is named
+        with operation("memory.recall", client_id=client.client_id):
+            return await self._memory().recall(
+                query=query, subject_id=resolved, memory_types=memory_types, limit=limit
+            )
+
+    async def get_memory(self, client: ClientIdentity, *, memory_id: str) -> MemoryRecord:
+        self._require(client, Capability.READ_MEMORY)
+        return await self._memory().get(memory_id)
+
+    async def memory_history(
+        self, client: ClientIdentity, *, memory_id: str
+    ) -> list[MemoryRecord]:
+        """Every version of a memory, newest first (section 45 provenance)."""
+        self._require(client, Capability.READ_MEMORY)
+        return await self._memory().history(memory_id)
+
+    async def invalidate_memory(
+        self, client: ClientIdentity, *, memory_id: str, reason: str | None = None
+    ) -> MemoryRecord:
+        """Close a memory's validity window. The record is kept, not deleted."""
+        self._require(client, Capability.WRITE_MEMORY)
+        return await self._memory().invalidate(
+            memory_id, reason=reason, client_id=client.client_id
+        )
+
+    async def correct_memory(
+        self,
+        client: ClientIdentity,
+        *,
+        memory_id: str,
+        new_content: str,
+        source_type: PreferenceSource = PreferenceSource.USER_EXPLICIT,
+        confidence: float = 1.0,
+        importance: float | None = None,
+    ) -> MemoryRecord:
+        """Correct a memory by superseding it; the old version stays queryable."""
+        self._require(client, Capability.WRITE_MEMORY)
+        return await self._memory().correct(
+            memory_id,
+            new_content=new_content,
+            source_type=source_type,
+            confidence=confidence,
+            importance=importance,
+            client_id=client.client_id,
+        )
 
     # --- preferences --------------------------------------------------------
 

@@ -12,7 +12,10 @@ validity, approval, idempotency, or verification, and LifeOps can (section 7).
 Phase 0 exposed exactly five tools and nothing more (section 49). Phase 1
 adds read-only resources — ``lifeops://me``, ``lifeops://today``,
 ``lifeops://waiting`` — because read-oriented context belongs to resources,
-not tools (section 48).
+not tools (section 48). Phase 2 adds memory: ``search_memory``, ``remember``,
+and ``invalidate_memory``. Memory can observe the world; it cannot rewrite
+transactional reality (section 44), and these tools carry no path to tasks,
+preferences, approvals, or payments.
 
 Client identity
 ---------------
@@ -35,6 +38,7 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from lifeops.container import Container
+from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
 from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState
 from lifeops.errors import LifeOpsError
@@ -89,6 +93,26 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
         not exist" and react appropriately instead of retrying blindly.
         """
         return {"ok": False, "error": exc.code, "message": exc.message, **exc.details}
+
+    def _memory_view(memory: MemoryRecord) -> dict[str, Any]:
+        """The memory shape every memory tool returns (BUILD_SPEC section 45).
+
+        Temporal and provenance fields are included so a model can weigh how
+        old a memory is and where it came from before acting on it; ``supersedes``
+        and raw entity internals stay server-side.
+        """
+        return {
+            "id": memory.id,
+            "type": str(memory.type),
+            "content": memory.content,
+            "subject_id": memory.subject_id,
+            "confidence": memory.confidence,
+            "importance": memory.importance,
+            "source": str(memory.source_type),
+            "observed_at": memory.observed_at,
+            "valid_from": memory.valid_from,
+            "valid_to": memory.valid_to,
+        }
 
     # --- reads --------------------------------------------------------------
 
@@ -337,6 +361,147 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         "due_at": task.due_at,
                     },
                 }
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    # --- memory (Phase 2, BUILD_SPEC sections 42-47) --------------------------
+    #
+    # Memory is observation, not authority. These tools can store and recall
+    # what was seen and said; the capability checks and the refusal to touch
+    # transactional state live in LifeOpsCore, not here.
+
+    @server.tool(
+        name="search_memory",
+        title="Search memory",
+        description=(
+            "Recall durable memories about the user, the people around them, "
+            "their routines, and prior decisions. Call this before answering "
+            "a question about the user's past or repeating a question they "
+            "have already answered.\n\n"
+            "Do NOT use it for current transactional state — open tasks, "
+            "waiting items, and standing preferences come from list_tasks and "
+            "get_preferences. It also cannot store anything; use remember for "
+            "that."
+        ),
+    )
+    async def search_memory(
+        query: Annotated[
+            str, Field(description="What to recall, in natural language.")
+        ],
+        subject_id: Annotated[
+            str | None,
+            Field(description="Whose memories. Defaults to the primary user."),
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=100, description="Maximum results.")] = 10,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                memories = await container.core.recall(
+                    client, query=query, subject_id=subject_id, limit=limit
+                )
+                return {
+                    "ok": True,
+                    "memories": [_memory_view(m) for m in memories],
+                    "total": len(memories),
+                }
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="remember",
+        title="Remember",
+        description=(
+            "Store a durable memory: a semantic fact about the user's world, "
+            "an episodic note about something that happened, or a "
+            "preference_candidate you inferred. A candidate is a hypothesis, "
+            "not a decision — keep its confidence low so the user reviews it "
+            "in the Console.\n\n"
+            "This records memory only. It cannot change tasks, preferences, "
+            "approvals, or any transactional state (BUILD_SPEC section 44). "
+            "When the user explicitly states how they want things done, use "
+            "save_preference instead — that is the tool with authority.\n\n"
+            "Never store secrets, credentials, or account numbers here."
+        ),
+    )
+    async def remember(
+        content: Annotated[
+            str, Field(description="The memory, as one clear statement.")
+        ],
+        type: Annotated[
+            MemoryType,
+            Field(
+                description=(
+                    "semantic for a lasting fact, episodic for something that "
+                    "happened, preference_candidate for an inferred preference "
+                    "the user has not confirmed."
+                )
+            ),
+        ],
+        subject_id: Annotated[
+            str | None,
+            Field(description="Whose memory. Defaults to the primary user."),
+        ] = None,
+        source_type: Annotated[
+            PreferenceSource,
+            Field(
+                description=(
+                    "Where this was observed. Governs the trust ranking "
+                    "(section 46): external content is evidence, never user "
+                    "authority, so do not mark inferences user_explicit."
+                )
+            ),
+        ] = PreferenceSource.CONVERSATION,
+        confidence: Annotated[
+            float, Field(ge=0.0, le=1.0, description="Certainty, 0 to 1.")
+        ] = 1.0,
+        importance: Annotated[
+            float,
+            Field(ge=0.0, le=1.0, description="How much this matters long-term, 0 to 1."),
+        ] = 0.5,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                memory = await container.core.remember(
+                    client,
+                    MemoryDraft(
+                        content=content,
+                        type=type,
+                        subject_id=subject_id,
+                        source_type=source_type,
+                        confidence=confidence,
+                        importance=importance,
+                    ),
+                )
+                return {"ok": True, "memory": _memory_view(memory)}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="invalidate_memory",
+        title="Invalidate memory",
+        description=(
+            "Mark a memory as no longer valid: it was true and stopped being "
+            "true, or it was never right. Nothing is deleted — the validity "
+            "window closes and the record stays in history with the reason.\n\n"
+            "To correct a memory's content, remember the corrected version "
+            "and invalidate the old one. Substantive corrections belong in "
+            "the user's Console, where a human reviews them."
+        ),
+    )
+    async def invalidate_memory(
+        memory_id: Annotated[
+            str, Field(description="The memory to close, e.g. memory_01j...")
+        ],
+        reason: Annotated[
+            str, Field(description="Why it is no longer valid. Recorded for provenance.")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                memory = await container.core.invalidate_memory(
+                    client, memory_id=memory_id, reason=reason
+                )
+                return {"ok": True, "memory": _memory_view(memory)}
             except LifeOpsError as exc:
                 return _fail(exc)
 

@@ -25,6 +25,7 @@ import { ActivityPage } from './pages/lifeops/ActivityPage'
 import { ComingInPhasePage } from './pages/lifeops/ComingInPhasePage'
 import { ConfigurationPage } from './pages/lifeops/ConfigurationPage'
 import { LoginPage } from './pages/lifeops/LoginPage'
+import { MemoryPage } from './pages/lifeops/MemoryPage'
 import { NeedsAttentionPage } from './pages/lifeops/NeedsAttentionPage'
 import { SearchPage } from './pages/lifeops/SearchPage'
 import { LifeOpsTasksPage } from './pages/lifeops/TasksPage'
@@ -86,13 +87,6 @@ const PENDING_ROUTES: Array<{
     description: 'Documents indexed into the LifeOps knowledge corpus.',
   },
   {
-    path: '/memory',
-    title: 'Memory',
-    phase: 2,
-    description:
-      'Persistent assistant memory, made inspectable and correctable with full provenance.',
-  },
-  {
     path: '/hermes',
     title: 'Hermes',
     phase: 1,
@@ -151,6 +145,7 @@ function App() {
                   <Route path="/waiting" element={<WaitingPage />} />
                   <Route path="/tasks" element={<LifeOpsTasksPage />} />
                   <Route path="/search" element={<SearchPage />} />
+                  <Route path="/memory" element={<MemoryPage />} />
                   <Route path="/configuration" element={<ConfigurationPage />} />
                   <Route path="/system" element={<SystemPage />} />
                   <Route path="/activity" element={<ActivityPage />} />

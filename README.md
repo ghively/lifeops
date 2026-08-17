@@ -75,7 +75,7 @@ changes/requests/ code change requests raised by Hermes (Phase 11)
 |------:|-------|-------|
 | 0 | Core spine: Hermes → LifeOps MCP → LifeOps Core → NornicDB | **Complete** |
 | 1 | Console foundation: Today, Needs Attention, Waiting, Search, Activity | **Complete** |
-| 2 | Hermes memory provider backed by NornicDB | Not started |
+| 2 | Hermes memory provider backed by NornicDB | **Complete** |
 | 3 | World graph and entity inspector | Not started |
 | 4 | Durable work: waiting items, due-work worker, verification | Not started |
 | 5 | Configuration and the ElevenLabs voice path | Not started |

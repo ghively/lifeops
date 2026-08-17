@@ -1,0 +1,8 @@
+name: lifeops
+version: 0.1.0
+description: >-
+  LifeOps-backed personal memory. A thin adapter: Hermes recalls and stores
+  memory through the LifeOps HTTP API; NornicDB holds the data. No local
+  memory database, no secrets, no authority over transactional state.
+hooks:
+  - on_session_end

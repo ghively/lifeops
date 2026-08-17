@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from lifeops.domain.memory import MemorySource, MemoryType
 from lifeops.domain.preferences import PreferenceSource
 from lifeops.domain.tasks import TaskPriority, TaskState
 
@@ -208,6 +209,78 @@ class UpdateTaskRequest(BaseModel):
     current_action: str | None = None
     related_entity_ids: list[str] | None = None
     verification_evidence: str | None = None
+
+
+# --- memory (BUILD_SPEC sections 42-47) ---------------------------------------
+
+
+class MemoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    subject_id: str
+    type: MemoryType
+    content: str
+    source_type: MemorySource
+    source_id: str | None
+    observed_at: str
+    created_at: str
+    confidence: float
+    importance: float
+    valid_from: str
+    valid_to: str | None
+    supersedes: str | None
+    entity_ids: list[str]
+    created_by_client: str | None
+    invalidation_reason: str | None
+
+
+class MemoryListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memories: list[MemoryResponse]
+    total: int
+
+
+class MemoryHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memory_id: str
+    history: list[MemoryResponse]
+    total: int
+
+
+class RememberRequest(BaseModel):
+    """A new memory. None-valued fields are dropped before the domain draft is
+    built so the domain's own defaults govern (source, confidence, importance).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1, max_length=8000)
+    type: MemoryType
+    subject_id: str | None = None
+    source_type: MemorySource | None = None
+    source_id: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    importance: float | None = Field(default=None, ge=0.0, le=1.0)
+    entity_ids: list[str] | None = None
+
+
+class InvalidateMemoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # A memory is closed, never deleted (section 45), so the reason is part of
+    # the record's history and is required.
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class CorrectMemoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Correction is supersession: the old record closes and a new one carries
+    # this content. Never an in-place edit.
+    content: str = Field(min_length=1, max_length=8000)
 
 
 # --- configuration -----------------------------------------------------------

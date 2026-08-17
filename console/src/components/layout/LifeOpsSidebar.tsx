@@ -64,7 +64,7 @@ const SECTIONS: NavSection[] = [
       { label: 'World', href: '/world', icon: Globe, phase: 3 },
       { label: 'Knowledge', href: '/knowledge', icon: FileText, phase: 1 },
       { label: 'Files', href: '/files', icon: Folder, phase: 1 },
-      { label: 'Memory', href: '/memory', icon: Brain, phase: 2 },
+      { label: 'Memory', href: '/memory', icon: Brain, phase: 0 },
     ],
   },
   {

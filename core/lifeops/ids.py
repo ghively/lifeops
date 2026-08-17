@@ -28,6 +28,7 @@ PREFIX_PERSON = "person"
 PREFIX_HOUSEHOLD = "household"
 PREFIX_PREFERENCE = "preference"
 PREFIX_TASK = "task"
+PREFIX_MEMORY = "memory"
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*_[a-z0-9_]+$")
@@ -62,6 +63,10 @@ def new_task_id() -> str:
 
 def new_preference_id() -> str:
     return new_ulid_id(PREFIX_PREFERENCE)
+
+
+def new_memory_id() -> str:
+    return new_ulid_id(PREFIX_MEMORY)
 
 
 def is_valid_id(value: str) -> bool:

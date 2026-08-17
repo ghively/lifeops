@@ -140,14 +140,47 @@ repository, not a change to the domain.
 
 ---
 
-## Relationships
+## Memory
 
-Phase 0 writes three:
+Added in Phase 2 (BUILD_SPEC sections 42–47, 91).
+
+```
+(:Memory {
+  id, subject_id, type, content,
+  source_type, source_id, observed_at, created_at,
+  confidence, importance,
+  valid_from, valid_to, supersedes, entity_ids,
+  created_by_client, invalidation_reason
+})
+```
+
+| Field | Notes |
+|---|---|
+| `type` | `episodic` · `semantic` · `preference_candidate` · `summary` · `association` |
+| `source_type` | Same vocabulary and trust ranking as preferences (section 46) |
+| `confidence`, `importance` | 0–1 |
+| `valid_from` / `valid_to` | Temporal, like preferences — never edited in place |
+| `supersedes` | ID of the record this one replaces |
+
+Recall uses a BM25 fulltext index (`lifeops_memory_content`) with a
+parameterized substring fallback when the index is absent. Embeddings stay off
+until a provider is configured.
+
+Memory is observational only (section 44): the memory service holds no reference
+to the task, preference, approval, or payment repositories, so a memory write
+structurally cannot rewrite transactional reality. A `preference_candidate` is
+not a `Preference` and never appears through the preference APIs.
+
+---
+
+## Relationships
 
 ```
 (:Person)-[:PREFERS]->(:Preference)         subject of a preference
 (:Preference)-[:SUPERSEDES]->(:Preference)  temporal chain
 (:Task)-[:ASSIGNED_TO]->(:Person)           owner
+(:Person)-[:REMEMBERS]->(:Memory)           subject of a memory (Phase 2)
+(:Memory)-[:SUPERSEDES]->(:Memory)          temporal chain (Phase 2)
 ```
 
 Reassigning a task deletes the stale `ASSIGNED_TO` edge before creating the new
@@ -165,10 +198,14 @@ there and written as the phases that use them land.
 CREATE CONSTRAINT lifeops_person_id     FOR (p:Person)     REQUIRE p.id IS UNIQUE
 CREATE CONSTRAINT lifeops_preference_id FOR (p:Preference) REQUIRE p.id IS UNIQUE
 CREATE CONSTRAINT lifeops_task_id       FOR (t:Task)       REQUIRE t.id IS UNIQUE
+CREATE CONSTRAINT lifeops_memory_id     FOR (m:Memory)     REQUIRE m.id IS UNIQUE
 
 CREATE INDEX lifeops_preference_subject_key FOR (p:Preference) ON (p.subject_id, p.key)
 CREATE INDEX lifeops_task_state             FOR (t:Task)       ON (t.state)
 CREATE INDEX lifeops_task_created           FOR (t:Task)       ON (t.created_at)
+CREATE INDEX lifeops_memory_subject         FOR (m:Memory)     ON (m.subject_id)
+
+CREATE FULLTEXT INDEX lifeops_memory_content FOR (m:Memory) ON EACH [m.content]
 ```
 
 Applied on every boot; safe to re-run. Uniqueness on canonical IDs is the one
