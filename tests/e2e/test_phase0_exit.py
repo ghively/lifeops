@@ -143,40 +143,40 @@ class TestToolSurface:
         async with mcp_session(HERMES) as session:
             tools = {tool.name for tool in (await session.list_tools()).tools}
         assert tools == {
-            # Phase 0 (section 49)
+            "apply_substitution",
+            "book_appointment",
+            "book_service_request",
+            "build_grocery_cart",
+            "cancel_appointment",
+            "check_calendar_availability",
+            "create_calendar_hold",
+            "create_service_request",
+            "create_shopping_list",
+            "create_task",
+            "create_waiting_item",
+            "find_person",
+            "get_entity_history",
             "get_person",
             "get_preferences",
-            "save_preference",
-            "create_task",
-            "list_tasks",
-            # Phase 2 (section 91)
-            "search_memory",
-            "remember",
-            "invalidate_memory",
-            # Phase 3 (section 92) — reads only. World *writes* stay on the
-            # Console: shaping the graph is the user's act, not the model's.
-            "find_person",
             "get_provider",
             "get_related_entities",
-            "get_entity_history",
-            # Phase 4 (sections 13, 14, 51, 54) — durable work: recording a
-            # wait on someone else and driving a task through its state
-            # machine. Both write only through LifeOpsCore.
-            "create_waiting_item",
-            "update_task",
-            # Phase 7 (BUILD_SPEC sections 61, 63, 64, 96) — calendar and
-            # email. read_calendar/check_calendar_availability/search_email/
-            # read_email_thread are reads; hold_calendar_time is a reversible
-            # write; book_appointment/cancel_appointment/send_email only
-            # prepare an Action through the outbox.
+            "get_service_request",
+            "invalidate_memory",
+            "list_tasks",
+            "place_phone_call",
             "read_calendar",
-            "check_calendar_availability",
-            "hold_calendar_time",
-            "book_appointment",
-            "cancel_appointment",
-            "search_email",
             "read_email_thread",
+            "record_asset",
+            "record_provider",
+            "remember",
+            "request_quote",
+            "save_preference",
+            "search_email",
+            "search_memory",
+            "search_shopping",
             "send_email",
+            "submit_grocery_order",
+            "update_task",
         }
 
     async def test_no_raw_database_tool_is_exposed(self) -> None:

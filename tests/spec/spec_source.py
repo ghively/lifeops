@@ -20,7 +20,7 @@ def _spec_lines() -> tuple[str, ...]:
     return tuple(BUILD_SPEC.read_text(encoding="utf-8").splitlines())
 
 
-def fenced_list(section: int) -> list[str]:
+def fenced_list(section: int, *, block: int = 1) -> list[str]:
     """Entries of the first fenced block under ``# <section>. ...``.
 
     Blank lines are dropped so the caller gets exactly the enumeration, in the
@@ -33,17 +33,24 @@ def fenced_list(section: int) -> list[str]:
     if start is None:
         raise AssertionError(f"BUILD_SPEC.md has no section {section}")
 
-    fence = next(
-        (i for i in range(start, len(lines)) if lines[i].startswith("```")), None
-    )
-    if fence is None:
-        raise AssertionError(f"BUILD_SPEC.md section {section} has no fenced block")
-
-    end = next(
-        (i for i in range(fence + 1, len(lines)) if lines[i].startswith("```")), None
-    )
-    if end is None:
-        raise AssertionError(f"BUILD_SPEC.md section {section} has an unclosed fence")
+    # Some sections carry more than one fenced list (section 51 splits its
+    # tools into low-risk and external); `block` selects which.
+    cursor = start
+    for _ in range(block):
+        fence = next(
+            (i for i in range(cursor, len(lines)) if lines[i].startswith("```")), None
+        )
+        if fence is None:
+            raise AssertionError(
+                f"BUILD_SPEC.md section {section} has no fenced block {block}"
+            )
+        end = next(
+            (i for i in range(fence + 1, len(lines)) if lines[i].startswith("```")),
+            None,
+        )
+        if end is None:
+            raise AssertionError(f"BUILD_SPEC.md section {section} has an unclosed fence")
+        cursor = end + 1
 
     return [line.strip() for line in lines[fence + 1 : end] if line.strip()]
 

@@ -390,6 +390,98 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
     # sends anything or commits the user to anything — LifeOpsCore is the only
     # place a state change or a capability check happens.
 
+    # --- world records (BUILD_SPEC section 51, low-risk) ----------------------
+    #
+    # Phase 3 kept world writes on the Console, reasoning that shaping the
+    # graph is the user's act. Section 51 disagrees for these two: recording a
+    # provider or an asset is low-risk, and section 101 step 14 ("record
+    # provider/action history") cannot happen without them. Creating a
+    # *person* remains off the surface — that carries primary-user semantics.
+
+    @server.tool(
+        name="record_provider",
+        title="Record provider",
+        description=(
+            "Record a company or service the user deals with — an "
+            "electrician, an insurer, a garage — so later work can attach to "
+            "a canonical record instead of a name in a sentence.\n\n"
+            "Call get_provider first: if the provider already exists, use it "
+            "rather than recording a second one. This records a fact about "
+            "the world; it contacts nobody and books nothing."
+        ),
+    )
+    async def record_provider(
+        display_name: Annotated[
+            str, Field(description="The provider's name, e.g. 'ABC Electric'.")
+        ],
+        facts: Annotated[
+            dict[str, str] | None,
+            Field(
+                description=(
+                    "Current key facts, e.g. {'phone': '555-0100', "
+                    "'trade': 'electrician'}. Values are plain strings."
+                )
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                from lifeops.domain.world import EntityDraft, WorldEntityType
+
+                entity = await container.core.create_entity(
+                    client,
+                    EntityDraft(
+                        entity_type=WorldEntityType.PROVIDER,
+                        display_name=display_name,
+                        facts=facts or {},
+                    ),
+                )
+                return {"ok": True, "provider": entity.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="record_asset",
+        title="Record asset",
+        description=(
+            "Record something the user owns that work happens to — a "
+            "vehicle, an appliance, a room, a fixture.\n\n"
+            "Call get_related_entities on the household first if you are "
+            "unsure whether it is already recorded; a duplicate asset splits "
+            "its history in two. This records a fact about the world; it "
+            "schedules and orders nothing."
+        ),
+    )
+    async def record_asset(
+        display_name: Annotated[
+            str, Field(description="The asset's name, e.g. 'Living Room Outlet'.")
+        ],
+        facts: Annotated[
+            dict[str, str] | None,
+            Field(
+                description=(
+                    "Current key facts, e.g. {'location': 'living room', "
+                    "'installed': '2019'}. Values are plain strings."
+                )
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                from lifeops.domain.world import EntityDraft, WorldEntityType
+
+                entity = await container.core.create_entity(
+                    client,
+                    EntityDraft(
+                        entity_type=WorldEntityType.ASSET,
+                        display_name=display_name,
+                        facts=facts or {},
+                    ),
+                )
+                return {"ok": True, "asset": entity.model_dump(mode="json")}
+            except LifeOpsError as exc:
+                return _fail(exc)
+
     @server.tool(
         name="create_waiting_item",
         title="Create waiting item",
@@ -911,7 +1003,9 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                 return _fail(exc)
 
     @server.tool(
-        name="hold_calendar_time",
+        # BUILD_SPEC section 51 names this tool; the internal core method
+        # keeps its own name, but the vocabulary an agent sees is the spec's.
+        name="create_calendar_hold",
         title="Hold calendar time",
         description=(
             "Place a temporary hold on a calendar slot (BUILD_SPEC section 63 "
@@ -1160,7 +1254,9 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                 return _fail(exc)
 
     @server.tool(
-        name="request_provider_call",
+        # Section 51's name. Renaming it would make the spec unable to
+        # recognise its own tool.
+        name="place_phone_call",
         title="Call a provider",
         description=(
             "Place a phone call to a provider with a constrained objective "
