@@ -19,7 +19,12 @@ identifiers are properties. Display names are never identity.
 | Shape | Example | Used for |
 |---|---|---|
 | Slug | `person_gene`, `provider_abc_electric` | Long-lived, human-meaningful entities |
-| ULID | `task_01j5x...`, `preference_01j5x...` | Entities created continuously at runtime |
+| ULID | `task_01j5x...`, `preference_01j5x...`, `appointment_01j5x...` | Entities created continuously at runtime |
+
+`event_...` is the one deterministic exception: a calendar read builds it as
+`slug_id("event", f"{calendar_provider_id}_{external_event_id}")` so reading
+the same window twice upserts one node instead of creating a new one each time
+(section 63).
 
 ULIDs sort lexicographically by creation time, so "most recent first" needs no
 secondary index.
@@ -215,6 +220,66 @@ is not built yet.
 
 ---
 
+## Calendar, email, and documents (Phase 7)
+
+```
+(:Appointment {id, display_name, facts_json, created_at, updated_at,
+               created_by_client})
+(:Event       {...})   read-only projection of what the calendar contains
+(:Document    {...})   a reference to something ingested from email/calendar
+```
+
+Added in Phase 7 (BUILD_SPEC sections 36, 63, 64, 96), and shaped exactly like
+the Phase 3 world entities — the same `facts_json` bag, the same
+`display_name`/`created_at`/`updated_at`/`created_by_client` columns — because
+the world repository already had the right shape for a reference entity with a
+handful of current facts, and duplicating it for three more labels would be
+inventing the "generic mega-repository" `repositories/interfaces.py` warns
+against. `domain/calendar.py` and `domain/documents.py` keep the richer
+`Appointment`/`CalendarEvent`/`Document` models, exactly the way `domain/
+people.py` keeps `Person`'s richer model while the graph node stays a
+projection.
+
+All three are outside `CREATABLE_ENTITY_TYPES` (the generic `POST
+/world/entities` path) — the same exclusion Person and Preference have, for
+the same reason: each has a dedicated write path with its own invariants
+(`create_appointment_hold`, `read_calendar`, `create_document`) that a bare
+`display_name` + facts bag would bypass. They are in the wider
+`WORLD_MANAGED_ENTITY_TYPES`, which is what lets the world repository's
+`create()` (an id-keyed `MERGE`) accept them at all.
+
+`Appointment.facts` carries `status` (`held` / `booked` / `cancelled`),
+`start_at`, `end_at`, `hold_reference`, `hold_expires_at`, `external_event_id`,
+`booking_action_id`, and the rest of `domain/calendar.py`'s `Appointment`
+fields. Section 63's warning — *never claim a booking succeeded merely
+because a calendar hold exists* — is why `status` only ever reaches `booked`
+through `AppointmentService.mark_booked`, itself only called after
+`LifeOpsCore.verify_action_externally` independently re-reads the calendar
+provider (never merely because `record_action_result` recorded a provider
+response). Re-persisting the same `Appointment.id` after a status change is
+an ordinary `MERGE`, not a second node — `TestPhase7EntityRoundTrip` in
+`tests/persistence/test_nornic_world.py` pins that a hold-to-booked rewrite
+updates in place.
+
+`Event` is the read projection of `read_calendar` (section 63 step 1): its id
+is deterministic — `slug_id("event", f"{calendar_provider_id}_{external_event_id}")`
+— so reading the same window twice upserts the same node instead of
+duplicating it.
+
+`Document` has no lifecycle: it is section 64's answer to "associate message
+with task/provider/entity" and "ingest relevant observations" — a reference
+(`source`, `source_ref`, `mime_type`, `summary`) a caller links to a task or
+entity with the existing `REFERENCES`/`ABOUT` edges rather than a new
+relationship type.
+
+Email itself has no NornicDB node. `EmailMessage`/`EmailThread` (`domain/
+email.py`) are read from the provider and returned to the caller; what is
+worth keeping durably becomes a `Document` (the reference), a `WaitingItem`
+(the follow-up), or a `Memory` (the observation) — LifeOps's existing homes
+for those facts, not a parallel email-specific copy of them.
+
+---
+
 ## Durable work (Phase 4)
 
 Added in Phase 4 (BUILD_SPEC sections 13, 51, 54, 55, 57-62). Four labels,
@@ -322,6 +387,9 @@ CREATE CONSTRAINT lifeops_action_idempotency_key
                                          FOR (a:Action)      REQUIRE a.idempotency_key IS UNIQUE
 CREATE CONSTRAINT lifeops_approval_id   FOR (ap:Approval)   REQUIRE ap.id IS UNIQUE
 CREATE CONSTRAINT lifeops_audit_id      FOR (r:AuditRecord) REQUIRE r.id IS UNIQUE
+CREATE CONSTRAINT lifeops_appointment_id FOR (a:Appointment) REQUIRE a.id IS UNIQUE
+CREATE CONSTRAINT lifeops_event_id      FOR (e:Event)       REQUIRE e.id IS UNIQUE
+CREATE CONSTRAINT lifeops_document_id   FOR (d:Document)    REQUIRE d.id IS UNIQUE
 
 CREATE INDEX lifeops_preference_subject_key FOR (p:Preference) ON (p.subject_id, p.key)
 CREATE INDEX lifeops_task_state             FOR (t:Task)       ON (t.state)
@@ -364,3 +432,5 @@ of racing the wall clock.
 | Provider settings | `~/.local/share/lifeops/config/lifeops.config.json` | Must be readable before a database connection exists — the Console has to render "NornicDB: unreachable" without reaching NornicDB |
 | Browser cookies | Never persisted | BUILD_SPEC section 66 |
 | Binary files | Object storage, with only metadata in the graph (Phase 1) | |
+| Email content | Read from the provider per call, never cached | `Document` stores a reference (`source_ref`, `summary`); the message body is not durable state (Phase 7) |
+| Calendar/email credentials | `SecretStore`, same as every provider secret | Same blast-radius reasoning as above — a `calendar`/`email` password never enters the graph (Phase 7) |

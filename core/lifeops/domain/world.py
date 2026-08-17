@@ -30,7 +30,10 @@ from lifeops.domain.memory import MemoryRecord
 from lifeops.domain.tasks import Task
 from lifeops.errors import ValidationError
 from lifeops.ids import (
+    PREFIX_APPOINTMENT,
     PREFIX_ASSET,
+    PREFIX_DOCUMENT,
+    PREFIX_EVENT,
     PREFIX_HOUSEHOLD,
     PREFIX_PERSON,
     PREFIX_PREFERENCE,
@@ -41,14 +44,17 @@ from lifeops.ids import (
 
 
 class WorldEntityType(StrEnum):
-    """The section 36 entity types the world graph renders in Phase 3.
+    """The section 36 entity types the world graph renders.
 
-    Section 92 scopes the phase to people, households, providers, and assets.
+    Phase 3 scoped this to people, households, providers, and assets.
     ``PREFERENCE`` joins them because section 15's World screen draws one —
     ``Gene ─PREFERS→ "After 10 AM"`` — and the ``PREFERS`` edge is already
-    written by the preference layer. The remaining section 36 types
-    (WaitingItem, Appointment, Bill, …) are owned by phases that have not
-    landed; each arrives with the phase that creates it.
+    written by the preference layer. Phase 7 adds ``APPOINTMENT``, ``EVENT``,
+    and ``DOCUMENT`` (section 96): a booked-or-held calendar commitment, a
+    read-only projection of what is on the calendar, and a reference to
+    something ingested from email or the calendar (an attachment, a
+    confirmation). The remaining section 36 types are owned by phases that
+    have not landed; each arrives with the phase that creates it.
     """
 
     PERSON = "person"
@@ -56,11 +62,19 @@ class WorldEntityType(StrEnum):
     PROVIDER = "provider"
     ASSET = "asset"
     PREFERENCE = "preference"
+    APPOINTMENT = "appointment"
+    EVENT = "event"
+    DOCUMENT = "document"
 
 
-#: The types ``create_entity`` accepts. Persons carry primary-user semantics
-#: and preferences are temporal (section 40) — both have their own operations,
-#: and creating one here would bypass the rules those operations enforce.
+#: The types ``create_entity`` accepts from a bare ``EntityDraft`` — the
+#: generic Console/MCP "add an entity" path. Persons carry primary-user
+#: semantics and preferences are temporal (section 40) — both have their own
+#: operations, and creating one here would bypass the rules those operations
+#: enforce. Appointments carry a booking state machine of their own (section
+#: 63: a hold is not a booking) and events/documents are written by the
+#: calendar and email flows that create them with the right provenance — so
+#: none of the three Phase 7 types are generically creatable either.
 CREATABLE_ENTITY_TYPES: frozenset[WorldEntityType] = frozenset(
     {
         WorldEntityType.HOUSEHOLD,
@@ -68,6 +82,18 @@ CREATABLE_ENTITY_TYPES: frozenset[WorldEntityType] = frozenset(
         WorldEntityType.ASSET,
     }
 )
+
+#: Entity types the world repository will persist. Wider than
+#: ``CREATABLE_ENTITY_TYPES``: the calendar and email flows build
+#: ``WorldEntity`` objects directly (never through ``EntityDraft``, so the
+#: generic creation path stays closed to them) and need a write path of their
+#: own. This is that path's guard, kept in the domain layer so the NornicDB
+#: and in-memory repositories enforce the identical rule.
+WORLD_MANAGED_ENTITY_TYPES: frozenset[WorldEntityType] = CREATABLE_ENTITY_TYPES | {
+    WorldEntityType.APPOINTMENT,
+    WorldEntityType.EVENT,
+    WorldEntityType.DOCUMENT,
+}
 
 
 class WorldRelationship(StrEnum):
@@ -116,6 +142,9 @@ _PREFIX_FOR_TYPE: dict[WorldEntityType, str] = {
     WorldEntityType.PROVIDER: PREFIX_PROVIDER,
     WorldEntityType.ASSET: PREFIX_ASSET,
     WorldEntityType.PREFERENCE: PREFIX_PREFERENCE,
+    WorldEntityType.APPOINTMENT: PREFIX_APPOINTMENT,
+    WorldEntityType.EVENT: PREFIX_EVENT,
+    WorldEntityType.DOCUMENT: PREFIX_DOCUMENT,
 }
 
 _TYPE_FOR_PREFIX: dict[str, WorldEntityType] = {
