@@ -4,9 +4,10 @@ The portable agent interface. Hermes is the primary consumer; any trusted MCP
 client can connect to the same server and operate on the same personal state,
 subject to its own permissions.
 
-**Phase 3 exposes twelve tools and three resources.** The Phase 0 set
-(BUILD_SPEC section 49), the memory tools of section 91, and the world-graph
-reads of section 92; the resources are the read views of section 48.
+**Phase 4 exposes fourteen tools and three resources.** The Phase 0 set
+(BUILD_SPEC section 49), the memory tools of section 91, the world-graph reads
+of section 92, and the durable-work tools of section 51 (`create_waiting_item`,
+`update_task`); the resources are the read views of section 48.
 
 The world tools are read-only. Creating entities and relationships stays on the
 Console: shaping the user's world is their act, not a model's.
@@ -34,8 +35,8 @@ and their capability checks.
 ### `lifeops://waiting`
 
 Tasks in `WAITING_EXTERNAL` with their waiting context — what was attempted and
-when. Use it to decide whether to follow up; full waiting items and follow-up
-automation arrive in Phase 4.
+when. Use it to decide whether to follow up. Follow-up automation (the
+due-work worker) is server-side; there is no tool to trigger it directly.
 
 ---
 
@@ -364,6 +365,85 @@ audit log arrives in Phase 4.
 
 ---
 
+### `create_waiting_item`
+
+Record that a task is blocked on someone else — a person, organization, or
+service that owes a response (BUILD_SPEC section 54).
+
+Call this right after making the request that created the wait (a message
+sent, a voicemail left, a form submitted), not before. This records intent
+only: it sends nothing and books nothing, and it does **not** move the task's
+own state — call `update_task` separately if the task should move to
+`WAITING_EXTERNAL`.
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `task_id` | string | — | The task this wait blocks |
+| `subject` | string | — | What is being waited on, e.g. "Availability quote from ABC Electric" |
+| `waiting_on_entity_id` | string? | — | Canonical entity ID; look it up with `find_person`/`get_provider` first |
+| `expected_by` | string? | — | RFC 3339, if known |
+| `max_followups` | int | `3` | 0–10. Follow-ups beyond this escalate to the user instead of continuing |
+
+```json
+{
+  "ok": true,
+  "waiting_item": {
+    "id": "waiting_01j...",
+    "task_id": "task_01j...",
+    "subject": "Availability quote from ABC Electric",
+    "waiting_on_entity_id": "provider_abc_electric",
+    "waiting_since": "2026-08-17T16:00:00Z",
+    "expected_by": null,
+    "next_action_at": "2026-08-18T16:00:00Z",
+    "max_followups": 3,
+    "status": "waiting"
+  }
+}
+```
+
+---
+
+### `update_task`
+
+Change an existing task's title, description, priority, due date, owner, or
+`current_action` note, and/or move it to a new state. Only the fields set are
+changed. Not for creating a task — use `create_task`.
+
+| Argument | Type | Default | Notes |
+|---|---|---|---|
+| `task_id` | string | — | The task to update |
+| `title` | string? | — | |
+| `description` | string? | — | |
+| `state` | enum? | — | Target state; validated by the state machine |
+| `priority` | enum? | — | |
+| `due_at` | string? | — | RFC 3339 |
+| `owner_entity_id` | string? | — | |
+| `current_action` | string? | — | e.g. "left voicemail, awaiting callback" |
+| `verification_evidence` | string? | — | Confirmation ID / booking reference. Required to move `VERIFYING` → `COMPLETED` on a `verification_required` task |
+
+State changes go through the same table `list_tasks`'s tasks obey (BUILD_SPEC
+section 14). An illegal transition — `CAPTURED` straight to `COMPLETED` — is
+rejected with `invalid_transition` and nothing is written. Completing a
+`verification_required` task without evidence, or from any state but
+`VERIFYING`, fails with `verification_required` (section 53).
+
+```json
+{
+  "ok": true,
+  "task": {
+    "id": "task_01j...",
+    "title": "Call dentist",
+    "state": "WAITING_EXTERNAL",
+    "priority": "medium",
+    "due_at": null,
+    "verification_state": "not_required",
+    "current_action": "left voicemail, awaiting callback"
+  }
+}
+```
+
+---
+
 ## Task states
 
 ```
@@ -371,9 +451,9 @@ CAPTURED  PLANNED  READY  EXECUTING  WAITING_EXTERNAL
 NEEDS_APPROVAL  VERIFYING  COMPLETED  BLOCKED  FAILED  CANCELLED
 ```
 
-No transition tool is exposed over MCP yet — `list_tasks` and `create_task`
-only. Transitions are available through the Console's HTTP API and arrive on the
-MCP surface in Phase 4 alongside waiting items and the due-work worker.
+`update_task` drives the transition; `list_tasks` and `create_task` are the
+other two tools that touch task state, and the Console's HTTP API exposes the
+same machine for the human path.
 
 ---
 
@@ -394,5 +474,4 @@ policy into a model's judgement, which is exactly the wrong place for it.
 
 | Phase | Additions |
 |---|---|
-| 4 | `update_task`, `create_waiting_item`, `list_waiting_items` |
 | 7+ | `send_email`, `book_appointment`, `prepare_payment` / `commit_payment` — each approval-gated per BUILD_SPEC section 56 |

@@ -155,6 +155,11 @@ class TestToolSurface:
             "get_provider",
             "get_related_entities",
             "get_entity_history",
+            # Phase 4 (sections 13, 14, 51, 54) — durable work: recording a
+            # wait on someone else and driving a task through its state
+            # machine. Both write only through LifeOpsCore.
+            "create_waiting_item",
+            "update_task",
         }
 
     async def test_no_raw_database_tool_is_exposed(self) -> None:

@@ -19,6 +19,11 @@ preferences, approvals, or payments. Phase 3 adds world-graph reads —
 ``find_person``, ``get_provider``, ``get_related_entities``,
 ``get_entity_history`` — over the entity graph of section 92. Provider
 *configuration* stays with the Console; the model only ever sees world facts.
+Phase 4 adds durable work: ``create_waiting_item`` records that a task is
+blocked on someone else (section 54), and ``update_task`` drives a task
+through the state machine (section 14). Both are low-risk (section 51) and
+write only through LifeOpsCore, which enforces the same capability checks and
+transition rules for every client.
 
 Client identity
 ---------------
@@ -43,7 +48,8 @@ from pydantic import Field
 from lifeops.container import Container
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
-from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState
+from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState, TaskUpdate
+from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingDraft
 from lifeops.errors import LifeOpsError, NotFoundError
 from lifeops.ids import PREFIX_PROVIDER
 from lifeops.mcp.resources import register_resources
@@ -363,6 +369,185 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         "state": str(task.state),
                         "priority": str(task.priority),
                         "due_at": task.due_at,
+                    },
+                }
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    # --- durable work (Phase 4, BUILD_SPEC sections 13, 14, 51, 53, 54) -------
+    #
+    # Work that outlives the conversation that started it. create_waiting_item
+    # records the fact of a wait; update_task drives the state machine. Neither
+    # sends anything or commits the user to anything — LifeOpsCore is the only
+    # place a state change or a capability check happens.
+
+    @server.tool(
+        name="create_waiting_item",
+        title="Create waiting item",
+        description=(
+            "Record that a task is blocked on someone else — a person, "
+            "organization, or service that owes a response. Call this right "
+            "after you have made the request that created the wait (sent a "
+            "message, left a voicemail, submitted a form) so the wait is "
+            "durable, not before.\n\n"
+            "This records intent only; it sends nothing and books nothing. "
+            "It also does not change the task's own state — call update_task "
+            "separately if the task should move to WAITING_EXTERNAL "
+            "(BUILD_SPEC section 54)."
+        ),
+    )
+    async def create_waiting_item(
+        task_id: Annotated[
+            str, Field(description="The task this wait blocks, e.g. task_01j...")
+        ],
+        subject: Annotated[
+            str,
+            Field(
+                description=(
+                    "What is being waited on, in plain terms, e.g. "
+                    "'Availability quote from ABC Electric'."
+                )
+            ),
+        ],
+        waiting_on_entity_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Canonical ID of who or what this is waiting on, e.g. "
+                    "provider_abc_electric. Look it up with find_person or "
+                    "get_provider first rather than guessing an ID."
+                )
+            ),
+        ] = None,
+        expected_by: Annotated[
+            str | None,
+            Field(description="RFC 3339 timestamp of when a response is expected, if known."),
+        ] = None,
+        max_followups: Annotated[
+            int,
+            Field(
+                ge=0,
+                le=10,
+                description=(
+                    "How many follow-ups to send before this escalates to "
+                    "the user instead of being chased further."
+                ),
+            ),
+        ] = DEFAULT_MAX_FOLLOWUPS,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                item = await container.core.create_waiting_item(
+                    client,
+                    WaitingDraft(
+                        task_id=task_id,
+                        subject=subject,
+                        waiting_on_entity_id=waiting_on_entity_id,
+                        expected_by=expected_by,
+                        max_followups=max_followups,
+                    ),
+                )
+                return {
+                    "ok": True,
+                    "waiting_item": {
+                        "id": item.id,
+                        "task_id": item.task_id,
+                        "subject": item.subject,
+                        "waiting_on_entity_id": item.waiting_on_entity_id,
+                        "waiting_since": item.waiting_since,
+                        "expected_by": item.expected_by,
+                        "next_action_at": item.next_action_at,
+                        "max_followups": item.max_followups,
+                        "status": str(item.status),
+                    },
+                }
+            except LifeOpsError as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="update_task",
+        title="Update task",
+        description=(
+            "Change an existing task: its title, description, priority, due "
+            "date, owner, or current_action note, and/or move it to a new "
+            "state. Only the fields you set are changed; omit anything you "
+            "do not want to touch.\n\n"
+            "State changes go through the task state machine — an illegal "
+            "transition (e.g. CAPTURED straight to COMPLETED) is rejected "
+            "and nothing is written. A task created with "
+            "verification_required can only reach COMPLETED by first moving "
+            "to VERIFYING and then supplying verification_evidence; asserting "
+            "that something happened is not evidence (BUILD_SPEC section "
+            "53).\n\n"
+            "Not for creating a new task — use create_task for that."
+        ),
+    )
+    async def update_task(
+        task_id: Annotated[str, Field(description="The task to update, e.g. task_01j...")],
+        title: Annotated[
+            str | None, Field(description="New short imperative summary.")
+        ] = None,
+        description: Annotated[
+            str | None, Field(description="New detail worth keeping.")
+        ] = None,
+        state: Annotated[
+            TaskState | None,
+            Field(description="Target state, if moving the task through the state machine."),
+        ] = None,
+        priority: Annotated[TaskPriority | None, Field(description="New priority.")] = None,
+        due_at: Annotated[
+            str | None, Field(description="New RFC 3339 due timestamp.")
+        ] = None,
+        owner_entity_id: Annotated[
+            str | None, Field(description="New owning person.")
+        ] = None,
+        current_action: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Short note on what is currently happening, e.g. 'left "
+                    "voicemail, awaiting callback'."
+                )
+            ),
+        ] = None,
+        verification_evidence: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Evidence an external system confirmed completion — a "
+                    "confirmation ID, booking reference, or similar. Required "
+                    "to move a verification_required task from VERIFYING to "
+                    "COMPLETED (section 53)."
+                )
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                task = await container.core.update_task(
+                    client,
+                    task_id=task_id,
+                    update=TaskUpdate(
+                        title=title,
+                        description=description,
+                        state=state,
+                        priority=priority,
+                        due_at=due_at,
+                        owner_entity_id=owner_entity_id,
+                        current_action=current_action,
+                        verification_evidence=verification_evidence,
+                    ),
+                )
+                return {
+                    "ok": True,
+                    "task": {
+                        "id": task.id,
+                        "title": task.title,
+                        "state": str(task.state),
+                        "priority": str(task.priority),
+                        "due_at": task.due_at,
+                        "verification_state": str(task.verification_state),
+                        "current_action": task.current_action,
                     },
                 }
             except LifeOpsError as exc:
