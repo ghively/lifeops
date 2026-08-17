@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from lifeops.api.events import router as events_router
 from lifeops.api.schemas import (
@@ -43,6 +43,7 @@ from lifeops.api.schemas import (
     SavePreferenceRequest,
     SetPasswordRequest,
     SetPasswordResponse,
+    SynthesizeSpeechRequest,
     TaskListResponse,
     TaskResponse,
     TestProviderResponse,
@@ -62,9 +63,10 @@ from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
 from lifeops.domain.tasks import Task, TaskDraft, TaskState, TaskUpdate, transition_table
+from lifeops.domain.voice import SynthesisOptions
 from lifeops.domain.world import EntityDetail, EntityDraft, WorldGraph
 from lifeops.domain.world import WorldEntity as DomainWorldEntity
-from lifeops.errors import LifeOpsError, NotFoundError, ValidationError
+from lifeops.errors import LifeOpsError, NotFoundError, ProviderNotConfiguredError, ValidationError
 from lifeops.events import CONFIG_CHANGED
 from lifeops.observability.logging import configure_logging, redact, trace_context
 from lifeops.policy import CapabilityGrant, ClientIdentity, all_clients, resolve_client
@@ -776,13 +778,17 @@ async def update_provider_config(
 async def test_provider(provider_id: str, container: ContainerDep) -> TestProviderResponse:
     """Run the provider's health check.
 
-    Phase 0 ships no provider adapters, so this reports honestly that the
-    adapter is not implemented yet rather than returning a fake success. A
+    ElevenLabs has a real adapter as of phase 5 and is actually called here.
+    Every other provider still ships no adapter, so this reports honestly
+    that one is not implemented yet rather than returning a fake success. A
     Test button that lies is worse than one that says "not yet".
     """
     definition = get_provider(provider_id)
     if definition is None:
         raise NotFoundError(f"unknown provider {provider_id!r}", provider=provider_id)
+
+    if provider_id == "elevenlabs":
+        return await _test_elevenlabs(container)
 
     status = container.config.get_status(provider_id)
     message = (
@@ -801,6 +807,27 @@ async def test_provider(provider_id: str, container: ContainerDep) -> TestProvid
     )
 
 
+async def _test_elevenlabs(container: Container) -> TestProviderResponse:
+    """Actually call ElevenLabs when it is enabled; report "not configured"
+    rather than a health check result when it is not — the user has not
+    turned it on, so nothing was attempted (AGENTS.md never fakes success)."""
+    try:
+        provider_id, report = await container.voice.health()
+    except ProviderNotConfiguredError as exc:
+        report = container.config.record_health(
+            "elevenlabs", healthy=False, message=str(exc), reason="not_configured"
+        )
+        provider_id = "elevenlabs"
+    status = container.config.get_status(provider_id)
+    return TestProviderResponse(
+        provider=provider_id,
+        healthy=report.healthy,
+        state=str(status.state),
+        message=report.message,
+        checked_at=report.checked_at,
+    )
+
+
 @router.post(
     "/config/providers/{provider_id}/discover",
     response_model=DiscoverResponse,
@@ -811,7 +838,12 @@ async def discover_provider_options(
     container: ContainerDep,
     field: Annotated[str, Query()],
 ) -> DiscoverResponse:
-    """Fetch dynamic options for a select field (voices, models, calendars)."""
+    """Fetch dynamic options for a select field (voices, models, calendars).
+
+    ElevenLabs' ``voice_id`` and ``model_id`` fields call the live adapter as
+    of phase 5, so the Console's "Refresh voices" button lists whatever the
+    user's account actually has rather than nothing.
+    """
     definition = get_provider(provider_id)
     if definition is None:
         raise NotFoundError(f"unknown provider {provider_id!r}", provider=provider_id)
@@ -821,6 +853,10 @@ async def discover_provider_options(
             provider=provider_id,
             field=field,
         )
+
+    if provider_id == "elevenlabs" and field in ("voice_id", "model_id"):
+        return await _discover_elevenlabs(container, field)
+
     return DiscoverResponse(
         provider=provider_id,
         field=field,
@@ -830,6 +866,55 @@ async def discover_provider_options(
             f"{definition.available_in_phase}."
         ),
     )
+
+
+async def _discover_elevenlabs(container: Container, field: str) -> DiscoverResponse:
+    try:
+        if field == "voice_id":
+            options = [
+                {"value": voice.id, "label": voice.name}
+                for voice in await container.voice.list_voices()
+            ]
+        else:
+            options = [
+                {"value": model.id, "label": model.name}
+                for model in await container.voice.list_models()
+            ]
+    except ProviderNotConfiguredError as exc:
+        return DiscoverResponse(provider="elevenlabs", field=field, options=[], message=str(exc))
+    return DiscoverResponse(provider="elevenlabs", field=field, options=options)
+
+
+_AUDIO_MEDIA_TYPES = {
+    "mp3_44100_128": "audio/mpeg",
+    "pcm_16000": "audio/pcm",
+    "pcm_24000": "audio/pcm",
+}
+
+
+@router.post("/voice/tts/preview", tags=["voice"])
+async def preview_voice(
+    payload: SynthesizeSpeechRequest, container: ContainerDep
+) -> StreamingResponse:
+    """Synthesize sample text and stream the audio back for the browser to
+    play (BUILD_SPEC section 27's Preview voice button and the
+    ``stream_text_to_speech`` capability). Does not require Hermes, and never
+    saves anything — a voice can be auditioned before it is set as default.
+    """
+    options = SynthesisOptions(
+        voice_id=payload.voice_id,
+        model_id=payload.model_id,
+        output_format=payload.output_format,
+        stability=payload.stability,
+        similarity_boost=payload.similarity_boost,
+        speed=payload.speed,
+    )
+    # Built outside the response body: a missing provider or invalid text
+    # raises here, before any bytes are sent, so it surfaces as a normal
+    # error response instead of a truncated audio stream.
+    chunks = container.voice.stream(payload.text, options)
+    media_type = _AUDIO_MEDIA_TYPES.get(payload.output_format or "mp3_44100_128", "audio/mpeg")
+    return StreamingResponse(chunks, media_type=media_type)
 
 
 @router.get("/config/system", tags=["config"])

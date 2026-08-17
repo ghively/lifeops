@@ -25,9 +25,11 @@ import {
   authApi,
   configApi,
   errorMessage,
+  voiceApi,
   type ProviderEntry,
   type ProviderField,
   type ProviderState,
+  type VoiceMode,
 } from '@/services/lifeops'
 
 const STATE_TONE: Record<ProviderState, string> = {
@@ -56,6 +58,17 @@ const CATEGORY_ORDER = [
   'Productivity',
   'Automation',
   'Other',
+]
+
+/** BUILD_SPEC section 29 — the three ASR/TTS pairings the Console offers. */
+const VOICE_MODES: Array<{ value: VoiceMode; label: string; description: string }> = [
+  { value: 'quick_cloud', label: 'Quick Cloud', description: 'ASR: configurable · TTS: ElevenLabs' },
+  {
+    value: 'hybrid',
+    label: 'Hybrid Recommended',
+    description: 'ASR: local (RTX) · TTS: ElevenLabs',
+  },
+  { value: 'local', label: 'Local', description: 'ASR: local (RTX) · TTS: local (RTX)' },
 ]
 
 function FieldInput({
@@ -175,6 +188,70 @@ function FieldInput({
   )
 }
 
+/**
+ * ElevenLabs' Preview voice button (BUILD_SPEC section 27): synthesize a
+ * sample line and play it back in the browser. Never saves anything and
+ * needs no Hermes, so a voice can be auditioned before it is set as default.
+ *
+ * The only per-provider custom UX on this page — justified because listening
+ * to a voice before committing to it is not something a generic field
+ * schema can express (AGENTS.md: no bespoke settings page unless it
+ * materially helps).
+ */
+function VoicePreview({
+  voiceId,
+  modelId,
+}: {
+  voiceId: string | undefined
+  modelId: string | undefined
+}) {
+  const [text, setText] = useState('This is a preview of the selected voice.')
+  const [audioUrl, setAudioUrl] = useState<string | null>(null)
+
+  const preview = useMutation({
+    mutationFn: () => voiceApi.previewVoice({ text, voice_id: voiceId, model_id: modelId }),
+    onSuccess: (blob) => {
+      setAudioUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous)
+        return URL.createObjectURL(blob)
+      })
+    },
+  })
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
+      <label className="text-sm font-medium" htmlFor="voice-preview-text">
+        Preview text
+      </label>
+      <Input
+        id="voice-preview-text"
+        value={text}
+        maxLength={2000}
+        onChange={(event) => setText(event.target.value)}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => preview.mutate()}
+          disabled={preview.isPending || text.trim().length === 0}
+        >
+          {preview.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            'Preview voice'
+          )}
+        </Button>
+        {audioUrl && <audio controls src={audioUrl} className="h-8" />}
+      </div>
+      {preview.isError && (
+        <p className="text-xs text-red-600">{errorMessage(preview.error)}</p>
+      )}
+    </div>
+  )
+}
+
 function ProviderCard({ entry }: { entry: ProviderEntry }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -277,6 +354,13 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
               }
             />
           ))}
+
+          {definition.id === 'elevenlabs' && (
+            <VoicePreview
+              voiceId={(draft.voice_id as string) || (status.settings.voice_id as string)}
+              modelId={(draft.model_id as string) || (status.settings.model_id as string)}
+            />
+          )}
 
           {definition.fields.some((f) => f.advanced) && (
             <button
@@ -431,6 +515,54 @@ function ConsoleAccessCard() {
   )
 }
 
+/**
+ * BUILD_SPEC section 29's voice mode picker. Selects which ASR/TTS pairing
+ * the Voice Bridge uses; switching modes is a LifeOps setting and never
+ * touches the Hermes profile.
+ */
+function VoiceModeCard() {
+  const queryClient = useQueryClient()
+  const systemQuery = useQuery({ queryKey: ['lifeops', 'system'], queryFn: configApi.getSystem })
+
+  const save = useMutation({
+    mutationFn: (voice_mode: VoiceMode) => configApi.updateSystem({ voice_mode }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system'] }),
+  })
+
+  const current = save.variables ?? systemQuery.data?.voice_mode ?? 'quick_cloud'
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+        Voice mode
+      </h2>
+      <div className="grid gap-2 rounded-lg border border-border/60 bg-card p-3 sm:grid-cols-3">
+        {VOICE_MODES.map((mode) => (
+          <button
+            key={mode.value}
+            type="button"
+            disabled={save.isPending}
+            onClick={() => save.mutate(mode.value)}
+            className={cn(
+              'rounded-md border px-3 py-2 text-left text-sm transition-colors',
+              current === mode.value
+                ? 'border-primary bg-primary/10'
+                : 'border-border/60 hover:bg-muted/40',
+            )}
+          >
+            <div className="font-medium">{mode.label}</div>
+            <div className="text-xs text-muted-foreground">{mode.description}</div>
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Changes which provider Hermes&apos; Voice Bridge reaches for; it does not
+        require reconfiguring Hermes itself.
+      </p>
+    </section>
+  )
+}
+
 export function ConfigurationPage() {
   const providersQuery = useQuery({
     queryKey: ['lifeops', 'providers'],
@@ -482,6 +614,8 @@ export function ConfigurationPage() {
       </div>
 
       <ConsoleAccessCard />
+
+      <VoiceModeCard />
 
       {providersQuery.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

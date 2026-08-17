@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from lifeops.clock import Clock, SystemClock, now_iso
 from lifeops.config.provider_registry import (
@@ -32,7 +33,8 @@ from lifeops.config.provider_registry import (
     get_provider,
 )
 from lifeops.config.validation import missing_required, validate_update
-from lifeops.errors import ConfigurationError, NotFoundError
+from lifeops.domain.voice import VoiceMode
+from lifeops.errors import ConfigurationError, NotFoundError, ValidationError
 from lifeops.secrets.interface import SecretStore, secret_ref
 
 _DOCUMENT_VERSION = 1
@@ -86,6 +88,10 @@ class SystemConfig(BaseModel):
     local_url: str | None = None
     setup_completed: bool = False
     safe_mode: bool = False
+    # BUILD_SPEC section 29: which ASR/TTS pairing the Voice Bridge should
+    # use. A LifeOps setting, not a Hermes one — switching it never touches
+    # the Hermes profile.
+    voice_mode: VoiceMode = VoiceMode.QUICK_CLOUD
 
 
 class ConfigurationService:
@@ -156,7 +162,12 @@ class ConfigurationService:
                 f"unknown system settings: {sorted(unknown)}", unknown=sorted(unknown)
             )
         current.update(changes)
-        updated = SystemConfig(**current)
+        try:
+            updated = SystemConfig(**current)
+        except PydanticValidationError as exc:
+            first = exc.errors()[0]
+            field = ".".join(str(part) for part in first["loc"])
+            raise ValidationError(f"{field}: {first['msg']}", field=field) from exc
 
         document = dict(self._load())
         document["system"] = updated.model_dump()
