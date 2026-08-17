@@ -47,6 +47,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { label: 'Today', href: '/', icon: Home, phase: 0 },
       { label: 'Needs Attention', href: '/needs-attention', icon: AlertCircle, phase: 0 },
+      { label: 'Approvals', href: '/approvals', icon: ShieldCheck, phase: 0 },
       { label: 'Waiting', href: '/waiting', icon: Clock, phase: 0 },
       { label: 'Search', href: '/search', icon: Search, phase: 0 },
     ],

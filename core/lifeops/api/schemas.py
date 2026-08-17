@@ -7,9 +7,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from lifeops.domain.actions import ActionStatus, ActionType
+from lifeops.domain.approvals import ApprovalStatus
 from lifeops.domain.memory import MemorySource, MemoryType
 from lifeops.domain.preferences import PreferenceSource
-from lifeops.domain.tasks import TaskPriority, TaskState
+from lifeops.domain.tasks import TaskPriority, TaskState, VerificationState
+from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingStatus
 
 
 class ErrorResponse(BaseModel):
@@ -496,3 +499,159 @@ class SynthesizeSpeechRequest(BaseModel):
     stability: float | None = Field(default=None, ge=0.0, le=1.0)
     similarity_boost: float | None = Field(default=None, ge=0.0, le=1.0)
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
+
+
+# --- durable work (BUILD_SPEC sections 13, 54-62, phase 4) --------------------
+#
+# These mirror ``lifeops.domain.waiting``, ``.actions``, ``.approvals``, and
+# ``.audit`` one-for-one, the same discipline the world schemas follow.
+# LifeOps Core decides everything that matters here — whether an action needs
+# approval, when a waiting item escalates, what an approval authorises. The
+# wire shapes below only carry that decision to the Console; none of them
+# compute it.
+
+
+class WaitingItemResponse(BaseModel):
+    """One WaitingItem (BUILD_SPEC section 54), for the Waiting screen
+    (section 13)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    task_id: str
+    subject: str
+    waiting_on_entity_id: str | None
+    waiting_since: str
+    expected_by: str | None
+    next_action_at: str | None
+    last_contact_at: str | None
+    followup_count: int
+    max_followups: int
+    status: WaitingStatus
+    attempt_count: int
+    lease_owner: str | None
+    lease_until: str | None
+    created_by_client: str | None
+
+
+class WaitingListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[WaitingItemResponse]
+    total: int
+
+
+class CreateWaitingItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1, max_length=200)
+    subject: str = Field(min_length=1, max_length=500)
+    waiting_on_entity_id: str | None = None
+    expected_by: str | None = None
+    max_followups: int = Field(default=DEFAULT_MAX_FOLLOWUPS, ge=0, le=10)
+
+
+class ActionResponse(BaseModel):
+    """One outbox Action (BUILD_SPEC section 60)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    type: ActionType
+    status: ActionStatus
+    idempotency_key: str
+    payload_hash: str
+    payload: dict[str, Any]
+    task_id: str | None
+    target_entity_id: str | None
+    created_at: str
+    attempt_count: int
+    last_attempt_at: str | None
+    external_reference: str | None
+    verification_state: VerificationState
+    failure_reason: str | None
+    created_by_client: str | None
+
+
+class ActionListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actions: list[ActionResponse]
+    total: int
+
+
+class ApprovalResponse(BaseModel):
+    """One Approval (BUILD_SPEC sections 57-59), enriched for the Approval
+    screen (section 58).
+
+    ``action_payload`` and ``action_status`` are read from the action this
+    approval binds to. Section 58 renders "what will happen" from the exact
+    payload the human is approving, and re-fetching the action from the
+    Console would be a second round trip for data the server already has on
+    hand while building this response.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    action_id: str
+    payload_hash: str
+    requested_by: str
+    approved_by: str | None
+    approved_at: str | None
+    expires_at: str
+    consumed_at: str | None
+    status: ApprovalStatus
+    action_type: str
+    target_entity_id: str | None
+    amount: str | None
+    created_at: str
+    action_payload: dict[str, Any] = Field(default_factory=dict)
+    action_status: ActionStatus | None = None
+
+
+class ApprovalListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approvals: list[ApprovalResponse]
+    total: int
+
+
+class DecideApprovalRequest(BaseModel):
+    """Section 58: the Console only submits the decision. Whether approval
+    was required, and what it binds to, was already decided by LifeOps Core
+    when the approval was created."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool
+
+
+class AuditRecordResponse(BaseModel):
+    """One audit record (BUILD_SPEC section 62), append-only at the source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    requester: str | None
+    user: str | None
+    client: str
+    session: str | None
+    intent: str | None
+    tool: str | None
+    risk: str | None
+    approval: str | None
+    action: str | None
+    target: str | None
+    result: str
+    verification: str | None
+    timestamp: str
+    trace_id: str | None
+    details: dict[str, str]
+
+
+class AuditListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    records: list[AuditRecordResponse]
+    total: int

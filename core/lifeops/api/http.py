@@ -19,11 +19,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from lifeops.api.events import router as events_router
 from lifeops.api.schemas import (
+    ActionListResponse,
+    ActionResponse,
+    ApprovalListResponse,
+    ApprovalResponse,
+    AuditListResponse,
+    AuditRecordResponse,
     ConsoleLogBatch,
     CorrectMemoryRequest,
     CreateEntityRequest,
     CreatePersonRequest,
     CreateTaskRequest,
+    CreateWaitingItemRequest,
+    DecideApprovalRequest,
     DiscoverResponse,
     EntityDetailResponse,
     EntityHistoryResponse,
@@ -50,6 +58,8 @@ from lifeops.api.schemas import (
     UpdateProviderRequest,
     UpdateSystemRequest,
     UpdateTaskRequest,
+    WaitingItemResponse,
+    WaitingListResponse,
     WorldEdge,
     WorldEntityResponse,
     WorldGraphResponse,
@@ -59,11 +69,15 @@ from lifeops.api.schemas import (
 from lifeops.auth import InvalidCredentialsError
 from lifeops.config.provider_registry import all_providers, get_provider
 from lifeops.container import Container
+from lifeops.domain.actions import Action, ActionStatus
+from lifeops.domain.approvals import Approval
+from lifeops.domain.audit import AuditRecord
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
 from lifeops.domain.tasks import Task, TaskDraft, TaskState, TaskUpdate, transition_table
 from lifeops.domain.voice import SynthesisOptions
+from lifeops.domain.waiting import WaitingDraft, WaitingItem, WaitingStatus
 from lifeops.domain.world import EntityDetail, EntityDraft, WorldGraph
 from lifeops.domain.world import WorldEntity as DomainWorldEntity
 from lifeops.errors import LifeOpsError, NotFoundError, ProviderNotConfiguredError, ValidationError
@@ -138,6 +152,39 @@ def _entity_detail_out(detail: EntityDetail) -> EntityDetailResponse:
         related_tasks=[_task_out(t) for t in detail.related_tasks],
         related_memories=[_memory_out(m) for m in detail.related_memories],
     )
+
+
+def _waiting_out(item: WaitingItem) -> WaitingItemResponse:
+    return WaitingItemResponse(**item.model_dump())
+
+
+async def _approval_out(
+    container: Container, client: ClientIdentity, approval: Approval
+) -> ApprovalResponse:
+    """Enrich an approval with the payload of the action it binds to.
+
+    The Approval screen (section 58) renders "what will happen" from the
+    exact payload the human is approving; this is a second call to an
+    already-existing operation, not a new business rule.
+    """
+    action: Action | None
+    try:
+        action = await container.core.get_action(client, action_id=approval.action_id)
+    except NotFoundError:
+        action = None
+    return ApprovalResponse(
+        **approval.model_dump(),
+        action_payload=action.payload if action is not None else {},
+        action_status=action.status if action is not None else None,
+    )
+
+
+def _action_out(action: Action) -> ActionResponse:
+    return ActionResponse(**action.model_dump())
+
+
+def _audit_out(record: AuditRecord) -> AuditRecordResponse:
+    return AuditRecordResponse(**record.model_dump())
 
 
 def _publish_config_changed(container: Container, **fields: Any) -> None:
@@ -699,6 +746,144 @@ async def unlink_entities(
         source_id=source_id,
         target_id=target_id,
         rel_type=str(rel_type),
+    )
+
+
+# --- durable work (BUILD_SPEC sections 13, 54-62, phase 4) -------------------
+#
+# Waiting items, the action outbox, approvals, and the durable audit log.
+# LifeOps Core decides every rule that matters here — whether a follow-up
+# escalates, whether an action needs approval, what an approval authorises,
+# what belongs in the audit trail. These routes translate shapes and carry
+# the 404/409/422/403 contracts, exactly like every other adapter route.
+
+
+@router.get("/waiting", response_model=WaitingListResponse, tags=["waiting"])
+async def list_waiting(
+    container: ContainerDep,
+    client: ClientDep,
+    status: Annotated[list[WaitingStatus] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> WaitingListResponse:
+    """The Waiting screen's list (BUILD_SPEC section 13)."""
+    items = await container.core.list_waiting(client, statuses=status, limit=limit)
+    return WaitingListResponse(items=[_waiting_out(i) for i in items], total=len(items))
+
+
+@router.get("/waiting/{waiting_id}", response_model=WaitingItemResponse, tags=["waiting"])
+async def get_waiting_item(
+    waiting_id: str, container: ContainerDep, client: ClientDep
+) -> WaitingItemResponse:
+    return _waiting_out(
+        await container.core.get_waiting_item(client, waiting_id=waiting_id)
+    )
+
+
+@router.post(
+    "/waiting", response_model=WaitingItemResponse, status_code=201, tags=["waiting"]
+)
+async def create_waiting_item(
+    payload: CreateWaitingItemRequest, container: ContainerDep, client: ClientDep
+) -> WaitingItemResponse:
+    """Record that a task is blocked on someone else (section 54). This
+    captures a fact about the world; it sends nothing."""
+    item = await container.core.create_waiting_item(
+        client, WaitingDraft(**payload.model_dump())
+    )
+    return _waiting_out(item)
+
+
+@router.post(
+    "/waiting/{waiting_id}/followup",
+    response_model=WaitingItemResponse,
+    tags=["waiting"],
+)
+async def record_waiting_followup(
+    waiting_id: str, container: ContainerDep, client: ClientDep
+) -> WaitingItemResponse:
+    """Log a follow-up, escalating when the budget is spent (section 55)."""
+    item = await container.core.record_followup(client, waiting_id=waiting_id)
+    return _waiting_out(item)
+
+
+@router.post(
+    "/waiting/{waiting_id}/resolve",
+    response_model=WaitingItemResponse,
+    tags=["waiting"],
+)
+async def resolve_waiting_item(
+    waiting_id: str, container: ContainerDep, client: ClientDep
+) -> WaitingItemResponse:
+    """Close a waiting item because the thing arrived."""
+    item = await container.core.resolve_waiting_item(client, waiting_id=waiting_id)
+    return _waiting_out(item)
+
+
+@router.get("/approvals", response_model=ApprovalListResponse, tags=["approvals"])
+async def list_pending_approvals(
+    container: ContainerDep,
+    client: ClientDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> ApprovalListResponse:
+    """What the Approval screen shows (BUILD_SPEC section 58)."""
+    approvals = await container.core.list_pending_approvals(client, limit=limit)
+    out = [await _approval_out(container, client, a) for a in approvals]
+    return ApprovalListResponse(approvals=out, total=len(out))
+
+
+@router.post(
+    "/approvals/{approval_id}/decide",
+    response_model=ApprovalResponse,
+    tags=["approvals"],
+)
+async def decide_approval(
+    approval_id: str,
+    payload: DecideApprovalRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> ApprovalResponse:
+    """Approve or decline one exact action (sections 57-58).
+
+    LifeOps Core already decided whether approval was required, and what this
+    approval binds to, when it was created. This route only submits the
+    human's decision.
+    """
+    approval = await container.core.decide_approval(
+        client, approval_id=approval_id, approved=payload.approved
+    )
+    return await _approval_out(container, client, approval)
+
+
+@router.get("/actions", response_model=ActionListResponse, tags=["actions"])
+async def list_actions(
+    container: ContainerDep,
+    client: ClientDep,
+    status: Annotated[list[ActionStatus] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> ActionListResponse:
+    """The action outbox (BUILD_SPEC section 60)."""
+    actions = await container.core.list_actions(client, statuses=status, limit=limit)
+    return ActionListResponse(actions=[_action_out(a) for a in actions], total=len(actions))
+
+
+@router.get("/actions/{action_id}", response_model=ActionResponse, tags=["actions"])
+async def get_action(
+    action_id: str, container: ContainerDep, client: ClientDep
+) -> ActionResponse:
+    return _action_out(await container.core.get_action(client, action_id=action_id))
+
+
+@router.get("/audit", response_model=AuditListResponse, tags=["audit"])
+async def read_audit(
+    container: ContainerDep,
+    client: ClientDep,
+    target: Annotated[str | None, Query(max_length=200)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> AuditListResponse:
+    """The durable audit log — "why did Hermes do that?" (section 62)."""
+    records = await container.core.read_audit(client, target=target, limit=limit)
+    return AuditListResponse(
+        records=[_audit_out(r) for r in records], total=len(records)
     )
 
 
