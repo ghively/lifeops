@@ -23,6 +23,7 @@ import { LifeOpsLayout } from './components/layout/LifeOpsLayout'
 import { ThemeProvider } from './components/theme/ThemeProvider'
 import { useAuthStore } from './lib/auth'
 import { ActivityPage } from './pages/lifeops/ActivityPage'
+import { ApprovalsPage } from './pages/lifeops/ApprovalsPage'
 import { ComingInPhasePage } from './pages/lifeops/ComingInPhasePage'
 import { ConfigurationPage } from './pages/lifeops/ConfigurationPage'
 import { LoginPage } from './pages/lifeops/LoginPage'
@@ -137,6 +138,7 @@ function App() {
                 <Routes>
                   <Route path="/" element={<TodayPage />} />
                   <Route path="/needs-attention" element={<NeedsAttentionPage />} />
+                  <Route path="/approvals" element={<ApprovalsPage />} />
                   <Route path="/waiting" element={<WaitingPage />} />
                   <Route path="/tasks" element={<LifeOpsTasksPage />} />
                   <Route path="/search" element={<SearchPage />} />
