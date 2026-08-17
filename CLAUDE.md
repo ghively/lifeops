@@ -133,6 +133,17 @@ arrow into a node it does not render. Section 16 gives tasks, waiting items,
 documents, and memories their own inspector panels; that is where they belong,
 not as unlabelled relationship rows.
 
+**Known design debt: list-valued facts are JSON-blobbed.** Phases 7 and 9
+project Appointment, Document, ServiceRequest, and ShoppingList as world nodes,
+encoding list fields (a cart's items, an appointment's attendees) into a single
+`facts` string and bypassing `validate_facts`' 500-character bound on purpose.
+It works and it is consistent, but it defeats a bound that exists so an entity
+cannot become an unbounded document store, and it makes those items
+unqueryable — you cannot ask which lists contain milk. It was chosen partly to
+route around a harness rule, which has since been fixed. If a workflow needs
+to query inside these, give the entity its own repository rather than widening
+the blob.
+
 **The world graph projects; it does not own.** Persons and preferences are
 written by their own repositories and read by the world repository through a
 per-label projection. `create_entity` accepts only Household, Provider, and
