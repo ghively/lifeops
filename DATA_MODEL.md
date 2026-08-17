@@ -280,6 +280,67 @@ for those facts, not a parallel email-specific copy of them.
 
 ---
 
+## Service requests (Phase 8)
+
+```
+(:ServiceRequest {id, display_name, facts_json, created_at, updated_at,
+                   created_by_client})
+```
+
+Added in Phase 8 (BUILD_SPEC sections 36, 67, 68, 97, 101), projected through
+the same world repository as `Appointment`/`Event`/`Document` — one more
+label the `facts_json` shape already fit, rather than a dedicated
+`ServiceRequestRepository`. `domain/service_request.py` keeps the richer
+`ServiceRequest` model and its own small status machine; the graph node is a
+projection, the pattern `domain/calendar.py` established for `Appointment`
+and `domain/shopping.py` continued for `ShoppingList`.
+
+A `ServiceRequest` is the durable record of one pass through section 67's
+provider workflow — research, contact, quote collection, approval-gated
+booking — the same role `Appointment` plays for section 63's booking flow.
+`ServiceRequest.facts` carries `status` (`researching` / `contacting_provider`
+/ `awaiting_provider` / `quote_collected` / `booking_requested` / `booked` /
+`completed` / `cancelled`), `task_id`, `asset_entity_id`,
+`provider_entity_id`, `diagnostic_fee`, `waiting_item_id`,
+`contact_action_id`, `booking_action_id`, `appointment_id`, and `notes`.
+`availability` — a list of RFC 3339 slot strings from section 69's structured
+call result — is joined with `;` into one fact rather than JSON-encoded,
+because it is a flat list of strings with no internal structure worth a
+second encoding layer (contrast `ShoppingList.items_json`, which is genuinely
+structured).
+
+`ServiceRequest` is outside `CREATABLE_ENTITY_TYPES` (the generic `POST
+/world/entities` path) for the same reason `Appointment` is: it has a
+dedicated write path (`create_service_request`) that stamps the
+`researching` status, with its own invariants a bare `display_name` + facts
+bag would bypass. It is in the wider `WORLD_MANAGED_ENTITY_TYPES`.
+
+Two Actions this phase adds execution for, both declared in
+`domain/actions.py` before this phase existed: `place_phone_call` and
+`request_quote` are R2 and policy-controlled (section 56) — not
+approval-gated by default, so Hermes contacts a provider and collects a
+quote on its own — while `book_appointment` stays R3 (always approval). A
+phone call's payload (`domain/telephony.py`'s `CallObjective`) can never
+carry `authority.authorize_charge` or `authority.authorize_repairs` set to
+`True`: `build_call_objective` has no parameter for either, so section 97's
+"no phone-based payment authorization" and section 101 step 9 ("never
+authorize repairs") are enforced by the payload's constructor, not merely
+validated after the fact. `ServiceRequest.status` only reaches `booked`
+through `LifeOpsCore.confirm_service_booking`, called only after
+`verify_action_externally` has independently confirmed the booking — the
+same "no completion without verification" discipline `Appointment.status`
+enforces for `booked`.
+
+The telephony provider itself (`telephony/provider.py`'s `TelephonyProvider`
+Protocol) has no NornicDB presence — a runtime capability, not world state,
+the same way the calendar and email providers are not NornicDB nodes either.
+No telephony SDK dependency was added and no real backend is wired (section
+88): `telephony/service.py`'s `TelephonyProviderService` ships with no
+default factory, so a fresh deployment reports Telephony as "Not configured"
+honestly rather than faking a working phone line.
+
+---
+
 ## Shopping (Phase 9)
 
 ```
@@ -436,6 +497,7 @@ CREATE CONSTRAINT lifeops_audit_id      FOR (r:AuditRecord) REQUIRE r.id IS UNIQ
 CREATE CONSTRAINT lifeops_appointment_id FOR (a:Appointment) REQUIRE a.id IS UNIQUE
 CREATE CONSTRAINT lifeops_event_id      FOR (e:Event)       REQUIRE e.id IS UNIQUE
 CREATE CONSTRAINT lifeops_document_id   FOR (d:Document)    REQUIRE d.id IS UNIQUE
+CREATE CONSTRAINT lifeops_servicerequest_id FOR (s:ServiceRequest) REQUIRE s.id IS UNIQUE
 CREATE CONSTRAINT lifeops_shopping_list_id FOR (s:ShoppingList) REQUIRE s.id IS UNIQUE
 
 CREATE INDEX lifeops_preference_subject_key FOR (p:Preference) ON (p.subject_id, p.key)

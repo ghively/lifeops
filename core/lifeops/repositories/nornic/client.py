@@ -64,6 +64,10 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "FOR (e:Event) REQUIRE e.id IS UNIQUE",
     "CREATE CONSTRAINT lifeops_document_id IF NOT EXISTS "
     "FOR (d:Document) REQUIRE d.id IS UNIQUE",
+    # Phase 8 (BUILD_SPEC section 97): a duplicate servicerequest_ id would
+    # let one provider workflow silently fork into two.
+    "CREATE CONSTRAINT lifeops_servicerequest_id IF NOT EXISTS "
+    "FOR (s:ServiceRequest) REQUIRE s.id IS UNIQUE",
     # Phase 9 (BUILD_SPEC section 98): a duplicate shoppinglist_ id is the
     # "checked out twice" failure section 60 exists to prevent.
     "CREATE CONSTRAINT lifeops_shopping_list_id IF NOT EXISTS "
