@@ -6,6 +6,18 @@
  * failures. Routine notifications never appear here — the point of the screen
  * is to minimize interruption, so an empty screen is good news, not a bug.
  *
+ * Section 12 names eight categories (approval, clarification, MFA, decision,
+ * price/term change, failed external action, security warning, conflict).
+ * Task carries only state and free text (`title`, `current_action`) — no
+ * category field exists anywhere upstream, and adding one would mean every
+ * MCP tool and Console flow that touches a task deciding which of eight
+ * buckets applies, which is a protocol change well past what this screen can
+ * carry alone. So `categorize()` is an honest best-effort read of the same
+ * fields already on screen — keywords in title/current_action first, state
+ * as the fallback — not a structured category. It groups tasks the way the
+ * spec's example does; it does not claim to know something LifeOps was
+ * never told.
+ *
  * The transition dropdown offers only moves the LifeOps state machine
  * permits, exactly as the Tasks screen does; LifeOps Core re-validates every
  * transition and its refusal is shown verbatim.
@@ -29,6 +41,67 @@ import {
 type AttentionState = 'NEEDS_APPROVAL' | 'BLOCKED' | 'FAILED'
 
 const ATTENTION_STATES: AttentionState[] = ['NEEDS_APPROVAL', 'BLOCKED', 'FAILED']
+
+/** BUILD_SPEC section 12's eight categories, in the order they're listed there. */
+type AttentionCategory =
+  | 'approval'
+  | 'clarification'
+  | 'mfa'
+  | 'decision'
+  | 'price_term_change'
+  | 'failed_external_action'
+  | 'security_warning'
+  | 'conflict'
+
+const CATEGORY_LABELS: Record<AttentionCategory, string> = {
+  approval: 'Approval',
+  clarification: 'Clarification',
+  mfa: 'MFA',
+  decision: 'Decision',
+  price_term_change: 'Price or term change',
+  failed_external_action: 'Failed external action',
+  security_warning: 'Security warning',
+  conflict: 'Conflict',
+}
+
+const CATEGORY_ORDER: AttentionCategory[] = [
+  'security_warning',
+  'mfa',
+  'approval',
+  'price_term_change',
+  'conflict',
+  'decision',
+  'clarification',
+  'failed_external_action',
+]
+
+/** Keyword groups checked in priority order — security and MFA outrank the
+ * rest because they're the two categories worth surfacing distinctly even
+ * when a keyword collides with another bucket's. */
+const KEYWORDS: Array<[AttentionCategory, RegExp]> = [
+  ['security_warning', /security|suspicious|fraud|phishing|breach/i],
+  ['mfa', /\bmfa\b|\b2fa\b|verification code|one-time code|\botp\b|authenticate/i],
+  ['price_term_change', /price|cost|quote|increase|term(s)? (changed|change)/i],
+  ['conflict', /conflict/i],
+  ['decision', /decide|decision|choose|choice/i],
+  ['clarification', /clarif|which one|unclear|more info/i],
+]
+
+function categorize(task: Task): AttentionCategory {
+  const text = `${task.title} ${task.current_action ?? ''}`
+  for (const [category, pattern] of KEYWORDS) {
+    if (pattern.test(text)) return category
+  }
+  switch (task.state) {
+    case 'NEEDS_APPROVAL':
+      return 'approval'
+    case 'FAILED':
+      return 'failed_external_action'
+    case 'BLOCKED':
+    default:
+      return 'clarification'
+  }
+}
 
 /**
  * Why the task needs a human, in one line. `current_action` is what LifeOps
@@ -201,24 +274,13 @@ export function NeedsAttentionPage() {
           Nothing needs your attention right now.
         </p>
       ) : (
-        ATTENTION_STATES.map((state) => {
-          const group = tasks.filter((task) => task.state === state)
+        CATEGORY_ORDER.map((category) => {
+          const group = tasks.filter((task) => categorize(task) === category)
           if (group.length === 0) return null
-          const title =
-            state === 'NEEDS_APPROVAL'
-              ? 'Waiting on your approval'
-              : state === 'BLOCKED'
-                ? 'Blocked'
-                : 'Failed'
           return (
-            <section key={state} className="space-y-3">
-              <h2
-                className={cn(
-                  'text-xs font-semibold uppercase tracking-widest',
-                  STATE_TONE[state],
-                )}
-              >
-                {title}
+            <section key={category} className="space-y-3">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                {CATEGORY_LABELS[category]}
               </h2>
               <div className="space-y-2">
                 {group.map((task) => (

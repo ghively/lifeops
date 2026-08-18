@@ -306,10 +306,86 @@ export interface RemoteLogEntry {
   ts: string
 }
 
+/** A read-only calendar entry (BUILD_SPEC section 63 step 1) — what's on
+ * the calendar, distinct from an Appointment LifeOps is actively driving. */
+export interface CalendarEvent {
+  id: string
+  external_event_id: string
+  calendar_provider_id: string
+  title: string
+  start_at: string
+  end_at: string
+  location: string
+}
+
+/** One Appointment (BUILD_SPEC sections 63, 96): a hold or booking. */
+export interface Appointment {
+  id: string
+  subject: string
+  status: string
+  provider_entity_id: string | null
+  task_id: string | null
+  start_at: string
+  end_at: string
+  location: string
+  notes: string
+  calendar_provider_id: string
+  hold_reference: string | null
+  hold_expires_at: string | null
+  external_event_id: string | null
+  booking_action_id: string | null
+  created_at: string
+}
+
+/** The only sources LifeOps Core accepts for a document reference
+ * (`validate_source` in `domain/documents.py`). */
+export type DocumentSource = 'email' | 'calendar' | 'manual'
+
+export const DOCUMENT_SOURCE_LABELS: Record<DocumentSource, string> = {
+  email: 'Email',
+  calendar: 'Calendar',
+  manual: 'Manual',
+}
+
+/** A reference to something ingested from email or the calendar (§36, §64). */
+export interface LifeOpsDocument {
+  id: string
+  title: string
+  source: string
+  source_ref: string
+  mime_type: string
+  summary: string
+  created_at: string
+  updated_at: string
+  created_by_client: string | null
+}
+
+/** Reference content the user authored or distilled from a Document (§18). */
+export interface Knowledge {
+  id: string
+  title: string
+  category: string
+  content: string
+  source_document_id: string | null
+  created_at: string
+  updated_at: string
+  created_by_client: string | null
+}
+
 export interface SearchResults {
   people: Person[]
   preferences: Preference[]
   tasks: Task[]
+  providers: WorldEntity[]
+  assets: WorldEntity[]
+  appointments: Appointment[]
+  events: WorldEntity[]
+  memories: MemoryRecord[]
+  documents: LifeOpsDocument[]
+  knowledge: Knowledge[]
+  bills: Bill[]
+  actions: LifeOpsAction[]
+  historical_facts: AuditRecord[]
 }
 
 // --- memory types (BUILD_SPEC sections 42-47) ---------------------------------
@@ -542,6 +618,86 @@ export const tasksApi = {
       verification_evidence: string
     }>,
   ) => lifeops.patch<Task>(`/tasks/${id}`, payload).then((r) => r.data),
+}
+
+export const calendarApi = {
+  /**
+   * Appointments LifeOps is driving — holds and bookings (BUILD_SPEC
+   * sections 63, 96). 400s with `configuration_error` on a deployment with
+   * no calendar provider configured; callers should treat that as "no
+   * calendar yet", not a failure.
+   */
+  listAppointments: (params?: { task_id?: string }) =>
+    lifeops
+      .get<{ appointments: Appointment[]; total: number }>('/appointments', { params })
+      .then((r) => r.data),
+
+  getAppointment: (id: string) =>
+    lifeops.get<Appointment>(`/appointments/${id}`).then((r) => r.data),
+
+  /** Section 63 step 1: what is on the calendar, read-only. */
+  readEvents: (params: { start_at: string; end_at: string }) =>
+    lifeops
+      .get<{ events: CalendarEvent[]; total: number }>('/calendar/events', { params })
+      .then((r) => r.data),
+
+  /** Section 63 step 3: a reversible hold, not yet a commitment. */
+  hold: (payload: {
+    subject: string
+    start_at: string
+    end_at: string
+    provider_entity_id?: string
+    task_id?: string
+    location?: string
+    notes?: string
+    hold_minutes?: number
+  }) => lifeops.post<Appointment>('/appointments/holds', payload).then((r) => r.data),
+
+  /** Section 63 step 4, through the outbox — records intent only. Approving
+   * and executing happen on the Approvals/Actions screens. */
+  book: (id: string) =>
+    lifeops.post<LifeOpsAction>(`/appointments/${id}/book`).then((r) => r.data),
+
+  cancel: (id: string) =>
+    lifeops.post<LifeOpsAction>(`/appointments/${id}/cancel`).then((r) => r.data),
+}
+
+export const documentsApi = {
+  /** List/search document references by title, source, or summary — a
+   * pointer LifeOps stores, never the underlying file (section 18). */
+  search: (params?: { q?: string; limit?: number }) =>
+    lifeops
+      .get<{ documents: LifeOpsDocument[]; total: number }>('/documents', { params })
+      .then((r) => r.data),
+
+  get: (id: string) => lifeops.get<LifeOpsDocument>(`/documents/${id}`).then((r) => r.data),
+
+  /** Record a reference — never a file upload, since LifeOps Core has no
+   * binary storage; the actual content stays wherever it came from. */
+  create: (payload: {
+    title: string
+    source: string
+    source_ref?: string
+    mime_type?: string
+    summary?: string
+  }) => lifeops.post<LifeOpsDocument>('/documents', payload).then((r) => r.data),
+}
+
+export const knowledgeApi = {
+  /** Search reference content by title, category, or body text (section 50). */
+  search: (params?: { q?: string; limit?: number }) =>
+    lifeops
+      .get<{ knowledge: Knowledge[]; total: number }>('/knowledge', { params })
+      .then((r) => r.data),
+
+  get: (id: string) => lifeops.get<Knowledge>(`/knowledge/${id}`).then((r) => r.data),
+
+  create: (payload: {
+    title: string
+    category?: string
+    content?: string
+    source_document_id?: string
+  }) => lifeops.post<Knowledge>('/knowledge', payload).then((r) => r.data),
 }
 
 export const waitingApi = {
@@ -957,6 +1113,10 @@ export const memoryApi = {
     subject_id?: string
     type?: MemoryType[]
     include_invalid?: boolean
+    /** Section 17's "invalidated/superseded history" view: closed records
+     * only, not merged with current ones (that's `include_invalid`, which
+     * the server still refuses). */
+    invalidated_only?: boolean
     limit?: number
   }) => lifeops.get<MemoryList>('/memory', { params }).then((r) => r.data),
 
@@ -998,6 +1158,16 @@ export const memoryApi = {
   correct: (id: string, content: string) =>
     lifeops
       .post<MemoryRecord>(`/memory/${id}/correct`, { content })
+      .then((r) => r.data),
+
+  /**
+   * Section 47's confirm/promote step: a reviewed preference_candidate
+   * becomes a real preference and the candidate closes out. `value`
+   * defaults server-side to the memory's own content when omitted.
+   */
+  promote: (id: string, key: string, value?: string) =>
+    lifeops
+      .post<Preference>(`/memory/${id}/promote`, { key, value })
       .then((r) => r.data),
 }
 
@@ -1113,8 +1283,21 @@ export interface WorldEntityDetail {
   related_memories: MemoryRecord[]
 }
 
+/** One version of one fact on a world entity (BUILD_SPEC section 16). */
+export interface EntityFactRecord {
+  id: string
+  entity_id: string
+  key: string
+  value: string
+  valid_from: string
+  valid_to: string | null
+  supersedes: string | null
+  created_by_client: string | null
+}
+
 export interface WorldEntityHistory {
   entity_id: string
+  fact_history: EntityFactRecord[]
   memories: MemoryRecord[]
   /** What this history does and does not cover, stated by the server. */
   covers: string[]

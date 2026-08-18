@@ -33,7 +33,9 @@ PHASE_FOR_ENTITY_TYPE: dict[str, str] = {
     "ShoppingList": "9",
     "Bill": "10",
     "WorkflowTemplate": "11",
-    "Knowledge": "unscheduled",
+    # Not an original numbered phase — delivered closing the gap the
+    # 2026-08-18 unimplemented-features audit found (docs/audits/).
+    "Knowledge": "audit-2026-08-18",
 }
 
 

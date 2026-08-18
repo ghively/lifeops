@@ -29,6 +29,19 @@ and ``request_quote`` contact a provider with a constrained objective that can
 never authorise a charge or repair work (section 97's hard rule,
 domain/telephony.py), and ``book_service_request`` only *prepares* a booking —
 it still needs a human's approval before anything is booked (sections 57-58).
+This pass rounds out section 50's expanded read tools: single-item and list
+reads over tasks, waiting items, assets, appointments, and bills that already
+had a write path or a resource but no matching tool. Section 51's
+``prepare_payment``/``commit_payment`` are deliberately absent — payment stays
+Console-only (see CLAUDE.md's "money moves only where a human is present").
+A later pass adds section 73's self-configuration surface: ``propose_self_change``
+(the permission gate every self-change goes through) and
+``save_workflow_template``/``list_workflow_templates``/``due_routines``/
+``delete_workflow_template`` (the one real apply path behind four of section
+73's seven target names — see ``domain/self_config.py``'s
+``SelfConfigTarget`` docstring for which). Before this, both only had a
+Console-only HTTP path; Hermes had no way to actually manage its own
+routines, cron jobs, or reminders, only to have them managed for it.
 
 Client identity
 ---------------
@@ -56,16 +69,19 @@ from pydantic import Field
 from pydantic import ValidationError as PydanticValidationError
 
 from lifeops.container import Container
-from lifeops.domain.calendar import AppointmentHoldDraft
+from lifeops.domain.calendar import AppointmentHoldDraft, AppointmentStatus
 from lifeops.domain.email import EmailSendDraft
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
+from lifeops.domain.self_config import SelfConfigProposal, SelfConfigTarget
 from lifeops.domain.service_request import ServiceRequestDraft
 from lifeops.domain.shopping import ShoppingItem, ShoppingListDraft, SubstitutionDraft
 from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState, TaskUpdate
-from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingDraft
+from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingDraft, WaitingStatus
+from lifeops.domain.workflow_templates import TriggerKind, WorkflowStep, WorkflowTemplateDraft
+from lifeops.domain.world import WorldEntityType
 from lifeops.errors import LifeOpsError, NotFoundError
-from lifeops.ids import PREFIX_PROVIDER
+from lifeops.ids import PREFIX_ASSET, PREFIX_PROVIDER
 from lifeops.mcp.resources import register_resources
 from lifeops.observability.logging import configure_logging, trace_context
 from lifeops.policy import ClientIdentity, UnknownClientPolicy, resolve_client
@@ -424,9 +440,12 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             "Record a company or service the user deals with — an "
             "electrician, an insurer, a garage — so later work can attach to "
             "a canonical record instead of a name in a sentence.\n\n"
-            "Call get_provider first: if the provider already exists, use it "
-            "rather than recording a second one. This records a fact about "
-            "the world; it contacts nobody and books nothing."
+            "Safe to call again for a provider you have already recorded: "
+            "matching an existing name revises its facts (with history, "
+            "section 16) instead of erroring or duplicating it — e.g. "
+            "learning a new phone number just updates that one fact. This "
+            "records a fact about the world; it contacts nobody and books "
+            "nothing."
         ),
     )
     async def record_provider(
@@ -445,15 +464,13 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
-                from lifeops.domain.world import EntityDraft, WorldEntityType
+                from lifeops.domain.world import WorldEntityType
 
-                entity = await container.core.create_entity(
+                entity = await container.core.record_or_update_entity(
                     client,
-                    EntityDraft(
-                        entity_type=WorldEntityType.PROVIDER,
-                        display_name=display_name,
-                        facts=facts or {},
-                    ),
+                    entity_type=WorldEntityType.PROVIDER,
+                    display_name=display_name,
+                    facts=facts or {},
                 )
                 return {"ok": True, "provider": entity.model_dump(mode="json")}
             except (LifeOpsError, PydanticValidationError) as exc:
@@ -466,8 +483,11 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             "Record something the user owns that work happens to — a "
             "vehicle, an appliance, a room, a fixture.\n\n"
             "Call get_related_entities on the household first if you are "
-            "unsure whether it is already recorded; a duplicate asset splits "
-            "its history in two. This records a fact about the world; it "
+            "unsure whether it is already recorded. Safe to call again for "
+            "an asset you have already recorded: matching an existing name "
+            "revises its facts (with history, section 16) instead of "
+            "erroring or duplicating it — e.g. a new mileage reading just "
+            "updates that one fact. This records a fact about the world; it "
             "schedules and orders nothing."
         ),
     )
@@ -487,15 +507,13 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
-                from lifeops.domain.world import EntityDraft, WorldEntityType
+                from lifeops.domain.world import WorldEntityType
 
-                entity = await container.core.create_entity(
+                entity = await container.core.record_or_update_entity(
                     client,
-                    EntityDraft(
-                        entity_type=WorldEntityType.ASSET,
-                        display_name=display_name,
-                        facts=facts or {},
-                    ),
+                    entity_type=WorldEntityType.ASSET,
+                    display_name=display_name,
+                    facts=facts or {},
                 )
                 return {"ok": True, "asset": entity.model_dump(mode="json")}
             except (LifeOpsError, PydanticValidationError) as exc:
@@ -937,12 +955,13 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
         name="get_entity_history",
         title="Get entity history",
         description=(
-            "What changed about an entity over time: supersession chains and "
-            "related invalidations, newest first. Use it when the user asks "
-            "how something used to be — 'who was our mechanic before ABC?'.\n\n"
-            "History is best-effort until the Phase 4 audit log lands: it "
-            "reconstructs change from temporal links rather than a complete "
-            "event record."
+            "What changed about an entity over time: every version of every "
+            "fact it has carried (fact_history), newest first, plus every "
+            "version of every memory referencing it (memories). Use it when "
+            "the user asks how something used to be — 'who was our mechanic "
+            "before ABC?', 'what was the mileage last time?'.\n\n"
+            "This is not the durable audit log (no 'which client changed "
+            "this, when') — covers states exactly what the answer includes."
         ),
     )
     async def get_entity_history(
@@ -957,6 +976,300 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                 # `covers` travels with the answer so the model does not read
                 # an empty history as "nothing ever happened".
                 return {"ok": True, **history.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    # --- expanded read tools (BUILD_SPEC section 50) -------------------------
+    #
+    # The rest of section 50's list: single-item reads and searches over
+    # domains that already have a write path (tasks, waiting items, assets)
+    # or a richer read (appointments, bills). Nothing here has a capability
+    # beyond what the equivalent Console read already requires — a client
+    # that may not read tasks may not read one task by id either.
+
+    @server.tool(
+        name="get_task",
+        title="Get task",
+        description="One task by id, in the same shape list_tasks returns.",
+    )
+    async def get_task(
+        task_id: Annotated[str, Field(description="Task id, e.g. task_01j5x...")],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.get_task(client, task_id=task_id)
+                return {
+                    "ok": True,
+                    "task": {
+                        "id": found.id,
+                        "title": found.title,
+                        "state": str(found.state),
+                        "priority": str(found.priority),
+                        "due_at": found.due_at,
+                        "created_at": found.created_at,
+                        "needs_attention": found.needs_attention,
+                    },
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_waiting_items",
+        title="List waiting items",
+        description=(
+            "Tasks blocked on someone else, with the waiting context: what "
+            "was last attempted, what is being waited on, and since when. "
+            "Use this rather than filtering list_tasks yourself when the "
+            "user asks what's outstanding."
+        ),
+    )
+    async def list_waiting_items(
+        status: Annotated[
+            list[WaitingStatus] | None,
+            Field(description="Filter to these statuses. Omit for all."),
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=200, description="Maximum results.")] = 50,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                items = await container.core.list_waiting(
+                    client, statuses=status, limit=limit
+                )
+                return {
+                    "ok": True,
+                    "waiting_items": [
+                        {
+                            "id": item.id,
+                            "task_id": item.task_id,
+                            "subject": item.subject,
+                            "waiting_on_entity_id": item.waiting_on_entity_id,
+                            "waiting_since": item.waiting_since,
+                            "expected_by": item.expected_by,
+                            "followup_count": item.followup_count,
+                            "status": str(item.status),
+                        }
+                        for item in items
+                    ],
+                    "total": len(items),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="find_provider",
+        title="Find provider",
+        description=(
+            "Search providers by name — a company or service the user deals "
+            "with. Always returns the list of matches, unlike get_provider, "
+            "which collapses a single exact match to its full detail. Use "
+            "this to browse candidates; use get_provider once you know which "
+            "one you mean."
+        ),
+    )
+    async def find_provider(
+        query: Annotated[
+            str, Field(description="Name or partial name to search for, e.g. 'electric'.")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                graph = await container.core.world_graph(
+                    client, query=query, entity_types=[str(WorldEntityType.PROVIDER)]
+                )
+                return {
+                    "ok": True,
+                    "providers": [node.model_dump(mode="json") for node in graph.nodes],
+                    "total": len(graph.nodes),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_asset",
+        title="Get asset",
+        description=(
+            "Find an asset entity in the user's world — a car, an appliance, "
+            "a piece of property — and its current facts. Accepts a "
+            "canonical id (asset_...) or a name."
+        ),
+    )
+    async def get_asset(
+        name_or_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "Canonical asset id, e.g. asset_land_rover, or a name to "
+                    "search for."
+                )
+            ),
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                if name_or_id.startswith(f"{PREFIX_ASSET}_"):
+                    detail = await container.core.get_entity_detail(
+                        client, entity_id=name_or_id
+                    )
+                    return {"ok": True, "asset": detail.model_dump(mode="json")}
+
+                graph = await container.core.world_graph(
+                    client, query=name_or_id, entity_types=[str(WorldEntityType.ASSET)]
+                )
+                if not graph.nodes:
+                    raise NotFoundError(
+                        f"no asset matching {name_or_id!r}", query=name_or_id
+                    )
+                if len(graph.nodes) == 1:
+                    detail = await container.core.get_entity_detail(
+                        client, entity_id=graph.nodes[0].id
+                    )
+                    return {"ok": True, "asset": detail.model_dump(mode="json")}
+                return {
+                    "ok": True,
+                    "assets": [node.model_dump(mode="json") for node in graph.nodes],
+                    "total": len(graph.nodes),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_assets",
+        title="List assets",
+        description="Every asset in the user's world — cars, appliances, property.",
+    )
+    async def list_assets(
+        limit: Annotated[int, Field(ge=1, le=200, description="Maximum results.")] = 100,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                graph = await container.core.world_graph(
+                    client, entity_types=[str(WorldEntityType.ASSET)], limit=limit
+                )
+                return {
+                    "ok": True,
+                    "assets": [node.model_dump(mode="json") for node in graph.nodes],
+                    "total": len(graph.nodes),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_appointment",
+        title="Get appointment",
+        description="One calendar appointment by id.",
+    )
+    async def get_appointment(
+        appointment_id: Annotated[str, Field(description="Appointment id.")],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.get_appointment(
+                    client, appointment_id=appointment_id
+                )
+                return {"ok": True, "appointment": found.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_appointments",
+        title="List appointments",
+        description=(
+            "Calendar appointments LifeOps has held or booked, optionally "
+            "filtered by status or the task they belong to."
+        ),
+    )
+    async def list_appointments(
+        status: Annotated[
+            str | None, Field(description="Filter to this appointment status. Omit for all.")
+        ] = None,
+        task_id: Annotated[
+            str | None, Field(description="Filter to appointments for this task.")
+        ] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                parsed_status = AppointmentStatus(status) if status else None
+            except ValueError:
+                return _fail(NotFoundError(f"unknown appointment status: {status!r}"))
+            try:
+                found = await container.core.list_appointments(
+                    client, status=parsed_status, task_id=task_id
+                )
+                return {
+                    "ok": True,
+                    "appointments": [a.model_dump(mode="json") for a in found],
+                    "total": len(found),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_bill",
+        title="Get bill",
+        description="One bill by id — what is owed, to whom, and its status.",
+    )
+    async def get_bill(
+        bill_id: Annotated[str, Field(description="Bill id.")],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.get_bill(client, bill_id=bill_id)
+                return {"ok": True, "bill": found.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_bills",
+        title="List bills",
+        description=(
+            "What is owed. Readable by any client that may read tasks — "
+            "knowing a bill is due is not the same as being able to pay it; "
+            "there is no MCP tool that pays one (BUILD_SPEC section 72)."
+        ),
+    )
+    async def list_bills(
+        limit: Annotated[int, Field(ge=1, le=200, description="Maximum results.")] = 100,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.list_bills(client, limit=limit)
+                return {
+                    "ok": True,
+                    "bills": [b.model_dump(mode="json") for b in found],
+                    "total": len(found),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="search_knowledge",
+        title="Search knowledge",
+        description=(
+            "Search reference content the user has recorded — insurance "
+            "policies, warranties, checklists, procedures — by title, "
+            "category, or body text. Distinct from search_memory: this is "
+            "self-contained reference material, not a fact LifeOps observed "
+            "about the user's life.\n\n"
+            "Read-only: there is no MCP tool that writes knowledge. Recording "
+            "it is a Console act, the same boundary create_document draws."
+        ),
+    )
+    async def search_knowledge(
+        query: Annotated[
+            str, Field(description="What to look for, e.g. 'water heater warranty'.")
+        ] = "",
+        limit: Annotated[int, Field(ge=1, le=100, description="Maximum results.")] = 20,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.search_knowledge(
+                    client, query=query, limit=limit
+                )
+                return {
+                    "ok": True,
+                    "knowledge": [k.model_dump(mode="json") for k in found],
+                    "total": len(found),
+                }
             except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
@@ -1574,6 +1887,190 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     suggested_acceptance_tests=suggested_acceptance_tests,
                 )
                 return {"ok": True, "change_request": request.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="propose_self_change",
+        title="Check a self-configuration change",
+        description=(
+            "Check whether a change you want to make to yourself is one you "
+            "may apply directly (BUILD_SPEC section 73). Call this BEFORE "
+            "writing a new skill, editing a non-critical prompt, or using "
+            "save_workflow_template for a routine/cron job/reminder — it "
+            "raises when the name or declared effects reach protected "
+            "machinery (authorization, approval validation, payment code, "
+            "secrets, MCP auth, security, CI) or a forbidden effect "
+            "(granting/revoking a capability, touching a secret, disabling "
+            "safe mode or the emergency stop, changing approval rules). If "
+            "this call fails, do not apply the change yourself — use "
+            "request_code_change instead. This tool only checks; it never "
+            "writes anything, whether it passes or fails."
+        ),
+    )
+    async def propose_self_change(
+        target: Annotated[
+            SelfConfigTarget,
+            Field(
+                description=(
+                    "What kind of change this is. 'routine_template', "
+                    "'cron_job', and 'reminder' are the same underlying "
+                    "object — use save_workflow_template to actually apply "
+                    "one once this check passes. 'skill' and "
+                    "'non_critical_prompt' are applied through your own "
+                    "mechanisms once this check passes; LifeOps only gates "
+                    "them, it does not store them."
+                )
+            ),
+        ],
+        name: Annotated[str, Field(description="What you are naming/calling the change.")],
+        effects: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "What the change actually causes, if anything beyond its "
+                    "stated purpose — e.g. grant_capability, read_secret. "
+                    "Leave empty for an ordinary change."
+                )
+            ),
+        ] = None,
+        rationale: Annotated[str | None, Field(description="Why you want to make it.")] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                await container.core.propose_self_change(
+                    client,
+                    SelfConfigProposal(
+                        target=target, name=name, effects=effects or [], rationale=rationale
+                    ),
+                )
+                return {"ok": True, "permitted": True}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="save_workflow_template",
+        title="Save a routine, cron job, reminder, or workflow template",
+        description=(
+            "Create or revise a named, reusable shape of work you may manage "
+            "yourself (BUILD_SPEC section 73) — a routine template, a cron "
+            "job, a reminder, and a workflow template are all the same "
+            "object here, named however fits what you're building. Saving a "
+            "name that already exists revises that template rather than "
+            "creating a duplicate. Set trigger to 'schedule' with "
+            "next_run_at for a cron job or a scheduled reminder; leave it "
+            "'manual' for a routine you run on request. This does not "
+            "execute anything by itself — a scheduled template becomes due, "
+            "and something else (the due-work worker, or you checking "
+            "due_routines) still has to act on it. Call propose_self_change "
+            "first if you are unsure the name is permitted; this refuses the "
+            "same way, but that tool is the one meant for checking without "
+            "committing to the save."
+        ),
+    )
+    async def save_workflow_template(
+        name: Annotated[
+            str, Field(description="The template's name. Reuse an existing name to revise it.")
+        ],
+        description: Annotated[str | None, Field(description="What this is for.")] = None,
+        steps: Annotated[
+            list[str] | None,
+            Field(description="Ordered step descriptions, plain text, in the order they run."),
+        ] = None,
+        trigger: Annotated[
+            TriggerKind,
+            Field(
+                description="'manual' (run on request), 'schedule' (needs next_run_at), or 'event'."
+            ),
+        ] = TriggerKind.MANUAL,
+        next_run_at: Annotated[
+            str | None,
+            Field(description="RFC 3339 timestamp. Required when trigger is 'schedule'."),
+        ] = None,
+        enabled: Annotated[bool, Field(description="False pauses it without deleting it.")] = True,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                template = await container.core.save_workflow_template(
+                    client,
+                    WorkflowTemplateDraft(
+                        name=name,
+                        description=description,
+                        steps=[
+                            WorkflowStep(order=index, description=step_description)
+                            for index, step_description in enumerate(steps or [])
+                        ],
+                        trigger=trigger,
+                        next_run_at=next_run_at,
+                        enabled=enabled,
+                    ),
+                )
+                return {"ok": True, "template": template.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_workflow_templates",
+        title="List your routines, cron jobs, reminders, and workflow templates",
+        description="Every template saved via save_workflow_template, whatever it was called.",
+    )
+    async def list_workflow_templates(
+        limit: Annotated[int, Field(ge=1, le=500, description="Maximum results.")] = 100,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                templates = await container.core.list_workflow_templates(client, limit=limit)
+                return {
+                    "ok": True,
+                    "templates": [t.model_dump(mode="json") for t in templates],
+                    "total": len(templates),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="due_routines",
+        title="Templates whose scheduled time has come",
+        description=(
+            "Scheduled templates (trigger='schedule') whose next_run_at has "
+            "passed. This only reports what is due — it does not run "
+            "anything or clear the due state itself."
+        ),
+    )
+    async def due_routines(
+        limit: Annotated[int, Field(ge=1, le=500, description="Maximum results.")] = 50,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                templates = await container.core.due_routines(client, limit=limit)
+                return {
+                    "ok": True,
+                    "templates": [t.model_dump(mode="json") for t in templates],
+                    "total": len(templates),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="delete_workflow_template",
+        title="Delete a routine, cron job, reminder, or workflow template",
+        description=(
+            "Removes it permanently. Prefer "
+            "save_workflow_template(name=..., enabled=False) to pause one "
+            "you might want back."
+        ),
+    )
+    async def delete_workflow_template(
+        template_id: Annotated[
+            str, Field(description="From save_workflow_template or list_workflow_templates.")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                removed = await container.core.delete_workflow_template(
+                    client, template_id=template_id
+                )
+                return {"ok": True, "deleted": removed}
             except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 

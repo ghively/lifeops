@@ -39,6 +39,7 @@ from lifeops.api.schemas import (
     CreateBillRequest,
     CreateDocumentRequest,
     CreateEntityRequest,
+    CreateKnowledgeRequest,
     CreatePayeeRequest,
     CreatePersonRequest,
     CreateServiceRequestRequest,
@@ -47,16 +48,20 @@ from lifeops.api.schemas import (
     CreateWaitingItemRequest,
     DecideApprovalRequest,
     DiscoverResponse,
+    DocumentListResponse,
     DocumentResponse,
     EmailMessageResponse,
     EmailSearchResponse,
     EmailThreadResponse,
     EntityDetailResponse,
+    EntityFactResponse,
     EntityHistoryResponse,
     ErrorResponse,
     FreeBusyResponse,
     FreeBusySlotResponse,
     InvalidateMemoryRequest,
+    KnowledgeListResponse,
+    KnowledgeResponse,
     LinkRelationshipRequest,
     LoginRequest,
     LoginResponse,
@@ -70,11 +75,14 @@ from lifeops.api.schemas import (
     PreferenceListResponse,
     PreferenceResponse,
     ProductResultResponse,
+    PromoteMemoryRequest,
     RememberRequest,
     RequestProviderContactRequest,
     RequestServiceBookingRequest,
     SavePreferenceRequest,
     SaveWorkflowTemplateRequest,
+    SelfChangeCheckRequest,
+    SelfChangeCheckResponse,
     SendEmailRequest,
     ServiceRequestListResponse,
     ServiceRequestResponse,
@@ -89,6 +97,7 @@ from lifeops.api.schemas import (
     TaskListResponse,
     TaskResponse,
     TestProviderResponse,
+    UpdateEntityFactsRequest,
     UpdateProviderRequest,
     UpdateSystemRequest,
     UpdateTaskRequest,
@@ -117,9 +126,11 @@ from lifeops.domain.calendar import (
 )
 from lifeops.domain.documents import Document, DocumentDraft
 from lifeops.domain.email import EmailMessage, EmailSendDraft, EmailThread
+from lifeops.domain.knowledge import Knowledge, KnowledgeDraft
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
+from lifeops.domain.self_config import SelfConfigProposal
 from lifeops.domain.service_request import ServiceRequest, ServiceRequestDraft
 from lifeops.domain.shopping import (
     ShoppingItem,
@@ -292,6 +303,10 @@ def _email_thread_out(thread: EmailThread) -> EmailThreadResponse:
 
 def _document_out(document: Document) -> DocumentResponse:
     return DocumentResponse(**document.model_dump())
+
+
+def _knowledge_out(knowledge: Knowledge) -> KnowledgeResponse:
+    return KnowledgeResponse(**knowledge.model_dump())
 
 
 def _service_request_out(request: ServiceRequest) -> ServiceRequestResponse:
@@ -559,25 +574,33 @@ async def list_memories(
     subject_id: Annotated[str | None, Query()] = None,
     type: Annotated[list[MemoryType] | None, Query()] = None,
     include_invalid: Annotated[bool, Query()] = False,
+    invalidated_only: Annotated[bool, Query()] = False,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> MemoryListResponse:
     """Current memories, most relevant first.
 
     A blank-query recall is the list operation: LifeOpsCore exposes no
-    separate listing. ``include_invalid`` is refused loudly rather than
-    silently ignored — closed records are reachable per memory through the
-    history route, and a list that claims to include them while excluding
-    them would be a lie.
+    separate listing. ``include_invalid`` (current *and* closed, merged into
+    one ranked list) is refused loudly rather than silently ignored — that
+    merge isn't built. ``invalidated_only`` is a different, narrower thing
+    that is built: section 17's dedicated "invalidated/superseded history"
+    view, closed records only, not mixed with current ones.
     """
     if include_invalid:
         raise ValidationError(
-            "listing invalidated memories is not supported yet; "
+            "merging current and invalidated memories into one list is not "
+            "supported; pass invalidated_only for the closed-records view, or "
             "open a memory's history instead",
             reason="include_invalid_unsupported",
         )
-    records = await container.core.recall(
-        client, query="", subject_id=subject_id, memory_types=type, limit=limit
-    )
+    if invalidated_only:
+        records = await container.core.list_invalidated_memories(
+            client, subject_id=subject_id, memory_types=type, limit=limit
+        )
+    else:
+        records = await container.core.recall(
+            client, query="", subject_id=subject_id, memory_types=type, limit=limit
+        )
     return MemoryListResponse(
         memories=[_memory_out(r) for r in records], total=len(records)
     )
@@ -664,6 +687,23 @@ async def correct_memory(
         client, memory_id=memory_id, new_content=payload.content
     )
     return _memory_out(record)
+
+
+@router.post(
+    "/memory/{memory_id}/promote", response_model=PreferenceResponse, tags=["memory"]
+)
+async def promote_memory(
+    memory_id: str,
+    payload: PromoteMemoryRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> PreferenceResponse:
+    """Section 47's confirm/promote step: a reviewed PREFERENCE_CANDIDATE
+    becomes a real preference, and the candidate closes out."""
+    preference = await container.core.promote_memory(
+        client, memory_id=memory_id, key=payload.key, value=payload.value
+    )
+    return _preference_out(preference)
 
 
 # --- tasks ---
@@ -803,6 +843,7 @@ async def entity_history(
     history = await container.core.entity_history(client, entity_id=entity_id)
     return EntityHistoryResponse(
         entity_id=history.entity_id,
+        fact_history=[EntityFactResponse(**f.model_dump()) for f in history.fact_history],
         memories=[_memory_out(m) for m in history.memories],
         covers=history.covers,
     )
@@ -820,6 +861,26 @@ async def create_entity(
     """Create a household, provider, or asset. This records world state; it
     executes nothing."""
     entity = await container.core.create_entity(client, EntityDraft(**payload.model_dump()))
+    return _entity_out(entity)
+
+
+@router.patch(
+    "/world/entities/{entity_id}",
+    response_model=WorldEntityResponse,
+    tags=["world"],
+)
+async def update_entity(
+    entity_id: str,
+    payload: UpdateEntityFactsRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> WorldEntityResponse:
+    """Revise a household, provider, or asset's facts, with history (section
+    16). Partial: only the given keys are considered, and only ones whose
+    value actually changed get a new version."""
+    entity = await container.core.update_entity(
+        client, entity_id=entity_id, facts=payload.facts
+    )
     return _entity_out(entity)
 
 
@@ -1165,6 +1226,70 @@ async def create_document(
     draft = DocumentDraft(**payload.model_dump())
     document = await container.core.create_document(client, draft)
     return _document_out(document)
+
+
+@router.get("/documents", response_model=DocumentListResponse, tags=["documents"])
+async def search_documents(
+    container: ContainerDep,
+    client: ClientDep,
+    q: Annotated[str, Query(max_length=200)] = "",
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> DocumentListResponse:
+    """List/search document references by title, source, or summary."""
+    found = await container.core.search_documents(client, query=q, limit=limit)
+    return DocumentListResponse(
+        documents=[_document_out(d) for d in found], total=len(found)
+    )
+
+
+@router.get(
+    "/documents/{document_id}", response_model=DocumentResponse, tags=["documents"]
+)
+async def get_document(
+    document_id: str, container: ContainerDep, client: ClientDep
+) -> DocumentResponse:
+    found = await container.core.get_document(client, document_id=document_id)
+    return _document_out(found)
+
+
+# --- knowledge (BUILD_SPEC sections 18, 36, 50) --------------------------------
+
+
+@router.post(
+    "/knowledge", response_model=KnowledgeResponse, status_code=201, tags=["knowledge"]
+)
+async def create_knowledge(
+    payload: CreateKnowledgeRequest, container: ContainerDep, client: ClientDep
+) -> KnowledgeResponse:
+    """Reference content the user authored or distilled from a Document
+    (section 18) — an insurance policy note, a checklist, a procedure."""
+    draft = KnowledgeDraft(**payload.model_dump())
+    knowledge = await container.core.record_knowledge(client, draft)
+    return _knowledge_out(knowledge)
+
+
+@router.get("/knowledge", response_model=KnowledgeListResponse, tags=["knowledge"])
+async def search_knowledge(
+    container: ContainerDep,
+    client: ClientDep,
+    q: Annotated[str, Query(max_length=200)] = "",
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> KnowledgeListResponse:
+    """Search reference content by title, category, or body text."""
+    found = await container.core.search_knowledge(client, query=q, limit=limit)
+    return KnowledgeListResponse(
+        knowledge=[_knowledge_out(k) for k in found], total=len(found)
+    )
+
+
+@router.get(
+    "/knowledge/{knowledge_id}", response_model=KnowledgeResponse, tags=["knowledge"]
+)
+async def get_knowledge(
+    knowledge_id: str, container: ContainerDep, client: ClientDep
+) -> KnowledgeResponse:
+    found = await container.core.get_knowledge(client, knowledge_id=knowledge_id)
+    return _knowledge_out(found)
 
 
 @router.get("/audit", response_model=AuditListResponse, tags=["audit"])
@@ -1615,6 +1740,20 @@ async def delete_workflow_template(
     await container.core.delete_workflow_template(client, template_id=template_id)
 
 
+@router.post(
+    "/self-config/check", response_model=SelfChangeCheckResponse, tags=["routines"]
+)
+async def check_self_change(
+    payload: SelfChangeCheckRequest, container: ContainerDep, client: ClientDep
+) -> SelfChangeCheckResponse:
+    """Whether a proposed self-change (section 73) is one Hermes may apply
+    itself. Raises (rather than returning permitted=false) when it is not,
+    the same as every other capability/validation failure this API surfaces
+    — a 4xx with a stable error code, not a 200 carrying a refusal."""
+    await container.core.propose_self_change(client, SelfConfigProposal(**payload.model_dump()))
+    return SelfChangeCheckResponse(permitted=True)
+
+
 # --- search (BUILD_SPEC section 19) ------------------------------------------
 
 
@@ -1625,12 +1764,23 @@ async def universal_search(
     q: Annotated[str, Query(min_length=1, max_length=200)],
     limit: Annotated[int, Query(ge=1, le=100)] = 10,
 ) -> dict[str, Any]:
-    """Case-insensitive substring search across people, preferences, tasks."""
+    """Case-insensitive substring search across all twelve of section 19's
+    categories."""
     results = await container.core.search(client, query=q, limit=limit)
     return {
         "people": [_person_out(p).model_dump() for p in results.people],
         "preferences": [_preference_out(p).model_dump() for p in results.preferences],
         "tasks": [_task_out(t).model_dump() for t in results.tasks],
+        "providers": [_entity_out(e).model_dump() for e in results.providers],
+        "assets": [_entity_out(e).model_dump() for e in results.assets],
+        "appointments": [_appointment_out(a).model_dump() for a in results.appointments],
+        "events": [_entity_out(e).model_dump() for e in results.events],
+        "memories": [_memory_out(m).model_dump() for m in results.memories],
+        "documents": [_document_out(d).model_dump() for d in results.documents],
+        "knowledge": [_knowledge_out(k).model_dump() for k in results.knowledge],
+        "bills": [_bill_out(b).model_dump() for b in results.bills],
+        "actions": [_action_out(a).model_dump() for a in results.actions],
+        "historical_facts": [_audit_out(r).model_dump() for r in results.historical_facts],
     }
 
 
@@ -1698,11 +1848,12 @@ async def test_provider(
 ) -> TestProviderResponse:
     """Run the provider's health check.
 
-    ElevenLabs (phase 5), the local voice adapters (phase 6), and calendar/
-    email (phase 7) have real adapters and are actually called here. Every
-    other provider still ships no adapter, so this reports honestly that one
-    is not implemented yet rather than returning a fake success. A Test
-    button that lies is worse than one that says "not yet".
+    ElevenLabs (phase 5), the local voice adapters (phase 6), calendar/email
+    (phase 7), browser (phase 9), and telephony (phase 8) have real adapters
+    and are actually called here. Every other provider still ships no
+    adapter, so this reports honestly that one is not implemented yet rather
+    than returning a fake success. A Test button that lies is worse than one
+    that says "not yet".
     """
     definition = get_provider(provider_id)
     if definition is None:
@@ -1714,6 +1865,8 @@ async def test_provider(
         return await _test_calendar_or_email(container, provider_id)
     if provider_id == "browser":
         return await _test_browser(container)
+    if provider_id == "telephony":
+        return await _test_telephony(container)
 
     status = container.config.get_status(provider_id)
     message = (
@@ -1761,9 +1914,10 @@ async def _test_voice_provider(container: Container, provider_id: str) -> TestPr
 
 async def _test_browser(container: Container) -> TestProviderResponse:
     """Actually call the browser provider (phase 9) when it is enabled; it
-    honestly detects whether a browser automation runtime is installed and
-    reports that it is not integrated even if one is (AGENTS.md never fakes
-    success — same pattern as the local voice adapters)."""
+    genuinely launches Chromium and reports whether that succeeded (AGENTS.md
+    never fakes success — this is the one honest check that can actually
+    come back healthy, unlike the local voice adapters it started life
+    copying)."""
     try:
         report = await container.browser.health()
     except ProviderNotConfiguredError as exc:
@@ -1773,6 +1927,29 @@ async def _test_browser(container: Container) -> TestProviderResponse:
     status = container.config.get_status("browser")
     return TestProviderResponse(
         provider="browser",
+        healthy=report.healthy,
+        state=str(status.state),
+        message=report.message,
+        checked_at=report.checked_at,
+    )
+
+
+async def _test_telephony(container: Container) -> TestProviderResponse:
+    """Actually call the telephony provider (phase 8) when it is enabled; it
+    genuinely reaches Twilio's account endpoint and reports whether the
+    account SID/auth token were accepted (AGENTS.md never fakes success).
+    This proves credentials and connectivity only — it says nothing about
+    whether a call could ever be placed, since ``dial()`` has a separate,
+    documented gap (telephony/twilio.py's module docstring)."""
+    try:
+        report = await container.telephony.health()
+    except ProviderNotConfiguredError as exc:
+        report = container.config.record_health(
+            "telephony", healthy=False, message=str(exc), reason="not_configured"
+        )
+    status = container.config.get_status("telephony")
+    return TestProviderResponse(
+        provider="telephony",
         healthy=report.healthy,
         state=str(status.state),
         message=report.message,
