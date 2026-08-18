@@ -269,11 +269,26 @@ class TestNeverAuthorizePaymentOrRepairs:
             "authorize_repairs": False,
         }
 
-    async def test_financial_payment_capability_is_granted_to_no_client(self) -> None:
-        from lifeops.policy.capabilities import Capability, all_clients
+    async def test_no_telephony_client_can_reach_the_payment_capability(self) -> None:
+        """Section 97: "No phone-based payment authorization."
+
+        Phase 10 granted FINANCIAL_PAYMENT — to the Console alone, where a
+        human is present. What section 97 forbids is an *agent* chaining a
+        phone call into money moving; the Console is a person at a browser,
+        not a telephony path, so it is excluded by name rather than by
+        accident.
+
+        Hermes places calls. Hermes cannot pay.
+        """
+        from lifeops.policy.capabilities import CONSOLE, Capability, all_clients
 
         for client in all_clients():
-            assert Capability.FINANCIAL_PAYMENT not in client.capabilities
+            if client.client_id == CONSOLE.client_id:
+                continue
+            if client.has(Capability.SEND_EXTERNAL_MESSAGE):
+                assert Capability.FINANCIAL_PAYMENT not in client.capabilities, (
+                    client.client_id
+                )
 
 
 class TestBookingThroughApproval:

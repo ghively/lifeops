@@ -21,6 +21,7 @@ from lifeops.repositories.fakes import (
     FakeActionRepository,
     FakeApprovalRepository,
     FakeAuditRepository,
+    FakeBillRepository,
     FakeMemoryRepository,
     FakePersonRepository,
     FakePreferenceRepository,
@@ -31,6 +32,7 @@ from lifeops.repositories.fakes import (
 from lifeops.repositories.nornic.actions import NornicActionRepository
 from lifeops.repositories.nornic.approvals import NornicApprovalRepository
 from lifeops.repositories.nornic.audit import NornicAuditRepository
+from lifeops.repositories.nornic.bills import NornicBillRepository
 from lifeops.repositories.nornic.memory import NornicMemoryRepository
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
@@ -53,6 +55,7 @@ PAIRS: list[tuple[type, type, type]] = [
     (interfaces.ActionRepository, FakeActionRepository, NornicActionRepository),
     (interfaces.ApprovalRepository, FakeApprovalRepository, NornicApprovalRepository),
     (interfaces.AuditRepository, FakeAuditRepository, NornicAuditRepository),
+    (interfaces.BillRepository, FakeBillRepository, NornicBillRepository),
 ]
 
 #: HealthCheck is satisfied by NornicClient rather than a repository and has no

@@ -207,6 +207,14 @@ CONSOLE = ClientIdentity(
         Capability.WRITE_MEMORY,
         Capability.MANAGE_CONFIGURATION,
         Capability.APPROVE_ACTION,
+        # Phase 10, and deliberately Console-only. Section 72 requires that
+        # credentials are never exposed to Hermes and that every payment and
+        # every new payee is approved by a human; the narrowest way to
+        # guarantee both is for the capability to exist only where a human is
+        # present. Hermes can read what is owed and can tell the user a
+        # payment is due — it cannot prepare or commit one, so there is no
+        # path from a model's reasoning to money moving.
+        Capability.FINANCIAL_PAYMENT,
         Capability.BOOK_APPOINTMENT,
         Capability.SEND_EXTERNAL_MESSAGE,
         Capability.SHOPPING_CHECKOUT,
@@ -342,6 +350,7 @@ CAPABILITY_FOR_ACTION: dict[str, Capability] = {
     "submit_grocery_order": Capability.SHOPPING_CHECKOUT,
     "prepare_payment": Capability.FINANCIAL_PAYMENT,
     "commit_payment": Capability.FINANCIAL_PAYMENT,
+    "add_payee": Capability.FINANCIAL_PAYMENT,
 }
 
 

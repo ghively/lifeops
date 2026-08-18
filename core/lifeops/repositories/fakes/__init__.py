@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from lifeops.domain.actions import Action, ActionStatus
 from lifeops.domain.approvals import Approval
 from lifeops.domain.audit import AuditRecord
+from lifeops.domain.bills import Bill, BillStatus, Payee
 from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
@@ -662,9 +663,64 @@ class FakeAuditRepository:
         return [copy.deepcopy(r) for r in matches[:limit]]
 
 
+class FakeBillRepository:
+    def __init__(self) -> None:
+        self._bills: dict[str, Bill] = {}
+        self._payees: dict[str, Payee] = {}
+
+    async def get(self, bill_id: str) -> Bill | None:
+        found = self._bills.get(bill_id)
+        return copy.deepcopy(found) if found else None
+
+    async def list_bills(
+        self, *, statuses: list[BillStatus] | None = None, limit: int = 100
+    ) -> list[Bill]:
+        wanted = set(statuses) if statuses is not None else None
+        matches = [b for b in self._bills.values() if wanted is None or b.status in wanted]
+        # Soonest due first, undated last: a bill with no due date is not more
+        # urgent than one due tomorrow.
+        matches.sort(key=lambda b: (b.due_at is None, b.due_at or "", b.id))
+        return [copy.deepcopy(b) for b in matches[:limit]]
+
+    async def list_for_payee(self, payee_id: str) -> list[Bill]:
+        matches = [b for b in self._bills.values() if b.payee_id == payee_id]
+        matches.sort(key=lambda b: (b.created_at, b.id), reverse=True)
+        return [copy.deepcopy(b) for b in matches]
+
+    async def create(self, bill: Bill) -> Bill:
+        self._bills[bill.id] = copy.deepcopy(bill)
+        return copy.deepcopy(bill)
+
+    async def update(self, bill: Bill) -> Bill:
+        if bill.id not in self._bills:
+            raise NotFoundError(f"bill {bill.id} does not exist", bill_id=bill.id)
+        self._bills[bill.id] = copy.deepcopy(bill)
+        return copy.deepcopy(bill)
+
+    async def get_payee(self, payee_id: str) -> Payee | None:
+        found = self._payees.get(payee_id)
+        return copy.deepcopy(found) if found else None
+
+    async def list_payees(self) -> list[Payee]:
+        ordered = sorted(self._payees.values(), key=lambda p: p.display_name)
+        return [copy.deepcopy(p) for p in ordered]
+
+    async def upsert_payee(self, payee: Payee) -> Payee:
+        existing = self._payees.get(payee.id)
+        stored = copy.deepcopy(payee)
+        if existing is not None and existing.is_approved and not stored.is_approved:
+            # Section 72: approval is a fact about a payee, not a field a
+            # later write may quietly reset.
+            stored.approved_at = existing.approved_at
+            stored.approved_by = existing.approved_by
+        self._payees[payee.id] = stored
+        return copy.deepcopy(stored)
+
+
 __all__ = [
     "FakeActionRepository",
     "FakeApprovalRepository",
+    "FakeBillRepository",
     "FakeAuditRepository",
     "FakeMemoryRepository",
     "FakePersonRepository",

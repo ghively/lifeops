@@ -22,6 +22,7 @@ from lifeops.observability.activity import attach_activity_buffer, detach_activi
 from lifeops.repositories.nornic.actions import NornicActionRepository
 from lifeops.repositories.nornic.approvals import NornicApprovalRepository
 from lifeops.repositories.nornic.audit import NornicAuditRepository
+from lifeops.repositories.nornic.bills import NornicBillRepository
 from lifeops.repositories.nornic.client import NornicClient
 from lifeops.repositories.nornic.memory import NornicMemoryRepository
 from lifeops.repositories.nornic.people import NornicPersonRepository
@@ -97,6 +98,7 @@ class Container:
         self.actions = NornicActionRepository(self.nornic)
         self.approvals = NornicApprovalRepository(self.nornic)
         self.audit = NornicAuditRepository(self.nornic)
+        self.bills = NornicBillRepository(self.nornic)
 
         # Safe mode may be set at boot or flipped by the user from the
         # Console; the config document is authoritative once it exists.
@@ -112,6 +114,7 @@ class Container:
             actions=self.actions,
             approvals=self.approvals,
             audit=self.audit,
+            bills=self.bills,
             calendar=self.calendar,
             email=self.email,
             telephony=self.telephony,

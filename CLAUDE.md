@@ -144,11 +144,33 @@ route around a harness rule, which has since been fixed. If a workflow needs
 to query inside these, give the entity its own repository rather than widening
 the blob.
 
+**Money moves only where a human is present.** `FINANCIAL_PAYMENT` is granted
+to the Console and to nothing else. Hermes can read what is owed and say a bill
+is due; it holds no path from a model's reasoning to a payment. This is
+stricter than BUILD_SPEC requires — sections 56/57 would permit granting Hermes
+the capability and letting the Console-only approval gate stop the money — and
+the reasoning is recorded in `tests/spec/test_spec_fidelity.py`
+(`CONSOLE_ONLY_BY_JUDGEMENT`) so it can be reversed deliberately.
+
+**Money is a validated string, never a float.** `89.10` round-tripped through
+binary floating point is `89.09999999999999`, and that value is hashed into an
+approval a human agreed to. `validate_amount` refuses `89.1` for the same
+reason: two spellings of one amount must not produce two hashes.
+
 **The world graph projects; it does not own.** Persons and preferences are
 written by their own repositories and read by the world repository through a
 per-label projection. `create_entity` accepts only Household, Provider, and
 Asset (`CREATABLE_ENTITY_TYPES`), and the NornicDB repository refuses the rest
 so a future caller cannot write a `:Preference` with the wrong property shape.
+
+**`coalesce()` in a SET clause stores its own expression text.** Writing
+`SET p.x = coalesce(p.x, $param)` on a node being created with `$param` null
+persists the literal string `"coalesce(p.x, null)"`. It reads as non-null, so
+an "only set this if absent" idiom silently produces a truthy value. Found in
+Phase 10, where it would have made every new payee look already-approved and
+defeated section 72's gate. `coalesce` in a WHERE clause is fine — every other
+use in `repositories/nornic/` is a read and evaluates correctly. Do the merge
+in Python instead.
 
 **A node written by auto-commit `write()` may not be visible to a `MATCH`
 inside an immediately following `write_many()` transaction.** Transaction-to-

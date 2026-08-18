@@ -47,6 +47,10 @@ class ActionType(StrEnum):
     SUBMIT_GROCERY_ORDER = "submit_grocery_order"
     PREPARE_PAYMENT = "prepare_payment"
     COMMIT_PAYMENT = "commit_payment"
+    #: Section 72: "new payee always requires approval". Adding one is an
+    #: action in its own right rather than a plain write, so it inherits the
+    #: whole approval and audit path instead of a bespoke check.
+    ADD_PAYEE = "add_payee"
 
 
 class ActionStatus(StrEnum):
@@ -87,6 +91,7 @@ REQUIRES_IDEMPOTENCY: frozenset[ActionType] = frozenset(
         ActionType.SUBMIT_GROCERY_ORDER,
         ActionType.PREPARE_PAYMENT,
         ActionType.COMMIT_PAYMENT,
+        ActionType.ADD_PAYEE,
     }
 )
 
@@ -124,6 +129,10 @@ RISK_FOR_ACTION: dict[ActionType, RiskClass] = {
     # R4 — money.
     ActionType.PREPARE_PAYMENT: RiskClass.R4_FINANCIAL_LEGAL_MEDICAL,
     ActionType.COMMIT_PAYMENT: RiskClass.R4_FINANCIAL_LEGAL_MEDICAL,
+    # Section 56 lists "New payee" at R4, "Approval always" — the same rung as
+    # the payment itself, because an unnoticed payee is how a later payment
+    # goes somewhere nobody chose.
+    ActionType.ADD_PAYEE: RiskClass.R4_FINANCIAL_LEGAL_MEDICAL,
 }
 
 #: Section 56 marks R2 "policy-controlled", and the table's shape decides the
@@ -183,6 +192,10 @@ NOT_AUTHORISED_BY: dict[ActionType, tuple[str, ...]] = {
     ActionType.BOOK_APPOINTMENT: (
         "Authorize repair work",
         "Authorize additional charges",
+    ),
+    ActionType.ADD_PAYEE: (
+        "Pay this payee",
+        "Change an existing payee's details",
     ),
     ActionType.CANCEL_APPOINTMENT: ("Rebook at a different time",),
     ActionType.SUBMIT_GROCERY_ORDER: (
