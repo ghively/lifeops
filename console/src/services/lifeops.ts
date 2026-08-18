@@ -591,6 +591,22 @@ export const actionsApi = {
     lifeops.get<ActionList>('/actions', { params }).then((r) => r.data),
 
   get: (id: string) => lifeops.get<LifeOpsAction>(`/actions/${id}`).then((r) => r.data),
+
+  /**
+   * Commit an approved action and perform its external effect (BUILD_SPEC
+   * section 60 steps 2-3). This spends the approval.
+   */
+  execute: (id: string) =>
+    lifeops.post<LifeOpsAction>(`/actions/${id}/execute`).then((r) => r.data),
+
+  /**
+   * Independently confirm an executed action really happened, and only then
+   * mark it verified (section 63's warning: "accepted" is not proof).
+   */
+  verifyExternally: (id: string) =>
+    lifeops
+      .post<LifeOpsAction>(`/actions/${id}/verify-externally`)
+      .then((r) => r.data),
 }
 
 export const auditApi = {
