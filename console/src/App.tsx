@@ -29,6 +29,7 @@ import { BillsPage } from './pages/lifeops/BillsPage'
 import { CalendarPage } from './pages/lifeops/CalendarPage'
 import { ComingInPhasePage } from './pages/lifeops/ComingInPhasePage'
 import { ConfigurationPage } from './pages/lifeops/ConfigurationPage'
+import { HermesPage } from './pages/lifeops/HermesPage'
 import { LoginPage } from './pages/lifeops/LoginPage'
 import { MemoryPage } from './pages/lifeops/MemoryPage'
 import { NeedsAttentionPage } from './pages/lifeops/NeedsAttentionPage'
@@ -79,13 +80,6 @@ const PENDING_ROUTES: Array<{
     title: 'Files',
     phase: 1,
     description: 'Documents indexed into the LifeOps knowledge corpus.',
-  },
-  {
-    path: '/hermes',
-    title: 'Hermes',
-    phase: 1,
-    description:
-      'Live status of the assistant: model, MCP connection, memory provider, and voice.',
   },
 ]
 
@@ -149,6 +143,7 @@ function App() {
                   <Route path="/configuration" element={<ConfigurationPage />} />
                   <Route path="/system" element={<SystemPage />} />
                   <Route path="/activity" element={<ActivityPage />} />
+                  <Route path="/hermes" element={<HermesPage />} />
 
                   {PENDING_ROUTES.map((route) => (
                     <Route
