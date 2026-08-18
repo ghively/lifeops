@@ -1,15 +1,37 @@
-"""Universal search over people, preferences, and tasks (BUILD_SPEC 19)."""
+"""Universal search (BUILD_SPEC section 19): people, preferences, tasks,
+providers, assets, appointments, memory, documents, knowledge, and bills.
+"""
 
 from __future__ import annotations
 
 import pytest
 
+from lifeops.clock import FrozenClock
 from lifeops.core import LifeOpsCore
-from lifeops.domain.people import PersonDraft
+from lifeops.domain.bills import BillDraft, PayeeDraft
+from lifeops.domain.calendar import Appointment, AppointmentStatus
+from lifeops.domain.documents import DocumentDraft
+from lifeops.domain.knowledge import KnowledgeDraft
+from lifeops.domain.memory import MemoryDraft
+from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import PreferenceDraft
 from lifeops.domain.tasks import TaskDraft
+from lifeops.domain.world import EntityDraft, WorldEntityType
 from lifeops.errors import CapabilityDeniedError
-from lifeops.policy.capabilities import CONSOLE, ClientIdentity, ClientRole
+from lifeops.policy import Capability
+from lifeops.policy.capabilities import CONSOLE, HERMES, ClientIdentity, ClientRole
+from lifeops.repositories.fakes import (
+    FakeActionRepository,
+    FakeApprovalRepository,
+    FakeBillRepository,
+    FakeMemoryRepository,
+    FakePersonRepository,
+    FakePreferenceRepository,
+    FakeTaskRepository,
+    FakeWorldRepository,
+)
+
+TS = "2026-01-01T00:00:00Z"
 
 NO_ACCESS = ClientIdentity(
     client_id="no-access",
@@ -73,3 +95,125 @@ class TestSearch:
         )
         results = await core.search(CONSOLE, query="tj")
         assert [p.display_name for p in results.people] == ["Tori Hively"]
+
+
+@pytest.fixture
+async def full_core(clock: FrozenClock) -> LifeOpsCore:
+    """A LifeOpsCore with world, memory, and bills wired, for the seven
+    categories the audit found universal search missing."""
+    people = FakePersonRepository()
+    await people.upsert(
+        Person(
+            id="person_full_search_user", display_name="Test User", is_primary=True,
+            created_at=TS, updated_at=TS,
+        )
+    )
+    return LifeOpsCore(
+        people=people,
+        preferences=FakePreferenceRepository(),
+        tasks=FakeTaskRepository(),
+        world=FakeWorldRepository(),
+        memory=FakeMemoryRepository(),
+        bills=FakeBillRepository(),
+        actions=FakeActionRepository(),
+        approvals=FakeApprovalRepository(),
+        clock=clock,
+    )
+
+
+class TestWidenedCategories:
+    """The seven categories the 2026-08-18 audit found missing: providers,
+    assets, appointments, memory, documents, knowledge, bills."""
+
+    async def test_matches_a_provider_by_name(self, full_core: LifeOpsCore) -> None:
+        await full_core.create_entity(
+            CONSOLE,
+            EntityDraft(entity_type=WorldEntityType.PROVIDER, display_name="ABC Electric"),
+        )
+        results = await full_core.search(CONSOLE, query="electric")
+        assert [p.display_name for p in results.providers] == ["ABC Electric"]
+
+    async def test_matches_an_asset_by_name(self, full_core: LifeOpsCore) -> None:
+        await full_core.create_entity(
+            CONSOLE,
+            EntityDraft(entity_type=WorldEntityType.ASSET, display_name="Land Rover"),
+        )
+        results = await full_core.search(CONSOLE, query="rover")
+        assert [a.display_name for a in results.assets] == ["Land Rover"]
+
+    async def test_matches_an_appointment_by_subject(self, full_core: LifeOpsCore) -> None:
+        from lifeops.domain.calendar import appointment_to_entity
+
+        appointment = Appointment(
+            id=Appointment.make_id(),
+            subject="Electrician visit",
+            status=AppointmentStatus.HELD,
+            start_at=TS,
+            end_at=TS,
+            created_at=TS,
+            updated_at=TS,
+        )
+        await full_core._world_repo.create(appointment_to_entity(appointment))
+        results = await full_core.search(CONSOLE, query="electrician")
+        assert [a.subject for a in results.appointments] == ["Electrician visit"]
+
+    async def test_matches_memory_by_content(self, full_core: LifeOpsCore) -> None:
+        await full_core.remember(HERMES, MemoryDraft(content="drives a blue car"))
+        results = await full_core.search(HERMES, query="blue car")
+        assert [m.content for m in results.memories] == ["drives a blue car"]
+
+    async def test_memory_is_empty_without_read_memory(self, full_core: LifeOpsCore) -> None:
+        await full_core.remember(HERMES, MemoryDraft(content="drives a blue car"))
+        # READ_WORLD alone (the base gate for search()) must not be a side
+        # door to memory — the same per-category gate preferences/tasks use.
+        world_only_client = ClientIdentity(
+            client_id="world-only",
+            role=ClientRole.INTERACTIVE_ASSISTANT,
+            display_name="World only",
+            capabilities=frozenset({Capability.READ_WORLD}),
+        )
+        results = await full_core.search(world_only_client, query="blue car")
+        assert results.memories == []
+
+    async def test_matches_a_document_by_title(self, full_core: LifeOpsCore) -> None:
+        await full_core.create_document(
+            CONSOLE, DocumentDraft(title="ABC Electric quote", source="email")
+        )
+        results = await full_core.search(CONSOLE, query="quote")
+        assert [d.title for d in results.documents] == ["ABC Electric quote"]
+
+    async def test_matches_knowledge_by_content_not_just_title(
+        self, full_core: LifeOpsCore
+    ) -> None:
+        await full_core.record_knowledge(
+            CONSOLE,
+            KnowledgeDraft(title="Water heater", content="10-year tank warranty"),
+        )
+        results = await full_core.search(CONSOLE, query="tank warranty")
+        assert [k.title for k in results.knowledge] == ["Water heater"]
+
+    async def test_matches_a_bill_by_description(self, full_core: LifeOpsCore) -> None:
+        await full_core.record_payee(CONSOLE, PayeeDraft(display_name="ABC Electric"))
+        await full_core.record_bill(
+            CONSOLE,
+            BillDraft(
+                payee_id="payee_abc_electric", description="March invoice", amount="89.10"
+            ),
+        )
+        results = await full_core.search(CONSOLE, query="march")
+        assert [b.description for b in results.bills] == ["March invoice"]
+
+    async def test_widened_categories_are_empty_without_world_or_bills(
+        self, core: LifeOpsCore
+    ) -> None:
+        """The base `core` fixture (people/preferences/tasks only) must not
+        crash when world/memory/bills aren't configured — it degrades to
+        empty groups, the same as a fresh Phase-0-only deployment would."""
+        results = await core.search(CONSOLE, query="anything")
+        assert results.providers == []
+        assert results.assets == []
+        assert results.appointments == []
+        assert results.memories == []
+        assert results.documents == []
+        assert results.knowledge == []
+        assert results.bills == []

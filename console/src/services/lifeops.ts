@@ -306,10 +306,61 @@ export interface RemoteLogEntry {
   ts: string
 }
 
+/** One Appointment (BUILD_SPEC sections 63, 96): a hold or booking. */
+export interface Appointment {
+  id: string
+  subject: string
+  status: string
+  provider_entity_id: string | null
+  task_id: string | null
+  start_at: string
+  end_at: string
+  location: string
+  notes: string
+  calendar_provider_id: string
+  hold_reference: string | null
+  hold_expires_at: string | null
+  external_event_id: string | null
+  booking_action_id: string | null
+  created_at: string
+}
+
+/** A reference to something ingested from email or the calendar (§36, §64). */
+export interface LifeOpsDocument {
+  id: string
+  title: string
+  source: string
+  source_ref: string
+  mime_type: string
+  summary: string
+  created_at: string
+  updated_at: string
+  created_by_client: string | null
+}
+
+/** Reference content the user authored or distilled from a Document (§18). */
+export interface Knowledge {
+  id: string
+  title: string
+  category: string
+  content: string
+  source_document_id: string | null
+  created_at: string
+  updated_at: string
+  created_by_client: string | null
+}
+
 export interface SearchResults {
   people: Person[]
   preferences: Preference[]
   tasks: Task[]
+  providers: WorldEntity[]
+  assets: WorldEntity[]
+  appointments: Appointment[]
+  memories: MemoryRecord[]
+  documents: LifeOpsDocument[]
+  knowledge: Knowledge[]
+  bills: Bill[]
 }
 
 // --- memory types (BUILD_SPEC sections 42-47) ---------------------------------
