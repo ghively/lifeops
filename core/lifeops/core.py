@@ -12,6 +12,7 @@ is precisely the one where drift is least visible.
 
 from __future__ import annotations
 
+import builtins
 import logging
 from collections.abc import Callable
 
@@ -92,6 +93,7 @@ from lifeops.domain.search import SearchResults
 from lifeops.domain.self_config import (
     ChangeRequest,
     SelfConfigProposal,
+    SelfConfigTarget,
     check_permitted,
     classify,
 )
@@ -645,7 +647,7 @@ class WaitingService:
     ) -> list[WaitingItem]:
         return await self._waiting.list_by_status(statuses=statuses, limit=limit)
 
-    async def list_for_task(self, task_id: str) -> list[WaitingItem]:
+    async def list_for_task(self, task_id: str) -> builtins.list[WaitingItem]:
         return await self._waiting.list_for_task(task_id)
 
     async def record_followup(self, waiting_id: str, *, client_id: str) -> WaitingItem:
@@ -669,7 +671,7 @@ class WaitingService:
         self._notify(saved.id)
         return saved
 
-    async def due(self, *, limit: int = 50) -> list[WaitingItem]:
+    async def due(self, *, limit: int = 50) -> builtins.list[WaitingItem]:
         return await self._waiting.list_due(now=now_iso(self._clock), limit=limit)
 
     async def claim(
@@ -754,7 +756,7 @@ class ActionService:
     ) -> list[Action]:
         return await self._actions.list_by_status(statuses=statuses, limit=limit)
 
-    async def pending_approvals(self, *, limit: int = 50) -> list[Approval]:
+    async def pending_approvals(self, *, limit: int = 50) -> builtins.list[Approval]:
         return await self._approvals.list_pending(limit=limit)
 
     async def approval_for(self, action_id: str) -> Approval | None:
@@ -962,7 +964,7 @@ class AppointmentService:
 
     # --- section 63 step 1-2: read ------------------------------------------
 
-    async def read_calendar(self, *, start_at: str, end_at: str) -> list[CalendarEvent]:
+    async def read_calendar(self, *, start_at: str, end_at: str) -> builtins.list[CalendarEvent]:
         events = await self._calendar.list_events(start_at=start_at, end_at=end_at)
         now = now_iso(self._clock)
         for event in events:
@@ -1144,7 +1146,7 @@ class ShoppingService:
         return shopping_list
 
     async def add_items(
-        self, list_id: str, items: list[ShoppingItem], *, client_id: str
+        self, list_id: str, items: builtins.list[ShoppingItem], *, client_id: str
     ) -> ShoppingList:
         current = await self.get(list_id)
         updated = shopping_domain.add_items(current, items, now=now_iso(self._clock))
@@ -1169,7 +1171,7 @@ class ShoppingService:
 
     async def search(
         self, query: str, *, store: str = "", limit: int = 10
-    ) -> list[ProductResult]:
+    ) -> builtins.list[ProductResult]:
         return await self._browser.search(query, store=store, limit=limit)
 
     # --- section 98 steps: execution, called from execute_action -------------
@@ -1370,7 +1372,7 @@ class ServiceRequestService:
         self,
         service_request_id: str,
         *,
-        availability: list[str] | None = None,
+        availability: builtins.list[str] | None = None,
         diagnostic_fee: str | None = None,
     ) -> ServiceRequest:
         """Section 101 steps 6-7: availability and the diagnostic fee."""
@@ -1439,7 +1441,7 @@ class LifeOpsCore:
         telephony: TelephonyProviderService | None = None,
         browser: BrowserProviderService | None = None,
         clock: Clock | None = None,
-        safe_mode: bool = False,
+        safe_mode: bool | Callable[[], bool] = False,
         events: EventBus | None = None,
     ) -> None:
         self._people = people
@@ -1451,7 +1453,11 @@ class LifeOpsCore:
         # above takes ``world`` as its own dependency.
         self._world_repo = world
         self._clock = clock or SystemClock()
-        self.safe_mode = safe_mode
+        # A callable source keeps the emergency stop live across processes:
+        # the Container passes a config-file read, so the separately running
+        # MCP server sees a Console toggle on its next capability check
+        # instead of at its next restart.
+        self._safe_mode_source: bool | Callable[[], bool] = safe_mode
         self._events = events
         # Memory is deliberately segregated behind its own service (section
         # 44): nothing here hands it the task or preference repositories.
@@ -1556,6 +1562,17 @@ class LifeOpsCore:
             if shopping is not None and browser is not None
             else None
         )
+
+    @property
+    def safe_mode(self) -> bool:
+        source = self._safe_mode_source
+        return source() if callable(source) else source
+
+    @safe_mode.setter
+    def safe_mode(self, value: bool | Callable[[], bool]) -> None:
+        # Assigning a plain bool (tests, boot overrides) pins the value and
+        # detaches any live source; assigning a callable re-attaches one.
+        self._safe_mode_source = value
 
     def _require(self, client: ClientIdentity, capability: Capability) -> None:
         require(client, capability, safe_mode=self.safe_mode)
@@ -3391,7 +3408,9 @@ class LifeOpsCore:
         """Create or revise a template — a permitted self-change (section 73)."""
         self._require(client, Capability.SELF_CONFIGURE)
         check_permitted(
-            SelfConfigProposal(target="workflow_template", name=draft.name)
+            SelfConfigProposal(
+                target=SelfConfigTarget.WORKFLOW_TEMPLATE, name=draft.name
+            )
         )
         validate_trigger(draft.trigger, draft.next_run_at)
 

@@ -84,9 +84,9 @@ lint:  ## Lint Python
 	@.venv/bin/ruff check core tests
 
 typecheck:  ## Type-check Python
-	@.venv/bin/mypy || true
+	@.venv/bin/mypy
 
-check: lint test console-test console-build  ## Everything CI runs
+check: lint typecheck test console-test console-build  ## Everything CI runs
 
 clean:  ## Remove build artefacts (never touches LifeOps state or secrets)
 	@rm -rf console/dist console/node_modules/.vite .pytest_cache

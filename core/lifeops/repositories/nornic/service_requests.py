@@ -54,7 +54,7 @@ def _row_to_request(row: dict[str, Any]) -> ServiceRequest:
         contact_action_id=row.get("contact_action_id"),
         booking_action_id=row.get("booking_action_id"),
         appointment_id=row.get("appointment_id"),
-        notes=row.get("notes"),
+        notes=row.get("notes") or "",
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         created_by_client=row.get("created_by_client"),

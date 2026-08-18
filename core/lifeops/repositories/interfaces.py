@@ -12,6 +12,7 @@ concerns leak straight back into the domain.
 
 from __future__ import annotations
 
+import builtins
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
@@ -101,7 +102,7 @@ class TaskRepository(Protocol):
         """Case-insensitive substring match over title and description."""
         ...
 
-    async def list_related_to_entity(self, entity_id: str) -> list[Task]:
+    async def list_related_to_entity(self, entity_id: str) -> builtins.list[Task]:
         """Tasks whose ``related_entity_ids`` contain the entity.
 
         The property stays the source of truth for reads even though Phase 3
