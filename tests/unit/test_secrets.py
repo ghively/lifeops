@@ -180,10 +180,40 @@ class TestRotation:
     ) -> None:
         encrypted_store.set("a", "value-a")
         encrypted_store.set("b", "value-b")
-        key_before = (tmp_path / "secrets" / "master.key").read_bytes()
 
         encrypted_store.rotate_master_key()
 
-        assert (tmp_path / "secrets" / "master.key").read_bytes() != key_before
+        # The vault now names a fresh key file and the original is gone —
+        # rotation writes new-key, then new-vault, then removes the old key,
+        # so no crash window can strand a vault without its key.
+        assert not (tmp_path / "secrets" / "master.key").exists()
         assert encrypted_store.get("a") == "value-a"
         assert encrypted_store.get("b") == "value-b"
+
+    def test_a_fresh_reader_can_open_a_rotated_vault(
+        self, encrypted_store: LocalEncryptedSecretStore, tmp_path: Path
+    ) -> None:
+        encrypted_store.set("a", "value-a")
+        encrypted_store.rotate_master_key()
+        # A second process (or a restart) resolves the key from the vault
+        # itself, not from a fixed filename.
+        reopened = LocalEncryptedSecretStore(tmp_path / "secrets")
+        assert reopened.get("a") == "value-a"
+
+    def test_an_interrupted_rotation_loses_nothing(
+        self, encrypted_store: LocalEncryptedSecretStore, tmp_path: Path
+    ) -> None:
+        """The two crash windows: an orphan new key before the vault switched
+        (rotation 'did not happen'), and a stale old key after it did — both
+        must leave every secret readable."""
+        encrypted_store.set("a", "value-a")
+
+        # Window 1: new key written, vault not yet switched.
+        (tmp_path / "secrets" / "master-deadbeef.key").write_bytes(b"orphan")
+        assert encrypted_store.get("a") == "value-a"
+
+        # Window 2: vault switched, old key not yet removed.
+        encrypted_store.rotate_master_key()
+        (tmp_path / "secrets" / "master.key").write_bytes(b"stale old key")
+        reopened = LocalEncryptedSecretStore(tmp_path / "secrets")
+        assert reopened.get("a") == "value-a"

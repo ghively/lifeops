@@ -40,7 +40,6 @@ _VAULT_VERSION = 1
 class LocalEncryptedSecretStore:
     def __init__(self, directory: Path) -> None:
         self._dir = directory
-        self._key_path = directory / "master.key"
         self._vault_path = directory / "secrets.json"
         self._cache: dict[str, Any] | None = None
         self._stamp: tuple[int, int] | None = None
@@ -49,21 +48,27 @@ class LocalEncryptedSecretStore:
 
     # --- master key ---------------------------------------------------------
 
-    def _load_key(self) -> bytes:
-        if self._key_path.exists():
-            raw = self._key_path.read_bytes()
+    def _key_path_for(self, vault: dict[str, Any]) -> Path:
+        # The vault names its own key file (rotation writes a fresh name),
+        # so a crash mid-rotation can never leave a vault whose key is gone:
+        # whichever vault file survives names whichever key decrypts it.
+        return self._dir / str(vault.get("key_file") or "master.key")
+
+    def _load_key(self, key_path: Path) -> bytes:
+        if key_path.exists():
+            raw = key_path.read_bytes()
             key = base64.b64decode(raw)
             if len(key) != _KEY_BYTES:
                 raise SecretStoreError(
                     "master key is malformed; refusing to continue",
-                    path=str(self._key_path),
+                    path=str(key_path),
                 )
             return key
 
         key = AESGCM.generate_key(bit_length=256)
         # Create with 0600 from the outset rather than chmod-ing afterwards:
         # a default-umask window is still a window.
-        fd = os.open(self._key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
             os.write(fd, base64.b64encode(key))
         finally:
@@ -71,14 +76,35 @@ class LocalEncryptedSecretStore:
         return key
 
     def rotate_master_key(self) -> None:
-        """Re-encrypt every secret under a freshly generated master key."""
+        """Re-encrypt every secret under a freshly generated master key.
+
+        Ordering is what makes this safe. The new key is written under a new
+        file name first; then the re-encrypted vault, naming that key, is
+        written atomically; only then is the old key removed. A crash at any
+        point leaves either the old vault + old key (rotation simply did not
+        happen) or the new vault + new key (it did) — the earlier version of
+        this deleted the key and emptied the vault before re-encrypting,
+        and a crash in that window lost every secret irrecoverably.
+        """
+        vault = self._read_vault()
+        old_key_path = self._key_path_for(vault)
         plaintext = {name: self.get(name) for name in self.list_names()}
-        self._key_path.unlink(missing_ok=True)
-        self._cache = {"version": _VAULT_VERSION, "secrets": {}}
-        self._write_vault(self._cache)
+
+        new_key_name = f"master-{os.urandom(8).hex()}.key"
+        new_key = self._load_key(self._dir / new_key_name)
+
+        aesgcm = AESGCM(new_key)
+        secrets: dict[str, Any] = {}
         for name, value in plaintext.items():
-            if value is not None:
-                self.set(name, value)
+            if value is None:
+                continue
+            secrets[name] = _encrypt_entry(aesgcm, name, value)
+
+        self._write_vault(
+            {"version": _VAULT_VERSION, "key_file": new_key_name, "secrets": secrets}
+        )
+        if old_key_path != self._dir / new_key_name:
+            old_key_path.unlink(missing_ok=True)
 
     # --- vault I/O ----------------------------------------------------------
 
@@ -134,10 +160,11 @@ class LocalEncryptedSecretStore:
     # --- SecretStore --------------------------------------------------------
 
     def get(self, name: str) -> str | None:
-        entry = self._read_vault()["secrets"].get(name)
+        vault = self._read_vault()
+        entry = vault["secrets"].get(name)
         if entry is None:
             return None
-        key = self._load_key()
+        key = self._load_key(self._key_path_for(vault))
         aesgcm = AESGCM(key)
         try:
             plaintext = aesgcm.decrypt(
@@ -145,6 +172,12 @@ class LocalEncryptedSecretStore:
                 base64.b64decode(entry["ciphertext"]),
                 name.encode("utf-8"),
             )
+        except KeyError as exc:
+            # JSON that parses but is not a vault entry must fail as a vault
+            # problem, not as a bare KeyError from an internals dict.
+            raise SecretStoreError(
+                f"secret {name!r} is malformed in the vault", name=name
+            ) from exc
         except InvalidTag as exc:
             raise SecretStoreError(
                 f"secret {name!r} failed authentication; the vault or master "
@@ -156,20 +189,10 @@ class LocalEncryptedSecretStore:
     def set(self, name: str, value: str) -> None:
         if not name:
             raise SecretStoreError("secret name must not be empty")
-        key = self._load_key()
-        aesgcm = AESGCM(key)
-        nonce = os.urandom(_NONCE_BYTES)
-        ciphertext = aesgcm.encrypt(nonce, value.encode("utf-8"), name.encode("utf-8"))
-
         vault = dict(self._read_vault())
+        key = self._load_key(self._key_path_for(vault))
         secrets = dict(vault["secrets"])
-        secrets[name] = {
-            "nonce": base64.b64encode(nonce).decode("ascii"),
-            "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
-            # Stored rather than computed on read so that displaying the
-            # fingerprint in the Console never requires decryption.
-            "fingerprint": _fingerprint(value),
-        }
+        secrets[name] = _encrypt_entry(AESGCM(key), name, value)
         vault["secrets"] = secrets
         self._write_vault(vault)
 
@@ -192,6 +215,18 @@ class LocalEncryptedSecretStore:
     def fingerprint(self, name: str) -> str | None:
         entry = self._read_vault()["secrets"].get(name)
         return entry.get("fingerprint") if entry else None
+
+
+def _encrypt_entry(aesgcm: AESGCM, name: str, value: str) -> dict[str, str]:
+    nonce = os.urandom(_NONCE_BYTES)
+    ciphertext = aesgcm.encrypt(nonce, value.encode("utf-8"), name.encode("utf-8"))
+    return {
+        "nonce": base64.b64encode(nonce).decode("ascii"),
+        "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+        # Stored rather than computed on read so that displaying the
+        # fingerprint in the Console never requires decryption.
+        "fingerprint": _fingerprint(value),
+    }
 
 
 def _fingerprint(value: str) -> str:

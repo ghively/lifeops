@@ -294,13 +294,20 @@ class ConfigurationService:
                 if submitted_value in (None, ""):
                     self._secrets.delete(secret_ref(provider.id, field.name))
 
-        if validated.settings:
+        if validated.settings or validated.secrets:
             document = dict(self._load())
             providers = dict(document["providers"])
             merged = dict(providers.get(provider_id, {}))
             merged.update(validated.settings)
             providers[provider_id] = merged
             document["providers"] = providers
+            # A recorded health verdict describes the *previous*
+            # configuration. Left in place, a Test clicked while the provider
+            # was unconfigured kept reporting UNHEALTHY after the user fixed
+            # the configuration, until they thought to re-test.
+            health = dict(document["health"])
+            if health.pop(provider_id, None) is not None:
+                document["health"] = health
             self._save(document)
 
         return self.get_status(provider_id)
