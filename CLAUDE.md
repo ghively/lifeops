@@ -211,17 +211,61 @@ regression here — the fakes will stay green.
 
 ## Known gaps
 
-Recorded in [SECURITY.md](SECURITY.md), not hidden. The 2026-08-18 full
-audit ([docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md))
-holds the complete findings list. The design-decision bugs it originally
-recorded (payee approval split-brain, expired-approval deadlock, shopping
-SUBMITTING wedge, verify-after-hold-expiry, unenforced config capability,
-the Console's missing execute/verify surface, `request_code_change`
-unexposed) were all fixed in the follow-up pass on the same branch; what
-remains open are the spec gaps — Console placeholder screens (Calendar,
-Knowledge, Files, Hermes), the Phase-0 Today view, the Voice Bridge,
-Hermes skills, and universal search breadth. Highlights:
+Recorded in [SECURITY.md](SECURITY.md), not hidden. Two audits hold the
+complete findings: [docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md)
+(correctness bugs and spec-fidelity debt in code that exists — all fixed on
+that branch) and [docs/audits/2026-08-18-unimplemented-features.md](docs/audits/2026-08-18-unimplemented-features.md)
+(BUILD_SPEC prose with no corresponding code at all, verified section by
+section against the code rather than against this file). What follows is
+that second audit's findings, superseding the shorter list this section
+used to carry.
 
+**Not every disabled provider has a working adapter behind it — the old
+"ships built and disabled with a fake behind it" claim below overstated
+this.** Calendar and email do: real, protocol-correct adapters
+(`calendar/caldav.py`, `email/imap_smtp.py`), disabled per BUILD_SPEC
+section 88 until credentials exist. Browser and telephony do not:
+`browser/real.py` raises on every method regardless of whether Playwright
+is installed, and `telephony/` has no `real.py` at all, only a Protocol and
+a fake. Shopping checkout inherits the browser gap, since it has no other
+execution path. No payment-provider adapter exists at all — deliberate, not
+a stub (see "Money moves only where a human is present" above).
+
+- **Console.** Calendar, Knowledge, Files, and Hermes are `ComingInPhasePage`
+  stubs with no backing route. Today shows tasks only — no approvals,
+  waiting items, or calendar events, though the spec calls for them.
+  Universal search covers people, preferences, and tasks — 3 of the 12
+  spec'd categories.
+- **Voice.** The Voice Bridge does not exist as a runtime path — no duplex
+  audio streaming code anywhere, not even scaffolding, which is a stronger
+  gap than "no websocket scaffolding, no codec" suggests. The RTX
+  resource-priority scheduler (section 31) and the latency instrumentation
+  (section 33) are pure spec text with no corresponding code. The local
+  ASR/TTS adapters raise unconditionally even when the underlying runtime
+  is installed — a step short of section 88's "fake behind it" bar, unlike
+  ElevenLabs's fake, which behaves.
+- **MCP surface.** 3 of 7 resources exist (`lifeops://me`, `today`,
+  `waiting`); several named tools from sections 50-51 are missing or
+  MCP-unexposed (`list_waiting_items`, `find_provider`, `commit_payment`,
+  `search_knowledge`, and more — `get_task`/`list_appointments`/`get_bill`
+  exist server-side but only reach HTTP, not MCP). The `Knowledge` and
+  `WorkflowTemplate` world entity types (section 36) don't exist at all,
+  which is why Knowledge search and the Knowledge/Files screens have
+  nothing to back them.
+- **Memory.** Promotion (section 47) is a write-time filter, not the
+  confirm/promote pipeline the spec describes — no code turns a
+  `PREFERENCE_CANDIDATE` memory into a real preference. Trust-hierarchy
+  enforcement (section 46) checks preference supersession only;
+  `remember()` never checks a new memory's source against an existing
+  one's.
+- **Hermes self-configuration** (sections 73-76) is unwired beyond filing
+  code change requests: the `skill`, `cron_job`, `reminder`,
+  `non_critical_prompt`, and `routine_template` self-config targets have no
+  save/apply path, and the one generic entry point, `propose_self_change`,
+  isn't exposed over MCP or HTTP. Zero Hermes skills are instantiated — the
+  template is finished; nothing uses it.
+- **Chaos tests** (section 86) cover 2 of the 16 spec'd failure scenarios:
+  Nornic restart and duplicate-request idempotency.
 - World entity facts are current-only: there is no per-fact supersession
   chain, unlike preferences and memories. `get_entity_history` therefore
   reports the memories referencing an entity and says so in its `covers`
@@ -229,11 +273,12 @@ Hermes skills, and universal search breadth. Highlights:
   Phase 4, section 62 — and answers "which client changed this?".)
 - The World screen shows the *current* view. Section 15 also lists a
   temporal/current toggle; that is not built.
-- **No provider has been verified against a real account.** Every third-party
-  adapter — ElevenLabs, local ASR/TTS, calendar, email, telephony, browser,
-  payment — ships built and disabled with a fake behind it, per BUILD_SPEC
-  section 88. Enabling each in the Console is where real integration bugs will
-  surface, and none of that has happened yet.
+- The voice acceptance scenario (section 103) has no automated coverage of
+  its Console walkthrough, since the Voice Bridge doesn't exist. The
+  provider-configuration scenario (section 104) does have a real, passing
+  test (`test_phase0_exit.py`) — "Both acceptance scenarios pass (sections
+  101 and 102)" above undercounts this; 104 passes too, and only 103 is
+  genuinely incomplete.
 - Hermes itself has not been attached on this machine — it is not installed
   here. See [HERMES_INTEGRATION.md](HERMES_INTEGRATION.md).
 
