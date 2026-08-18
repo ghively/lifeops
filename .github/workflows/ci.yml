@@ -55,10 +55,10 @@ jobs:
         run: ruff check core tests
 
       - name: Type check
-        run: mypy || true
+        run: mypy
 
-      - name: Unit, policy, and API tests
-        run: pytest tests/unit tests/policy tests/integration -q
+      - name: Unit, policy, spec, and API tests
+        run: pytest tests/unit tests/policy tests/spec tests/integration -q
 
       - name: Persistence tests
         run: pytest tests/persistence -q
