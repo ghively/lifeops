@@ -1228,6 +1228,38 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
+    @server.tool(
+        name="search_knowledge",
+        title="Search knowledge",
+        description=(
+            "Search reference content the user has recorded — insurance "
+            "policies, warranties, checklists, procedures — by title, "
+            "category, or body text. Distinct from search_memory: this is "
+            "self-contained reference material, not a fact LifeOps observed "
+            "about the user's life.\n\n"
+            "Read-only: there is no MCP tool that writes knowledge. Recording "
+            "it is a Console act, the same boundary create_document draws."
+        ),
+    )
+    async def search_knowledge(
+        query: Annotated[
+            str, Field(description="What to look for, e.g. 'water heater warranty'.")
+        ] = "",
+        limit: Annotated[int, Field(ge=1, le=100, description="Maximum results.")] = 20,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.search_knowledge(
+                    client, query=query, limit=limit
+                )
+                return {
+                    "ok": True,
+                    "knowledge": [k.model_dump(mode="json") for k in found],
+                    "total": len(found),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
     # --- calendar and email (Phase 7, BUILD_SPEC sections 61, 63, 64, 96) ----
     #
     # Section 96's order: read, then reversible writes, then external

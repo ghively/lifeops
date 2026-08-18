@@ -35,6 +35,7 @@ from lifeops.ids import (
     PREFIX_DOCUMENT,
     PREFIX_EVENT,
     PREFIX_HOUSEHOLD,
+    PREFIX_KNOWLEDGE,
     PREFIX_PERSON,
     PREFIX_PREFERENCE,
     PREFIX_PROVIDER,
@@ -60,9 +61,13 @@ class WorldEntityType(StrEnum):
     approval-gated booking (section 67, section 101's electrician scenario).
     Phase 9 (section 98) adds ``SHOPPING_LIST``: a cart being assembled,
     checked out, and verified through the same outbox two actions drive
-    (``build_grocery_cart``, ``submit_grocery_order``). The remaining section
-    36 types are owned by phases that have not landed; each arrives with the
-    phase that creates it.
+    (``build_grocery_cart``, ``submit_grocery_order``). ``KNOWLEDGE`` closes
+    section 18's gap: reference content the user authored or a Document
+    distilled — insurance policies, warranties, checklists, procedures —
+    kept distinct from Memory (personal facts LifeOps observed about the
+    user's life) and Document (a pointer to something ingested, not
+    self-contained text). The remaining section 36 types are owned by phases
+    that have not landed; each arrives with the phase that creates it.
     """
 
     PERSON = "person"
@@ -75,6 +80,7 @@ class WorldEntityType(StrEnum):
     DOCUMENT = "document"
     SERVICE_REQUEST = "service_request"
     SHOPPING_LIST = "shopping_list"
+    KNOWLEDGE = "knowledge"
 
 
 #: The types ``create_entity`` accepts from a bare ``EntityDraft`` — the
@@ -104,13 +110,17 @@ CREATABLE_ENTITY_TYPES: frozenset[WorldEntityType] = frozenset(
 #: links it to a task, never through the bare ``EntityDraft`` creation path.
 #: ShoppingList joins it too (section 98): it is opened by
 #: ``create_shopping_list``, which stamps the DRAFT status, never through
-#: ``EntityDraft``.
+#: ``EntityDraft``. Knowledge joins the same non-generic path: it is written
+#: by ``record_knowledge``, the same pattern as Document, and for the same
+#: reason — a facts bag with free-text content deserves its own draft
+#: shape, not the generic entity path's bare key/value validation.
 WORLD_MANAGED_ENTITY_TYPES: frozenset[WorldEntityType] = CREATABLE_ENTITY_TYPES | {
     WorldEntityType.APPOINTMENT,
     WorldEntityType.EVENT,
     WorldEntityType.DOCUMENT,
     WorldEntityType.SERVICE_REQUEST,
     WorldEntityType.SHOPPING_LIST,
+    WorldEntityType.KNOWLEDGE,
 }
 
 
@@ -165,6 +175,7 @@ _PREFIX_FOR_TYPE: dict[WorldEntityType, str] = {
     WorldEntityType.DOCUMENT: PREFIX_DOCUMENT,
     WorldEntityType.SERVICE_REQUEST: PREFIX_SERVICE_REQUEST,
     WorldEntityType.SHOPPING_LIST: PREFIX_SHOPPING_LIST,
+    WorldEntityType.KNOWLEDGE: PREFIX_KNOWLEDGE,
 }
 
 _TYPE_FOR_PREFIX: dict[str, WorldEntityType] = {

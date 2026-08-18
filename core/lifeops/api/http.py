@@ -39,6 +39,7 @@ from lifeops.api.schemas import (
     CreateBillRequest,
     CreateDocumentRequest,
     CreateEntityRequest,
+    CreateKnowledgeRequest,
     CreatePayeeRequest,
     CreatePersonRequest,
     CreateServiceRequestRequest,
@@ -57,6 +58,8 @@ from lifeops.api.schemas import (
     FreeBusyResponse,
     FreeBusySlotResponse,
     InvalidateMemoryRequest,
+    KnowledgeListResponse,
+    KnowledgeResponse,
     LinkRelationshipRequest,
     LoginRequest,
     LoginResponse,
@@ -117,6 +120,7 @@ from lifeops.domain.calendar import (
 )
 from lifeops.domain.documents import Document, DocumentDraft
 from lifeops.domain.email import EmailMessage, EmailSendDraft, EmailThread
+from lifeops.domain.knowledge import Knowledge, KnowledgeDraft
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
@@ -292,6 +296,10 @@ def _email_thread_out(thread: EmailThread) -> EmailThreadResponse:
 
 def _document_out(document: Document) -> DocumentResponse:
     return DocumentResponse(**document.model_dump())
+
+
+def _knowledge_out(knowledge: Knowledge) -> KnowledgeResponse:
+    return KnowledgeResponse(**knowledge.model_dump())
 
 
 def _service_request_out(request: ServiceRequest) -> ServiceRequestResponse:
@@ -1165,6 +1173,46 @@ async def create_document(
     draft = DocumentDraft(**payload.model_dump())
     document = await container.core.create_document(client, draft)
     return _document_out(document)
+
+
+# --- knowledge (BUILD_SPEC sections 18, 36, 50) --------------------------------
+
+
+@router.post(
+    "/knowledge", response_model=KnowledgeResponse, status_code=201, tags=["knowledge"]
+)
+async def create_knowledge(
+    payload: CreateKnowledgeRequest, container: ContainerDep, client: ClientDep
+) -> KnowledgeResponse:
+    """Reference content the user authored or distilled from a Document
+    (section 18) — an insurance policy note, a checklist, a procedure."""
+    draft = KnowledgeDraft(**payload.model_dump())
+    knowledge = await container.core.record_knowledge(client, draft)
+    return _knowledge_out(knowledge)
+
+
+@router.get("/knowledge", response_model=KnowledgeListResponse, tags=["knowledge"])
+async def search_knowledge(
+    container: ContainerDep,
+    client: ClientDep,
+    q: Annotated[str, Query(max_length=200)] = "",
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> KnowledgeListResponse:
+    """Search reference content by title, category, or body text."""
+    found = await container.core.search_knowledge(client, query=q, limit=limit)
+    return KnowledgeListResponse(
+        knowledge=[_knowledge_out(k) for k in found], total=len(found)
+    )
+
+
+@router.get(
+    "/knowledge/{knowledge_id}", response_model=KnowledgeResponse, tags=["knowledge"]
+)
+async def get_knowledge(
+    knowledge_id: str, container: ContainerDep, client: ClientDep
+) -> KnowledgeResponse:
+    found = await container.core.get_knowledge(client, knowledge_id=knowledge_id)
+    return _knowledge_out(found)
 
 
 @router.get("/audit", response_model=AuditListResponse, tags=["audit"])

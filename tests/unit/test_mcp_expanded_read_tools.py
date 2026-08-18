@@ -54,6 +54,7 @@ from tests.conftest import PRIMARY_PERSON_ID
 PROVIDER_ID = "provider_abc_electric"
 ASSET_ID = "asset_land_rover"
 HOUSEHOLD_ID = "household_main"
+KNOWLEDGE_ID = "knowledge_01"
 TS = "2026-01-01T00:00:00Z"
 
 READ_LESS_CLIENT = ClientIdentity(
@@ -121,6 +122,12 @@ async def core(clock: FrozenClock) -> LifeOpsCore:
         _entity(PROVIDER_ID, WorldEntityType.PROVIDER, "ABC Electric", phone="555-0100")
     )
     world.seed(_entity(ASSET_ID, WorldEntityType.ASSET, "Land Rover", plate="ABC-123"))
+    world.seed(
+        _entity(
+            KNOWLEDGE_ID, WorldEntityType.KNOWLEDGE, "Water heater warranty",
+            category="warranty", content="10-year tank warranty.",
+        )
+    )
 
     return LifeOpsCore(
         people=people,
@@ -336,3 +343,27 @@ class TestBillTools:
         payload = await _call(hermes_server, "get_bill", {"bill_id": "bill_nope"})
         assert payload["ok"] is False
         assert payload["error"] == "not_found"
+
+
+class TestSearchKnowledgeTool:
+    async def test_matches_on_title(self, hermes_server: MCPServer) -> None:
+        payload = await _call(hermes_server, "search_knowledge", {"query": "water heater"})
+        assert payload["ok"] is True
+        assert payload["total"] == 1
+        assert payload["knowledge"][0]["id"] == KNOWLEDGE_ID
+
+    async def test_matches_on_content(self, hermes_server: MCPServer) -> None:
+        payload = await _call(hermes_server, "search_knowledge", {"query": "10-year"})
+        assert payload["ok"] is True
+        assert payload["total"] == 1
+
+    async def test_empty_query_returns_everything(self, hermes_server: MCPServer) -> None:
+        payload = await _call(hermes_server, "search_knowledge", {})
+        assert payload["ok"] is True
+        assert payload["total"] == 1
+
+    async def test_denied_without_read_world(self, core: LifeOpsCore, clock: FrozenClock) -> None:
+        server = _build(core, clock, READ_LESS_CLIENT)
+        payload = await _call(server, "search_knowledge", {"query": "water"})
+        assert payload["ok"] is False
+        assert payload["error"] == "capability_denied"
