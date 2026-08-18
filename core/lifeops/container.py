@@ -83,10 +83,11 @@ class Container:
         self.telephony = TelephonyProviderService(
             config=self.config, secret_store=self.secret_store
         )
-        # Phase 9 (BUILD_SPEC section 98). No real adapter is wired — section
-        # 88 forbids adding a browser automation dependency or asking for a
-        # credential — so this stays honestly disabled until a real runtime
-        # is installed (browser/real.py detects one; it never assumes one).
+        # Phase 9 (BUILD_SPEC sections 66, 98). A real Playwright/Chromium
+        # adapter is wired (browser/real.py — see its module docstring for
+        # the AGENTS.md dependency justification); it needs no credential,
+        # so this stays gated purely on the Console's "enabled" toggle,
+        # honestly disabled by default per section 88.
         self.browser = BrowserProviderService(
             config=self.config, secret_store=self.secret_store
         )
