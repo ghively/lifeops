@@ -197,10 +197,12 @@ The coding agent's job is the repository, not the user's life. Only the Console
 agent approving its own action would defeat the gate entirely.
 
 Hermes holds `write_world` because shaping the user's world is the primary
-assistant's job, but no MCP *tool* spends it: the Phase 3 world tools are all
-reads, and entities and relationships are created from the Console. The
-capability is granted where it belongs rather than the tool surface being the
-only thing standing between a model and the graph.
+assistant's job. The MCP tools that spend it are narrow and named —
+`record_provider`, `record_asset`, and `create_service_request`, exactly the
+writes BUILD_SPEC section 51 sanctions — while relationships and generic
+entities are created only from the Console. The capability is granted where
+it belongs rather than the tool surface being the only thing standing
+between a model and the graph.
 
 There is no policy language. Capabilities are an explicit map and the decision
 function is fifteen readable lines. A rules engine here would be infrastructure

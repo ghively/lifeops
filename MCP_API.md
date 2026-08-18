@@ -4,13 +4,18 @@ The portable agent interface. Hermes is the primary consumer; any trusted MCP
 client can connect to the same server and operate on the same personal state,
 subject to its own permissions.
 
-**Phase 4 exposes fourteen tools and three resources.** The Phase 0 set
-(BUILD_SPEC section 49), the memory tools of section 91, the world-graph reads
-of section 92, and the durable-work tools of section 51 (`create_waiting_item`,
-`update_task`); the resources are the read views of section 48.
+**The server exposes thirty-three tools and three resources.** Phases 0-4
+shipped the set documented in detail below: the Phase 0 tools (BUILD_SPEC
+section 49), the memory tools of section 91, the world-graph reads of section
+92, and the durable-work tools of section 51. Phases 7-9 added calendar,
+email, telephony, service-request, and shopping tools, summarised in
+"Phase 7-9 tools" at the end of this document.
 
-The world tools are read-only. Creating entities and relationships stays on the
-Console: shaping the user's world is their act, not a model's.
+World writes over MCP are narrow and named: `record_provider`,
+`record_asset`, and `create_service_request` are the only tools that spend
+`write_world` (section 51 sanctions exactly these). Creating relationships
+and generic entities stays on the Console: shaping the user's world is their
+act, not a model's.
 
 ---
 
@@ -470,8 +475,28 @@ policy into a model's judgement, which is exactly the wrong place for it.
 
 ---
 
-## Coming in later phases
+## Phase 7-9 tools
 
-| Phase | Additions |
+Shipped after the detailed documentation above was written; each follows the
+same conventions (structured `{ok: false}` errors, capability checks in
+LifeOpsCore, approval gates per BUILD_SPEC section 56). Definitive
+descriptions are the tool docstrings in `core/lifeops/mcp/server.py`.
+
+| Area | Tools |
 |---|---|
-| 7+ | `send_email`, `book_appointment`, `prepare_payment` / `commit_payment` — each approval-gated per BUILD_SPEC section 56 |
+| World reads | `find_person`, `get_provider`, `get_related_entities`, `get_entity_history` |
+| World writes (section 51) | `record_provider`, `record_asset` |
+| Calendar (Phase 7) | `read_calendar`, `check_calendar_availability`, `create_calendar_hold`, `book_appointment`*, `cancel_appointment`* |
+| Email (Phase 7) | `search_email`, `read_email_thread`, `send_email`* |
+| Service requests (Phase 8) | `create_service_request`, `get_service_request`, `place_phone_call`*, `request_quote`*, `book_service_request`* |
+| Shopping (Phase 9) | `search_shopping`, `create_shopping_list`, `build_grocery_cart`*, `apply_substitution`, `submit_grocery_order`* |
+
+Tools marked * prepare an Action in the outbox; anything with real
+consequence still waits for a human's approval in the Console before it
+executes (sections 56-58).
+
+Still absent on purpose: `prepare_payment` / `commit_payment` have no MCP
+tool — `FINANCIAL_PAYMENT` is Console-only, stricter than the spec requires
+(see CLAUDE.md), so no model holds a path to a payment. Approving, executing,
+and independently verifying actions are also Console/HTTP operations, never
+agent tools.

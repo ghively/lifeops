@@ -10,25 +10,17 @@ assistant that can rewrite its own safety boundary does not have one.
 
 ## Format
 
-One Markdown file per request, named `YYYY-MM-DD-short-slug.md`:
-
-```yaml
----
-component:            # which part of LifeOps
-problem:              # what is wrong
-observed_behavior:    # what happens now
-desired_behavior:     # what should happen
-risk:                 # low | medium | high
-evidence:
-  task_ids: []
-  trace_ids: []
-  failure_count: 0
-suggested_acceptance_tests: []
----
-```
-
-Followed by prose explaining the context.
+One JSON file per request, named `{id}.json` — the serialised
+`ChangeRequest` model (`core/lifeops/domain/self_config.py`, BUILD_SPEC
+section 74's schema field for field): `component`, `problem`,
+`observed_behavior`, `desired_behavior`, `task_ids`, `trace_ids`,
+`failure_count`, `risk`, `suggested_acceptance_tests`, `created_at`,
+`requested_by`. Written by `LifeOpsCore.request_code_change`.
 
 ## Status
 
-Empty. The `request_code_change` tool arrives in Phase 11.
+Empty. `request_code_change` exists in LifeOpsCore (Phase 11), gated on
+`SELF_CONFIGURE`, but is not yet exposed as an MCP tool or HTTP route — so
+nothing can file a request here yet except code calling the core directly.
+Exposing it to Hermes is recorded as an open gap in the 2026-08-18 audit
+(`docs/audits/`).

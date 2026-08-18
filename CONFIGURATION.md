@@ -82,7 +82,7 @@ Calendar        Disabled
 Email           Disabled
 Browser         Disabled
 Telephony       Disabled
-Local ASR/TTS   Disabled
+Local ASR/TTS   Not configured
 ```
 
 The Console is fully reachable in this state, and Today, Tasks, and System all
