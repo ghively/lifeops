@@ -30,8 +30,15 @@ export function LoginPage() {
     setPending(true)
     setError(null)
     try {
-      const { token } = await authApi.login(password)
-      setToken(token)
+      const response = await authApi.login(password)
+      if (response.token) {
+        setToken(response.token)
+      } else {
+        // Auth was disabled server-side between render and submit; a reload
+        // skips the login screen entirely. Storing a missing token would
+        // persist the literal string "undefined" as a credential.
+        window.location.reload()
+      }
       // Flipping the auth store re-renders App with the real shell; there is
       // nothing to navigate to explicitly.
     } catch (err) {

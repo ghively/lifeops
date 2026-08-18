@@ -22,6 +22,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { LifeOpsLayout } from './components/layout/LifeOpsLayout'
 import { ThemeProvider } from './components/theme/ThemeProvider'
 import { useAuthStore } from './lib/auth'
+import { ActionsPage } from './pages/lifeops/ActionsPage'
 import { ActivityPage } from './pages/lifeops/ActivityPage'
 import { ApprovalsPage } from './pages/lifeops/ApprovalsPage'
 import { BillsPage } from './pages/lifeops/BillsPage'
@@ -70,7 +71,8 @@ const PENDING_ROUTES: Array<{
     path: '/calendar',
     title: 'Calendar',
     phase: 7,
-    description: 'Availability, holds, and events linked to LifeOps entities.',
+    description:
+      'Availability, holds, and events. The calendar APIs shipped with phase 7; this screen has not been built yet.',
   },
   {
     path: '/knowledge',
@@ -141,6 +143,7 @@ function App() {
                   <Route path="/" element={<TodayPage />} />
                   <Route path="/needs-attention" element={<NeedsAttentionPage />} />
                   <Route path="/approvals" element={<ApprovalsPage />} />
+                  <Route path="/actions" element={<ActionsPage />} />
                   <Route path="/waiting" element={<WaitingPage />} />
                   <Route path="/tasks" element={<LifeOpsTasksPage />} />
                   <Route path="/bills" element={<BillsPage />} />

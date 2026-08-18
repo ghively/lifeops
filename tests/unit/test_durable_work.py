@@ -238,10 +238,27 @@ class TestApprovalBinding:
         assert authorises(spent, action, now=NOW) is False
 
     def test_a_declined_approval_authorises_nothing(self) -> None:
-        action, approval = _approved_pair({"slot": "thu"})
+        action = prepare(
+            ActionDraft(type=ActionType.BOOK_APPOINTMENT, payload={"slot": "thu"}),
+            now=NOW,
+            client_id="hermes-personal",
+        )
+        approval = request_approval(action, now=NOW, requested_by="hermes-personal")
         declined = decide(approval, approved=False, by="lifeops-console", now=NOW)
         assert declined.status is ApprovalStatus.DECLINED
         assert authorises(declined, action, now=NOW) is False
+
+    def test_a_decision_is_final(self) -> None:
+        """Re-deciding a declined approval must not resurrect its action.
+
+        Without this guard, a second POST within the TTL could flip DECLINED
+        to APPROVED and revive a CANCELLED action all the way to execution.
+        """
+        action, approval = _approved_pair({"slot": "thu"})
+        with pytest.raises(ValidationError):
+            decide(approval, approved=False, by="lifeops-console", now=NOW)
+        with pytest.raises(ValidationError):
+            decide(approval, approved=True, by="someone-else", now=NOW)
 
     def test_deciding_after_expiry_expires_rather_than_approves(self) -> None:
         action = prepare(

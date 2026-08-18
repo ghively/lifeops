@@ -16,10 +16,10 @@ still passes. Phase 1 added the Console foundation, Phase 2 the memory
 provider, Phase 3 the world graph, Phase 4 durable work with the action outbox
 and approvals, Phases 5-6 voice, and Phase 7 calendar and email.
 
-LifeOps can now act outward. `BOOK_APPOINTMENT` and `SEND_EXTERNAL_MESSAGE` are
-held by Hermes and the Console; `APPROVE_ACTION` is Console-only, so no agent
-approves its own action. Shopping and payment capabilities are still held by
-nobody.
+LifeOps can now act outward. `BOOK_APPOINTMENT`, `SEND_EXTERNAL_MESSAGE`, and
+`SHOPPING_CHECKOUT` are held by Hermes and the Console; `APPROVE_ACTION` and
+`FINANCIAL_PAYMENT` are Console-only, so no agent approves its own action and
+no model holds a path to a payment.
 
 Both acceptance scenarios pass (sections 101 and 102). `README.md` tracks status.
 
@@ -59,10 +59,9 @@ console/src/      LifeOps Console (React), talks only to LifeOps Core
   pages/lifeops/  Today, Tasks, Memory, World, Configuration, System
   services/lifeops.ts
 
-tests/            unit · policy · integration · persistence · e2e
+tests/            unit · policy · spec · integration · persistence · e2e
 hermes/           MCP registration for Hermes and other clients
 scripts/          build, run, health
-legacy/           pre-LifeOps Knowledge-OS code — not built, not run, not imported
 ```
 
 ---
@@ -84,7 +83,7 @@ No third-party credentials required.
 ## Testing
 
 ```bash
-make test-fast     # unit + policy + integration, no database, ~1s
+make test-fast     # unit + policy + spec + integration, no database, <1 min
 make test          # everything Python, needs NornicDB
 make console-test
 make check         # what CI runs
@@ -116,9 +115,11 @@ illegal transition must raise and write nothing.
 **Client identity is bound per connection**, never passed as a tool argument — a
 tool argument is model-controlled, which would let any agent claim to be Hermes.
 
-**The world graph is read-only over MCP.** Entities and relationships are
-created from the Console. Hermes holds `write_world`, but no tool spends it —
-shaping the user's world is their act, not a model's.
+**World writes over MCP are narrow and named.** Relationships and generic
+entities are created from the Console; the MCP surface spends `write_world`
+only through `record_provider`, `record_asset`, and `create_service_request`
+(BUILD_SPEC section 51 sanctions exactly these), so Hermes can record a
+provider it just found but cannot shape the user's world generically.
 
 **The relationship vocabulary is BUILD_SPEC section 39, all twenty types.**
 The warning there — "do not attempt to predefine every relationship in a human
@@ -210,7 +211,16 @@ regression here — the fakes will stay green.
 
 ## Known gaps
 
-Recorded in [SECURITY.md](SECURITY.md), not hidden:
+Recorded in [SECURITY.md](SECURITY.md), not hidden. The 2026-08-18 full
+audit ([docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md))
+holds the complete findings list. The design-decision bugs it originally
+recorded (payee approval split-brain, expired-approval deadlock, shopping
+SUBMITTING wedge, verify-after-hold-expiry, unenforced config capability,
+the Console's missing execute/verify surface, `request_code_change`
+unexposed) were all fixed in the follow-up pass on the same branch; what
+remains open are the spec gaps — Console placeholder screens (Calendar,
+Knowledge, Files, Hermes), the Phase-0 Today view, the Voice Bridge,
+Hermes skills, and universal search breadth. Highlights:
 
 - World entity facts are current-only: there is no per-fact supersession
   chain, unlike preferences and memories. `get_entity_history` therefore

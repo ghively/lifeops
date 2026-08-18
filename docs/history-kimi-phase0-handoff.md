@@ -1,3 +1,8 @@
+> **Historical document** — a Phase-0 → Phase-1 handoff, kept for the
+> reasoning it records. Its status claims ("Nothing else has been started")
+> describe 2026-08-16; all eleven phases have since shipped. README.md is
+> the current status.
+
 # Handoff — Hermes LifeOps, Phase 1 onward
 
 **For:** Kimi

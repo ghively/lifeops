@@ -279,6 +279,14 @@ export function WorldPage() {
             </div>
           ) : (
             <>
+              {expand.isError ? (
+                <p
+                  role="alert"
+                  className="absolute inset-x-8 top-2 z-10 rounded-md border border-red-300/60 bg-red-50 px-3 py-2 text-center text-xs text-red-700 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-300"
+                >
+                  Could not expand that entity: {errorMessage(expand.error)}
+                </p>
+              ) : null}
               <WorldGraphView
                 graph={graph}
                 expansionChildren={expansionChildren}

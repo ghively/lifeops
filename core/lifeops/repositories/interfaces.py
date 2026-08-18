@@ -12,6 +12,7 @@ concerns leak straight back into the domain.
 
 from __future__ import annotations
 
+import builtins
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
@@ -101,7 +102,7 @@ class TaskRepository(Protocol):
         """Case-insensitive substring match over title and description."""
         ...
 
-    async def list_related_to_entity(self, entity_id: str) -> list[Task]:
+    async def list_related_to_entity(self, entity_id: str) -> builtins.list[Task]:
         """Tasks whose ``related_entity_ids`` contain the entity.
 
         The property stays the source of truth for reads even though Phase 3
@@ -381,6 +382,17 @@ class BillRepository(Protocol):
         payee must not silently clear it — section 72 requires a human to have
         approved a payee before it is paid, and losing that fact would let the
         next payment through unapproved.
+        """
+        ...
+
+    async def clear_payee_approval(self, payee_id: str) -> Payee:
+        """Revoke a payee's approval — a deliberate, named act.
+
+        ``upsert_payee`` refuses to clear approval precisely so it cannot
+        happen by accident; this is the one path that does it on purpose,
+        for when an approved payee's payment details change and section 72
+        requires a human to look again. Raises ``NotFoundError`` when the
+        payee does not exist.
         """
         ...
 

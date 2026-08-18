@@ -13,6 +13,7 @@ world graph can traverse task → entity without a property scan.
 
 from __future__ import annotations
 
+import builtins
 from collections.abc import Sequence
 from typing import Any
 
@@ -167,7 +168,7 @@ class NornicTaskRepository:
             MATCH (t:Task)
             {where}
             RETURN {_RETURN}
-            ORDER BY t.created_at DESC
+            ORDER BY t.created_at DESC, t.id DESC
             SKIP $offset
             LIMIT $limit
             """,
@@ -188,7 +189,7 @@ class NornicTaskRepository:
             WHERE toLower(t.title) CONTAINS $needle
                OR toLower(coalesce(t.description, '')) CONTAINS $needle
             RETURN {_RETURN}
-            ORDER BY t.created_at DESC
+            ORDER BY t.created_at DESC, t.id DESC
             LIMIT $limit
             """,
             needle=query.strip().lower(),
@@ -196,7 +197,7 @@ class NornicTaskRepository:
         )
         return [_row_to_task(r) for r in rows]
 
-    async def list_related_to_entity(self, entity_id: str) -> list[Task]:
+    async def list_related_to_entity(self, entity_id: str) -> builtins.list[Task]:
         """Tasks pointing at the entity, from the property and from ABOUT edges.
 
         The property membership covers pre-Phase-3 tasks that have no edges;

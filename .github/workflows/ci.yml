@@ -12,8 +12,13 @@ concurrency:
 
 jobs:
   core:
-    name: LifeOps Core
+    name: LifeOps Core (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Both ends of requires-python: the tests/spec crash on 3.11 was
+        # invisible while CI pinned 3.12 alone.
+        python-version: ["3.11", "3.12"]
     services:
       # A disposable NornicDB, per BUILD_SPEC section 85. Loopback-mapped like
       # every other deployment.
@@ -43,7 +48,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install
@@ -55,10 +60,10 @@ jobs:
         run: ruff check core tests
 
       - name: Type check
-        run: mypy || true
+        run: mypy
 
-      - name: Unit, policy, and API tests
-        run: pytest tests/unit tests/policy tests/integration -q
+      - name: Unit, policy, spec, and API tests
+        run: pytest tests/unit tests/policy tests/spec tests/integration -q
 
       - name: Persistence tests
         run: pytest tests/persistence -q
