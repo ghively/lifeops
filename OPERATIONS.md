@@ -130,39 +130,57 @@ See [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Backups
 
-Back up together:
-
-```
-~/.local/share/lifeops/nornicdb-data/        the world model
-~/.local/share/lifeops/config/               non-secret configuration
-~/.local/share/lifeops/secrets/secrets.json  encrypted secrets
+```bash
+./scripts/backup.sh [destination-dir]                        # defaults to
+                                                                # $LIFEOPS_HOME/backups/<timestamp>
+./scripts/restore.sh <backup-dir> <destination-home> [--force]
 ```
 
-Back up **separately**, to a different medium:
+`backup.sh` stops NornicDB if it is running (so the copy is not taken
+mid-write), copies its data directory, `nornicdb.env`, non-secret
+configuration, and the encrypted secret store, then restarts NornicDB if it
+had been running. It writes:
 
 ```
-~/.local/share/lifeops/secrets/master.key
+<destination>/
+  manifest.json               what was captured, and when
+  nornicdb-data/               the world model
+  nornicdb.env                 the generated admin credential — without it,
+                                the restored database cannot authenticate
+                                (CLAUDE.md: the password is fixed at
+                                data-directory initialisation)
+  config/                      non-secret configuration
+  secrets/secrets.json         encrypted secrets
+  secret-master-key/master.key kept in its own subtree
 ```
 
-The master key decrypts every secret. Storing it beside the vault means one
-compromised backup yields both halves.
+**Move `secret-master-key/master.key` to separate, secure storage right
+away.** The master key decrypts every secret; leaving it beside the rest of
+the backup means one compromised copy yields both halves.
 
-Also worth keeping: `nornicdb.env`, without which the restored database is
-unreachable.
-
-Stop NornicDB before copying its data directory, or use its own export, so the
-copy is not taken mid-write.
-
-**A backup is not complete until a restore has been tested.** Automating that
-loop is Phase 10 work (BUILD_SPEC section 80); until then, do it by hand
-periodically:
+`restore.sh` takes an explicit destination — there is no default and it is
+never inferred from `LIFEOPS_HOME` — so a restore can never land on a real
+deployment by accident. It refuses a non-empty destination unless `--force`
+is given.
 
 ```bash
-make stop
-cp -a ~/.local/share/lifeops/nornicdb-data /tmp/restore-test
-LIFEOPS_NORNIC_DATA_DIR=/tmp/restore-test ./scripts/nornicdb.sh start
+LIFEOPS_HOME=$RESTORE_DEST ./scripts/nornicdb.sh start
 make health
 # confirm known entities, relationships, and task state are present
+```
+
+**A backup is not complete until a restore has been tested.** That loop is no
+longer manual: `tests/persistence/test_backup_restore.py` drives
+`backup.sh` and `restore.sh` against a disposable NornicDB instance on a
+temporary data directory — never `~/.local/share/lifeops` — writes known
+state, backs it up, destroys the original, restores into a fresh location,
+and asserts the known state (a person, a preference, an encrypted secret,
+and non-secret configuration) reads back exactly. It skips cleanly, rather
+than failing, when the NornicDB binary is not present to spin up an isolated
+instance. Run it with `make test-integration` or directly:
+
+```bash
+./.venv/bin/pytest tests/persistence/test_backup_restore.py -q
 ```
 
 ---
@@ -220,10 +238,21 @@ An unknown `--client` exits non-zero on purpose.
 
 ## Emergency stop
 
-Console → System → Safe mode blocks external communication, bookings, shopping,
-and payments while leaving reads, conversation, and tasks working.
+Console → System → **Emergency stop** engages safe mode (BUILD_SPEC sections
+83, 84). It blocks external communication, bookings, browser writes, shopping
+submission, telephony writes, and payments while leaving conversation, reads,
+memory search, tasks, local state, and Console inspection working. The current
+state (on/off) is always shown, and the toggle round-trips through
+`PATCH /api/v1/system/config` — the setting lives in `lifeops.config.json`, not
+just process memory, so it survives a restart.
 
-Phase 0 has no external write paths, so it currently changes nothing observable.
-It exists now so later phases inherit it rather than bolting it on.
+Engaging it deletes nothing: state, logs, the audit log, the database, and
+every previously prepared action stay exactly as they were and remain readable.
+`tests/policy/test_emergency_stop.py` proves both halves — every `ActionType`
+is refused at `core.prepare_action` while it is engaged, and everything it is
+supposed to preserve still reads back afterward. `console/src/pages/lifeops/__tests__/SystemPage.test.tsx`
+proves the Console control itself is present, clearly labelled, and reflects
+the real state.
 
-To stop everything: `make stop`. State, logs, and the database are preserved.
+To stop everything, including the process: `make stop`. State, logs, and the
+database are preserved.

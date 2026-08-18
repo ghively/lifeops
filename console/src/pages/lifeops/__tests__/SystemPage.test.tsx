@@ -170,6 +170,31 @@ describe('LifeOps System', () => {
     expect(mockedConfig.updateSystem).toHaveBeenCalledWith({ safe_mode: true })
   })
 
+  it('labels the control an emergency stop and shows the current state', async () => {
+    // BUILD_SPEC section 84: "Provide the control in LifeOps Console" — it
+    // must be clearly labelled and its state must be visible, not inferred.
+    renderPage()
+    expect(await screen.findByText('Emergency stop')).toBeInTheDocument()
+    expect(screen.getByText('Safe mode is off')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /turn on/i })).toBeInTheDocument()
+  })
+
+  it('shows engaged state and the disengage control when safe mode is already on', async () => {
+    mockedSystem.status.mockResolvedValue(
+      makeStatus({
+        components: {
+          lifeops_core: { healthy: true, detail: 'running' },
+          nornicdb: { healthy: true, detail: 'bolt reachable' },
+          secret_store: { healthy: false, detail: 'not configured' },
+          safe_mode: true,
+        },
+      }),
+    )
+    renderPage()
+    expect(await screen.findByText('Safe mode is on')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /turn off/i })).toBeInTheDocument()
+  })
+
   it('shows the error surface when status cannot be loaded', async () => {
     mockedSystem.status.mockRejectedValue(new Error('Network Error'))
     renderPage()

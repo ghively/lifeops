@@ -222,8 +222,15 @@ export function SystemPage() {
 
           <section className="space-y-3">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              Safe mode
+              Emergency stop
             </h2>
+            <p className="text-sm text-muted-foreground">
+              Stops external writes, bookings, shopping submission, telephony,
+              and financial actions immediately (BUILD_SPEC section 84).
+              Nothing is deleted: state, logs, the audit trail, the database,
+              and every previously prepared action are preserved exactly as
+              they were.
+            </p>
             <div
               className={cn(
                 'flex items-start justify-between gap-4 rounded-lg border px-4 py-3',
@@ -242,10 +249,12 @@ export function SystemPage() {
                     {safeMode ? 'Safe mode is on' : 'Safe mode is off'}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Blocks external communication, bookings, shopping, and
-                    payments. Conversation, reads, and tasks keep working.
-                    Phase 0 has no external write paths, so this currently
-                    changes nothing observable.
+                    Blocks external communication, bookings, browser writes,
+                    shopping submission, telephony writes, and payments
+                    (BUILD_SPEC section 83). Conversation, reads, memory
+                    search, tasks, local state, and this Console keep working.
+                    The setting is stored in LifeOps configuration, so it
+                    survives a restart — it is not just a process flag.
                   </p>
                 </div>
               </div>
