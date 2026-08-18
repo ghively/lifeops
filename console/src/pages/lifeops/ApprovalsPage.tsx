@@ -138,6 +138,12 @@ export function ApprovalsPage() {
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'approvals'] })
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'actions'] })
     },
+    // A refused decision (approval expired; payload changed under it — the
+    // exact case the server's hash binding exists for) must be shown, not
+    // swallowed. The list is refetched so a stale card doesn't linger.
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'approvals'] })
+    },
   })
 
   if (approvalsQuery.isError) {
@@ -165,6 +171,15 @@ export function ApprovalsPage() {
           it happens.
         </p>
       </header>
+
+      {decide.isError ? (
+        <p
+          role="alert"
+          className="rounded-lg border border-red-300/60 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-300"
+        >
+          The decision was not recorded: {errorMessage(decide.error)}
+        </p>
+      ) : null}
 
       {approvalsQuery.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

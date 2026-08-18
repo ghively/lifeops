@@ -392,6 +392,7 @@ export type ActionType =
   | 'place_phone_call'
   | 'build_grocery_cart'
   | 'submit_grocery_order'
+  | 'add_payee'
   | 'prepare_payment'
   | 'commit_payment'
 
@@ -492,8 +493,16 @@ export interface AuditList {
 // --- API surface -------------------------------------------------------------
 
 export const authApi = {
+  // The server's LoginResponse: token/expires_at are absent when auth is
+  // disabled server-side. Typing token as required hid the case where the
+  // page would store the literal string "undefined" as a bearer token.
   login: (password: string) =>
-    lifeops.post<{ token: string }>('/auth/login', { password }).then((r) => r.data),
+    lifeops
+      .post<{ auth_enabled: boolean; token?: string | null; expires_at?: string | null }>(
+        '/auth/login',
+        { password },
+      )
+      .then((r) => r.data),
 
   me: () => lifeops.get<AuthIdentity>('/auth/me').then((r) => r.data),
 
@@ -1213,6 +1222,7 @@ export const ACTION_TYPE_LABELS: Record<ActionType, string> = {
   place_phone_call: 'Place a phone call',
   build_grocery_cart: 'Build a grocery cart',
   submit_grocery_order: 'Submit a grocery order',
+  add_payee: 'Add a payee',
   prepare_payment: 'Prepare a payment',
   commit_payment: 'Commit a payment',
 }
