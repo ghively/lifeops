@@ -264,8 +264,22 @@ a stub (see "Money moves only where a human is present" above).
   save/apply path, and the one generic entry point, `propose_self_change`,
   isn't exposed over MCP or HTTP. Zero Hermes skills are instantiated — the
   template is finished; nothing uses it.
-- **Chaos tests** (section 86) cover 2 of the 16 spec'd failure scenarios:
-  Nornic restart and duplicate-request idempotency.
+- **Chaos tests** (section 86) now cover all 16 spec'd failure scenarios —
+  see `tests/chaos/` (13 scenarios, fakes-only, in `make test-fast`) and
+  `tests/e2e/test_chaos_duplicate_mcp_request.py` (scenario 6, needs a live
+  NornicDB and a real MCP subprocess). Three of the sixteen (DeepSeek
+  timeout, local ASR crash, local TTS crash) have no adapter or runtime to
+  fail yet, so those are documented, honest skips rather than fabricated
+  tests — `tests/chaos/test_documented_gaps.py` explains each. One test run
+  found a genuine, previously-unknown gap rather than just filling in
+  coverage: a repository write failure between committing an action and
+  recording its result is not caught anywhere in `execute_action`, so the
+  action strands in `EXECUTING` (the approval is still safely consumed,
+  so nothing can retry it into a duplicate external commitment — see
+  `TestCrashBetweenCommitAndRecordResult` in
+  `tests/chaos/test_outbox_and_transport_failures.py`). Not fixed here:
+  recovering a stranded action is a distributed-systems design question,
+  not a mechanical bug fix.
 - World entity facts are current-only: there is no per-fact supersession
   chain, unlike preferences and memories. `get_entity_history` therefore
   reports the memories referencing an entity and says so in its `covers`
