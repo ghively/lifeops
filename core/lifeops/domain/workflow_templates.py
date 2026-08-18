@@ -86,6 +86,11 @@ class WorkflowTemplateDraft(BaseModel):
     steps: list[WorkflowStep] = Field(default_factory=list)
     trigger: TriggerKind = TriggerKind.MANUAL
     next_run_at: str | None = None
+    #: Present so a routine can be paused. Without it every save rebuilt the
+    #: template with the model default, so editing a disabled routine silently
+    #: switched it back on — a paused routine that resumes itself is worse
+    #: than one that cannot be paused at all.
+    enabled: bool = True
 
 
 def validate_steps(steps: list[WorkflowStep]) -> list[WorkflowStep]:

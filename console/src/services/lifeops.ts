@@ -758,6 +758,9 @@ export const workflowTemplatesApi = {
     steps?: WorkflowStep[]
     trigger?: TriggerKind
     next_run_at?: string
+    /** Pass the current value when revising: the server rebuilds the template
+     *  from this payload, so omitting it re-enables a paused routine. */
+    enabled?: boolean
   }) => lifeops.post<WorkflowTemplate>('/workflow-templates', payload).then((r) => r.data),
 
   delete: (templateId: string) =>
