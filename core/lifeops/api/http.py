@@ -48,6 +48,7 @@ from lifeops.api.schemas import (
     CreateWaitingItemRequest,
     DecideApprovalRequest,
     DiscoverResponse,
+    DocumentListResponse,
     DocumentResponse,
     EmailMessageResponse,
     EmailSearchResponse,
@@ -1199,6 +1200,30 @@ async def create_document(
     draft = DocumentDraft(**payload.model_dump())
     document = await container.core.create_document(client, draft)
     return _document_out(document)
+
+
+@router.get("/documents", response_model=DocumentListResponse, tags=["documents"])
+async def search_documents(
+    container: ContainerDep,
+    client: ClientDep,
+    q: Annotated[str, Query(max_length=200)] = "",
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> DocumentListResponse:
+    """List/search document references by title, source, or summary."""
+    found = await container.core.search_documents(client, query=q, limit=limit)
+    return DocumentListResponse(
+        documents=[_document_out(d) for d in found], total=len(found)
+    )
+
+
+@router.get(
+    "/documents/{document_id}", response_model=DocumentResponse, tags=["documents"]
+)
+async def get_document(
+    document_id: str, container: ContainerDep, client: ClientDep
+) -> DocumentResponse:
+    found = await container.core.get_document(client, document_id=document_id)
+    return _document_out(found)
 
 
 # --- knowledge (BUILD_SPEC sections 18, 36, 50) --------------------------------

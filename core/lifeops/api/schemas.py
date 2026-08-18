@@ -975,6 +975,13 @@ class CreateDocumentRequest(BaseModel):
     summary: str = Field(default="", max_length=4000)
 
 
+class DocumentListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    documents: list[DocumentResponse]
+    total: int
+
+
 # --- knowledge (BUILD_SPEC sections 18, 36, 50) --------------------------------
 
 
