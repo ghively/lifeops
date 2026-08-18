@@ -200,6 +200,43 @@ rule 3).
 
 ---
 
+## 5. The 2026-08-18 full-audit backlog (P1/P2)
+
+A complete code review and audit
+([docs/audits/2026-08-18-full-codebase-audit.md](audits/2026-08-18-full-codebase-audit.md))
+swept the whole repository. Its eight P0 findings — the approval-race and
+resurrection bugs, the broken exit-test pin, the CI gaps, the identity
+defaulting, the unverified email TLS — were **fixed the same day** (see the
+disposition note at the top of that document). What remains open, by
+explicit decision, is its P1 and P2 backlog and the documentation
+corrections, all recorded there in full. The headline items a future
+session should start from:
+
+- **Before enabling providers:** the CalDAV adapter's TZID/all-day/recurrence
+  handling and DESCRIPTION erasure; the email adapter's `confirm_sent`,
+  SEARCH escaping/body matching, error wrapping, and port-465 gap; the
+  Twilio connection-pool leak; the faster-whisper `cuda:0` device shape;
+  the model-influenced telephony destination (needs an allowlist or an
+  approval gate before real credentials).
+- **Core hardening:** status guards on `record_result` and `settle_bill`;
+  prepare-before-validate in `_prepare_provider_contact`; the config
+  service's unlocked cross-process read-modify-write; the waiting-lease
+  claim's atomicity (needs a live concurrent test against NornicDB).
+- **Surface parity:** `entity_ids`/`related_entity_ids` missing from the MCP
+  `remember`/task tools; shopping read-back over MCP; assorted filter and
+  error-code parity holes.
+- **Console:** the CalendarPage `datetime-local` handling; the Approvals
+  screen's silent 50-item cap; the stale phase-gated sidebar; the
+  MemoryPage search filter drop; the wrong `config_changed` query keys.
+- **Docs:** MCP_API.md's tool/resource counts, DATA_MODEL.md's two missing
+  phases of schema, HERMES_INTEGRATION.md's stale permission table,
+  TESTING.md's suite table, OPERATIONS.md's wrong emergency-stop route.
+- **Operational, outside the repo:** the GitHub Actions runner/billing
+  failure — no CI run has ever executed; until that is fixed at the account
+  level, `make check` is the only real gate.
+
+---
+
 ## What is *not* on this list
 
 Everything else BUILD_SPEC describes — the eleven phases, the MCP surface,

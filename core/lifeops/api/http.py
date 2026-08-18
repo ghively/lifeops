@@ -149,7 +149,12 @@ from lifeops.errors import LifeOpsError, NotFoundError, ProviderNotConfiguredErr
 from lifeops.events import CONFIG_CHANGED
 from lifeops.observability.logging import configure_logging, redact, trace_context
 from lifeops.policy import CapabilityGrant, ClientIdentity, all_clients, resolve_client
-from lifeops.policy.capabilities import CONSOLE, Capability, require
+from lifeops.policy.capabilities import (
+    CONSOLE,
+    Capability,
+    UnknownClientPolicy,
+    require,
+)
 from lifeops.settings import Settings, get_settings
 from lifeops.voice.local import LocalASRProvider, LocalTTSProvider
 
@@ -173,10 +178,14 @@ def get_client(
     Requests without the header are treated as the Console, because this API
     is the Console's transport. MCP clients declare themselves over MCP and do
     not reach these routes.
+
+    A header that *is* present but names no registered client is refused, the
+    same way the MCP server refuses a mistyped ``--client``: a typo must be
+    visible, not silently reduce (or change) access.
     """
     if not x_lifeops_client:
         return CONSOLE
-    return resolve_client(x_lifeops_client)
+    return resolve_client(x_lifeops_client, unknown=UnknownClientPolicy.DENY)
 
 
 ContainerDep = Annotated[Container, Depends(get_container)]

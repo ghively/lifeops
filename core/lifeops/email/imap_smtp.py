@@ -24,6 +24,7 @@ import email as email_lib
 import email.utils
 import imaplib
 import smtplib
+import ssl
 from email.message import EmailMessage as MimeEmailMessage
 
 from lifeops.domain.email import EmailMessage, EmailSendDraft, EmailThread
@@ -103,7 +104,16 @@ class ImapSmtpEmailProvider:
     # --- IMAP -----------------------------------------------------------
 
     def _imap_connect(self) -> imaplib.IMAP4:
-        conn = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=self._timeout_s)
+        # An explicit verifying context is load-bearing: unlike the HTTP
+        # stack, imaplib's (and smtplib's) default TLS context does NOT
+        # verify server certificates, so without it the mailbox password
+        # would complete a handshake with any active man-in-the-middle.
+        conn = imaplib.IMAP4_SSL(
+            self._imap_host,
+            self._imap_port,
+            timeout=self._timeout_s,
+            ssl_context=ssl.create_default_context(),
+        )
         conn.login(self._username, self._password)
         return conn
 
@@ -178,7 +188,10 @@ class ImapSmtpEmailProvider:
 
         try:
             with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=self._timeout_s) as smtp:
-                smtp.starttls()
+                # See _imap_connect: smtplib's default starttls context does
+                # not verify certificates; the credential must not survive an
+                # unverified handshake.
+                smtp.starttls(context=ssl.create_default_context())
                 smtp.login(self._username, self._password)
                 smtp.send_message(message)
         except (smtplib.SMTPException, OSError) as exc:
@@ -216,7 +229,7 @@ class ImapSmtpEmailProvider:
             return False, f"IMAP login failed: {exc}"
         try:
             with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=self._timeout_s) as smtp:
-                smtp.starttls()
+                smtp.starttls(context=ssl.create_default_context())
                 smtp.login(self._username, self._password)
         except (smtplib.SMTPException, OSError) as exc:
             return False, f"SMTP login failed: {exc}"

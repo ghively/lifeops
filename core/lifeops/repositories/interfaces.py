@@ -381,6 +381,18 @@ class ApprovalRepository(Protocol):
 
     async def update(self, approval: Approval) -> Approval: ...
 
+    async def consume(self, approval_id: str, *, consumed_at: str) -> Approval | None:
+        """Spend the approval, atomically, only if it is still unspent.
+
+        Returns the consumed approval, or ``None`` when it was already
+        consumed (or does not exist). This is the single-use guarantee of
+        BUILD_SPEC section 57 made a conditional write rather than a
+        read-check-write: two concurrent commits racing for one approval must
+        see exactly one winner, the same discipline as the waiting-item
+        lease's ``claim``.
+        """
+        ...
+
 
 @runtime_checkable
 class AuditRepository(Protocol):

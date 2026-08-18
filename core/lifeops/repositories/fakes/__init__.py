@@ -714,6 +714,16 @@ class FakeApprovalRepository:
         self._approvals[approval.id] = copy.deepcopy(approval)
         return copy.deepcopy(approval)
 
+    async def consume(self, approval_id: str, *, consumed_at: str) -> Approval | None:
+        # Check and set with no await between them, mirroring the real
+        # repository's single conditional write: exactly one concurrent
+        # caller wins, everyone else gets None.
+        stored = self._approvals.get(approval_id)
+        if stored is None or stored.consumed_at is not None:
+            return None
+        stored.consumed_at = consumed_at
+        return copy.deepcopy(stored)
+
 
 class FakeAuditRepository:
     """Append-only, like the real one — no update method exists to call."""

@@ -43,6 +43,16 @@ class TestClientResolution:
         with pytest.raises(CapabilityDeniedError):
             resolve_client("totally-unknown", unknown=UnknownClientPolicy.DENY)
 
+    def test_a_missing_identity_is_refused_under_deny_never_defaulted(self) -> None:
+        """SECURITY.md: "Over MCP a missing identity is refused, never
+        defaulted." The MCP server resolves with DENY, so an empty --client
+        and an unset env var must fail loudly, not silently become the
+        default identity — the 2026-08-18 audit found this branch missing."""
+        with pytest.raises(CapabilityDeniedError):
+            resolve_client(None, unknown=UnknownClientPolicy.DENY)
+        with pytest.raises(CapabilityDeniedError):
+            resolve_client("", unknown=UnknownClientPolicy.DENY)
+
     def test_unknown_identity_falls_back_to_the_least_privileged_default(self) -> None:
         fallback = resolve_client("totally-unknown")
         assert fallback.client_id == INTERACTIVE_CLIENT.client_id

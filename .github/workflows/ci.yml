@@ -62,13 +62,24 @@ jobs:
       - name: Type check
         run: mypy
 
-      - name: Unit, policy, spec, and API tests
-        run: pytest tests/unit tests/policy tests/spec tests/integration -q
+      - name: Unit, policy, spec, chaos, and API tests
+        # Mirrors make test-fast exactly. tests/chaos was missing here while
+        # present in test-fast — the section 86 guarantees merged unguarded
+        # (found by the 2026-08-18 audit).
+        run: pytest tests/unit tests/policy tests/spec tests/integration tests/chaos -q
 
       - name: Persistence tests
         run: pytest tests/persistence -q
 
-      - name: Phase 0 exit test
+      - name: End-to-end tests (exit criteria and acceptance scenarios)
+        env:
+          # Exit criterion D needs a way to bounce the database; without this
+          # the three restart-durability tests silently skip on every CI run.
+          # The service container is plain Docker on the runner, so restart it
+          # directly, then wait for its health endpoint before handing back.
+          LIFEOPS_NORNIC_RESTART_CMD: >-
+            docker restart ${{ job.services.nornicdb.id }} &&
+            timeout 120 bash -c 'until wget -qO- http://127.0.0.1:7474/health >/dev/null 2>&1; do sleep 2; done'
         run: pytest tests/e2e -q
 
       # No credential may be needed to boot, and none may be committed
@@ -114,6 +125,11 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      - name: Lint
+        # The react-hooks rules catch real bugs (missing effect deps), and the
+        # config demands zero warnings — so it has to actually run somewhere.
+        run: npm run lint
 
       - name: Type check
         run: npx tsc --noEmit

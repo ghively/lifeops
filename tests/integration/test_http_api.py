@@ -273,6 +273,21 @@ class TestClientIdentityHeader:
         assert response.status_code == 201
         assert response.json()["created_by_client"] == "claude-code"
 
+    async def test_an_unknown_declared_identity_is_refused_not_downgraded(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """The same rule the MCP server applies to a mistyped ``--client``:
+        a typo must be visible, not silently resolve to the default identity
+        with different capabilities (2026-08-18 audit). Omitting the header
+        still means the Console — that is this API's documented transport
+        convention, not an unknown identity."""
+        response = await client.get(
+            f"{API}/tasks",
+            headers={"X-LifeOps-Client": "lifeops-consol"},  # the typo itself
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "capability_denied"
+
 
 class TestConfiguration:
     async def test_configuration_requires_the_capability(

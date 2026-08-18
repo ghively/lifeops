@@ -211,12 +211,18 @@ regression here — the fakes will stay green.
 
 ## Known gaps
 
-Recorded in [SECURITY.md](SECURITY.md), not hidden. Two audits hold the
+Recorded in [SECURITY.md](SECURITY.md), not hidden. Three audits hold the
 original findings: [docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md)
 (correctness bugs and spec-fidelity debt in code that exists — all fixed on
-that branch) and [docs/audits/2026-08-18-unimplemented-features.md](docs/audits/2026-08-18-unimplemented-features.md)
+that branch), [docs/audits/2026-08-18-unimplemented-features.md](docs/audits/2026-08-18-unimplemented-features.md)
 (BUILD_SPEC prose with no corresponding code at all, verified section by
-section against the code rather than against this file). A follow-up pass
+section against the code rather than against this file), and
+[docs/audits/2026-08-18-full-codebase-audit.md](docs/audits/2026-08-18-full-codebase-audit.md)
+(a full eight-pass sweep of code, tests, CI, Console, and docs — its eight
+P0 findings, including two approval-flow races and a broken exit-test pin,
+were fixed the same day; its P1/P2 backlog and documentation corrections
+are deliberately open, summarised in
+[docs/REMAINING_WORK.md](docs/REMAINING_WORK.md) section 5). A follow-up pass
 closed most of that second audit's findings — the audit doc's own
 changelog records what changed and when; what follows here is the current,
 much shorter list of what is still genuinely missing.
