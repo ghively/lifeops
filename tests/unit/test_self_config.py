@@ -45,6 +45,7 @@ from lifeops.repositories.fakes import (
     FakeWorkflowTemplateRepository,
     FakeWorldRepository,
 )
+from lifeops.settings import Settings
 
 TS = "2026-01-01T00:00:00Z"
 
@@ -275,3 +276,23 @@ class TestPausingARoutine:
             ),
         )
         assert await core.due_routines(HERMES) == []
+
+
+class TestChangeRequestPathResolution:
+    """The write path must not depend on the process's CWD: the MCP server's
+    working directory is whatever its client launched it with, and a
+    read-only deployment cannot write into the repository at all."""
+
+    def test_explicit_override_wins(self, tmp_path: Path) -> None:
+        settings = Settings(
+            state_dir=tmp_path / "state", change_requests_dir=tmp_path / "explicit"
+        )
+        assert settings.change_requests_path == tmp_path / "explicit"
+
+    def test_default_is_absolute_never_cwd_relative(self, tmp_path: Path) -> None:
+        settings = Settings(state_dir=tmp_path / "state")
+        resolved = settings.change_requests_path
+        assert resolved.is_absolute()
+        # Either the repository checkout's changes/requests (when writable)
+        # or the state directory — both are stable regardless of CWD.
+        assert resolved.name in ("requests", "change-requests")

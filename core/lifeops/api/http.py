@@ -138,7 +138,7 @@ from lifeops.errors import LifeOpsError, NotFoundError, ProviderNotConfiguredErr
 from lifeops.events import CONFIG_CHANGED
 from lifeops.observability.logging import configure_logging, redact, trace_context
 from lifeops.policy import CapabilityGrant, ClientIdentity, all_clients, resolve_client
-from lifeops.policy.capabilities import CONSOLE
+from lifeops.policy.capabilities import CONSOLE, Capability, require
 from lifeops.settings import Settings, get_settings
 from lifeops.voice.local import LocalASRProvider, LocalTTSProvider
 
@@ -170,6 +170,26 @@ def get_client(
 
 ContainerDep = Annotated[Container, Depends(get_container)]
 ClientDep = Annotated[ClientIdentity, Depends(get_client)]
+
+
+def get_configuring_client(
+    client: Annotated[ClientIdentity, Depends(get_client)],
+) -> ClientIdentity:
+    """The caller, proven to hold MANAGE_CONFIGURATION.
+
+    The config surface deliberately bypasses LifeOpsCore (it mutates the
+    processes' shared config file, not NornicDB), so the capability check
+    the core would have run has to happen here — without it the manifest's
+    Console-only grant was decoration, and any identity could flip safe
+    mode or point a provider somewhere else. ``safe_mode=False`` on
+    purpose: configuration is how the emergency stop is lifted, so the
+    stop must not lock the door to its own switch.
+    """
+    require(client, Capability.MANAGE_CONFIGURATION, safe_mode=False)
+    return client
+
+
+ConfiguringClientDep = Annotated[ClientIdentity, Depends(get_configuring_client)]
 
 
 # --- serialisers -------------------------------------------------------------
@@ -1618,7 +1638,9 @@ async def universal_search(
 
 
 @router.get("/config/providers", tags=["config"])
-async def list_providers(container: ContainerDep) -> dict[str, Any]:
+async def list_providers(
+    container: ContainerDep, _config_client: ConfiguringClientDep
+) -> dict[str, Any]:
     """Provider schemas plus current status.
 
     The Console renders its configuration forms from ``definition``, so adding
@@ -1637,7 +1659,9 @@ async def list_providers(container: ContainerDep) -> dict[str, Any]:
 
 
 @router.get("/config/providers/{provider_id}", tags=["config"])
-async def get_provider_config(provider_id: str, container: ContainerDep) -> dict[str, Any]:
+async def get_provider_config(
+    provider_id: str, container: ContainerDep, _config_client: ConfiguringClientDep
+) -> dict[str, Any]:
     definition = get_provider(provider_id)
     if definition is None:
         raise NotFoundError(f"unknown provider {provider_id!r}", provider=provider_id)
@@ -1652,6 +1676,7 @@ async def update_provider_config(
     provider_id: str,
     payload: UpdateProviderRequest,
     container: ContainerDep,
+    _config_client: ConfiguringClientDep,
 ) -> dict[str, Any]:
     """Apply a configuration change.
 
@@ -1668,7 +1693,9 @@ async def update_provider_config(
     response_model=TestProviderResponse,
     tags=["config"],
 )
-async def test_provider(provider_id: str, container: ContainerDep) -> TestProviderResponse:
+async def test_provider(
+    provider_id: str, container: ContainerDep, _config_client: ConfiguringClientDep
+) -> TestProviderResponse:
     """Run the provider's health check.
 
     ElevenLabs (phase 5), the local voice adapters (phase 6), and calendar/
@@ -1785,6 +1812,7 @@ async def discover_provider_options(
     provider_id: str,
     container: ContainerDep,
     field: Annotated[str, Query()],
+    _config_client: ConfiguringClientDep,
 ) -> DiscoverResponse:
     """Fetch dynamic options for a select field (voices, models, calendars).
 
@@ -1867,7 +1895,9 @@ _AUDIO_MEDIA_TYPES = {
 
 @router.post("/voice/tts/preview", tags=["voice"])
 async def preview_voice(
-    payload: SynthesizeSpeechRequest, container: ContainerDep
+    payload: SynthesizeSpeechRequest,
+    container: ContainerDep,
+    _config_client: ConfiguringClientDep,
 ) -> StreamingResponse:
     """Synthesize sample text and stream the audio back for the browser to
     play (BUILD_SPEC section 27's Preview voice button and the
@@ -1891,7 +1921,9 @@ async def preview_voice(
 
 
 @router.get("/voice/mode-status", tags=["voice"])
-async def voice_mode_status(container: ContainerDep) -> dict[str, Any]:
+async def voice_mode_status(
+    container: ContainerDep, _config_client: ConfiguringClientDep
+) -> dict[str, Any]:
     """What the current voice mode (BUILD_SPEC section 29) has selected for
     each capability, and what would be used next if that stopped working —
     the Console's "active provider" / "fallback provider" (section 95).
@@ -1906,7 +1938,9 @@ _LOCAL_VOICE_PROVIDER_IDS = ("local_tts", "local_asr")
 
 
 @router.post("/voice/providers/{provider_id}/load", tags=["voice"])
-async def load_voice_provider(provider_id: str, container: ContainerDep) -> dict[str, Any]:
+async def load_voice_provider(
+    provider_id: str, container: ContainerDep, _config_client: ConfiguringClientDep
+) -> dict[str, Any]:
     """Load a local provider's model into memory (BUILD_SPEC section 95).
 
     Only the local adapters implement a load/unload lifecycle; nothing here
@@ -1926,7 +1960,9 @@ async def load_voice_provider(provider_id: str, container: ContainerDep) -> dict
 
 
 @router.post("/voice/providers/{provider_id}/unload", tags=["voice"])
-async def unload_voice_provider(provider_id: str, container: ContainerDep) -> dict[str, Any]:
+async def unload_voice_provider(
+    provider_id: str, container: ContainerDep, _config_client: ConfiguringClientDep
+) -> dict[str, Any]:
     if provider_id not in _LOCAL_VOICE_PROVIDER_IDS:
         raise NotFoundError(
             f"provider {provider_id!r} has no load/unload lifecycle", provider=provider_id
@@ -1939,13 +1975,17 @@ async def unload_voice_provider(provider_id: str, container: ContainerDep) -> di
 
 
 @router.get("/config/system", tags=["config"])
-async def get_system_config(container: ContainerDep) -> dict[str, Any]:
+async def get_system_config(
+    container: ContainerDep, _config_client: ConfiguringClientDep
+) -> dict[str, Any]:
     return container.config.get_system().model_dump()
 
 
 @router.put("/config/system", tags=["config"])
 async def update_system_config(
-    payload: UpdateSystemRequest, container: ContainerDep
+    payload: UpdateSystemRequest,
+    container: ContainerDep,
+    _config_client: ConfiguringClientDep,
 ) -> dict[str, Any]:
     changes = payload.model_dump(exclude_unset=True, exclude_none=True)
     updated = container.config.update_system(changes)

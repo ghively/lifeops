@@ -1516,6 +1516,67 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
+    @server.tool(
+        name="request_code_change",
+        title="Request a code change",
+        description=(
+            "File a Code Change Request (BUILD_SPEC sections 73-74). Use "
+            "this when a problem lives in protected machinery you may not "
+            "modify yourself — authorization, approval validation, payment "
+            "code, the secret store, MCP authentication, CI — or when any "
+            "code change is needed that goes beyond your permitted "
+            "self-changes (skills, preferences, routines, workflow "
+            "templates). This writes a request file for a coding agent or "
+            "human to act on; it changes NOTHING itself, and nothing will "
+            "change until someone picks the request up. Describe the "
+            "observed and desired behaviour concretely — the reader was not "
+            "there."
+        ),
+    )
+    async def request_code_change(
+        component: Annotated[
+            str, Field(description="Which part of LifeOps, e.g. 'approval validation'.")
+        ],
+        problem: Annotated[str, Field(description="What is wrong, in one or two sentences.")],
+        observed_behavior: Annotated[str, Field(description="What happens now.")],
+        desired_behavior: Annotated[str, Field(description="What should happen instead.")],
+        risk: Annotated[
+            str, Field(description="Your judgement of the change's risk: low, medium, or high.")
+        ] = "medium",
+        task_ids: Annotated[
+            list[str] | None,
+            Field(description="Related LifeOps task IDs, as evidence."),
+        ] = None,
+        trace_ids: Annotated[
+            list[str] | None,
+            Field(description="Trace IDs of failing operations, as evidence."),
+        ] = None,
+        failure_count: Annotated[
+            int, Field(description="How many times the problem was observed.")
+        ] = 0,
+        suggested_acceptance_tests: Annotated[
+            list[str] | None,
+            Field(description="What a fix must demonstrably do."),
+        ] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                request = await container.core.request_code_change(
+                    client,
+                    component=component,
+                    problem=problem,
+                    observed_behavior=observed_behavior,
+                    desired_behavior=desired_behavior,
+                    risk=risk,
+                    task_ids=task_ids,
+                    trace_ids=trace_ids,
+                    failure_count=failure_count,
+                    suggested_acceptance_tests=suggested_acceptance_tests,
+                )
+                return {"ok": True, "change_request": request.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
     register_resources(server, core=container.core, client=client, clock=container.clock)
 
     return server
