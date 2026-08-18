@@ -72,6 +72,7 @@ from lifeops.domain.documents import (
     Document,
     DocumentDraft,
     document_to_entity,
+    entity_to_document,
 )
 from lifeops.domain.documents import create_document as create_document_domain
 from lifeops.domain.email import (
@@ -456,6 +457,30 @@ class WorldService:
         ``graph()`` throws away.
         """
         return await self._world.list_entities(types=entity_types, limit=limit)
+
+    async def search_full(
+        self,
+        *,
+        entity_types: list[WorldEntityType] | None,
+        query: str,
+        limit: int = 50,
+    ) -> list[WorldEntity]:
+        """Full entities of the given types matching ``query`` in name or
+        facts — a case-insensitive substring match (section 19: "Phase 1 is
+        a substring match"), shared by ``search_knowledge`` and universal
+        search's provider/asset/document/appointment categories rather than
+        each reimplementing the same facts-bag scan.
+        """
+        entities = await self.list_full(entity_types=entity_types, limit=limit)
+        needle = query.strip().lower()
+        if not needle:
+            return entities
+        return [
+            e
+            for e in entities
+            if needle in e.display_name.lower()
+            or any(needle in v.lower() for v in e.facts.values())
+        ]
 
     async def graph(
         self,
@@ -3286,20 +3311,10 @@ class LifeOpsCore:
         (section 19: "Phase 1 is a case-insensitive substring match").
         """
         self._require(client, Capability.READ_WORLD)
-        entities = await self._world().list_full(
-            entity_types=[WorldEntityType.KNOWLEDGE], limit=limit
+        entities = await self._world().search_full(
+            entity_types=[WorldEntityType.KNOWLEDGE], query=query, limit=limit
         )
-        needle = query.strip().lower()
-        results = [entity_to_knowledge(e) for e in entities]
-        if not needle:
-            return results
-        return [
-            k
-            for k in results
-            if needle in k.title.lower()
-            or needle in k.category.lower()
-            or needle in k.content.lower()
-        ]
+        return [entity_to_knowledge(e) for e in entities]
 
     # --- shopping (BUILD_SPEC section 98) -------------------------------------
     #
@@ -3858,7 +3873,11 @@ class LifeOpsCore:
     async def search(
         self, client: ClientIdentity, *, query: str, limit: int = 10
     ) -> SearchResults:
-        """Universal search over people, preferences, and tasks (section 19).
+        """Universal search (section 19): people, preferences, tasks,
+        providers, assets, appointments, memory, documents, knowledge, and
+        bills — ten of the section's twelve categories (domain/search.py
+        explains why events and actions/historical facts are not among
+        them).
 
         Phase 1 is a case-insensitive substring match; ranking and semantic
         retrieval arrive with the memory layer (Phase 2).
@@ -3866,10 +3885,59 @@ class LifeOpsCore:
         self._require(client, Capability.READ_WORLD)
         # Each section honours its own read capability, the same per-section
         # filtering get_entity_detail does — READ_WORLD alone must not be a
-        # side door to preferences and tasks.
+        # side door to preferences, tasks, memory, or bills.
         can_read_prefs = Capability.READ_PREFERENCES in client.capabilities
         can_read_tasks = Capability.READ_TASKS in client.capabilities
+        can_read_memory = Capability.READ_MEMORY in client.capabilities
+        has_world = self._world_service is not None
         with operation("search.query", client_id=client.client_id):
+            providers: list[WorldEntity] = []
+            assets: list[WorldEntity] = []
+            appointments: list[Appointment] = []
+            documents: list[Document] = []
+            knowledge: list[Knowledge] = []
+            if has_world:
+                providers = await self._world().search_full(
+                    entity_types=[WorldEntityType.PROVIDER], query=query, limit=limit
+                )
+                assets = await self._world().search_full(
+                    entity_types=[WorldEntityType.ASSET], query=query, limit=limit
+                )
+                appointments = [
+                    entity_to_appointment(e)
+                    for e in await self._world().search_full(
+                        entity_types=[WorldEntityType.APPOINTMENT],
+                        query=query,
+                        limit=limit,
+                    )
+                ]
+                documents = [
+                    entity_to_document(e)
+                    for e in await self._world().search_full(
+                        entity_types=[WorldEntityType.DOCUMENT],
+                        query=query,
+                        limit=limit,
+                    )
+                ]
+                knowledge = [
+                    entity_to_knowledge(e)
+                    for e in await self._world().search_full(
+                        entity_types=[WorldEntityType.KNOWLEDGE],
+                        query=query,
+                        limit=limit,
+                    )
+                ]
+
+            bills: list[Bill] = []
+            if can_read_tasks and self._bills_repo is not None:
+                needle = query.strip().lower()
+                all_bills = await self._bills().list_bills(limit=200)
+                bills = [
+                    b
+                    for b in all_bills
+                    if not needle or needle in b.description.lower()
+                ][:limit]
+
             return SearchResults(
                 people=await self._people.find_by_name(query),
                 preferences=(
@@ -3882,4 +3950,15 @@ class LifeOpsCore:
                     if can_read_tasks
                     else []
                 ),
+                providers=providers,
+                assets=assets,
+                appointments=appointments,
+                memories=(
+                    await self._memory().recall(query=query, limit=limit)
+                    if can_read_memory and self._memory_service is not None
+                    else []
+                ),
+                documents=documents,
+                knowledge=knowledge,
+                bills=bills,
             )
