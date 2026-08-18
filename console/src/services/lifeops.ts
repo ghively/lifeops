@@ -999,6 +999,16 @@ export const memoryApi = {
     lifeops
       .post<MemoryRecord>(`/memory/${id}/correct`, { content })
       .then((r) => r.data),
+
+  /**
+   * Section 47's confirm/promote step: a reviewed preference_candidate
+   * becomes a real preference and the candidate closes out. `value`
+   * defaults server-side to the memory's own content when omitted.
+   */
+  promote: (id: string, key: string, value?: string) =>
+    lifeops
+      .post<Preference>(`/memory/${id}/promote`, { key, value })
+      .then((r) => r.data),
 }
 
 export const systemApi = {

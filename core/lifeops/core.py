@@ -1820,6 +1820,78 @@ class LifeOpsCore:
             client_id=client.client_id,
         )
 
+    async def promote_memory(
+        self, client: ClientIdentity, *, memory_id: str, key: str, value: str | None = None
+    ) -> Preference:
+        """Turn a PREFERENCE_CANDIDATE memory into a real preference (section
+        47's confirm/promote step).
+
+        Section 47 parks a candidate "for confirmation" rather than saving it
+        as a preference outright; ``domain/memory.py`` enforces that a
+        candidate can never be read back through the preference surface.
+        Until this method, nothing closed the loop the other way either — no
+        code turned a confirmed candidate into the real thing. A free-text
+        memory carries no preference ``key``, so the caller (the human
+        reviewing it in the Console) supplies one; ``value`` defaults to the
+        memory's own content when the human accepts it as written.
+
+        Requires both WRITE_MEMORY (to close the candidate out) and
+        WRITE_PREFERENCE (to create the record) — held together only by
+        Hermes and the Console. No MCP tool spends this: a candidate exists
+        so a human looks at it, and the model that inferred it confirming
+        its own guess would defeat the review this section asks for — the
+        same boundary ``correct_memory`` already draws by staying off MCP.
+        """
+        self._require(client, Capability.WRITE_MEMORY)
+        self._require(client, Capability.WRITE_PREFERENCE)
+
+        memory = await self._memory().get(memory_id)
+        if memory.type is not MemoryType.PREFERENCE_CANDIDATE:
+            raise ValidationError(
+                f"{memory_id} is a {memory.type} memory, not a preference candidate",
+                memory_id=memory_id,
+                memory_type=str(memory.type),
+            )
+        if memory.valid_to is not None:
+            raise ConflictError(
+                f"{memory_id} is no longer current; a closed candidate cannot "
+                "be promoted",
+                memory_id=memory_id,
+            )
+
+        normalized_key = normalise_key(key)
+        if not normalized_key:
+            raise ValidationError("preference key must not be empty", field="key")
+
+        resolved_value = (value if value is not None else memory.content).strip()
+        if not resolved_value:
+            raise ValidationError("preference value must not be empty", field="value")
+
+        preference = await self.save_preference(
+            client,
+            PreferenceDraft(
+                key=normalized_key,
+                value=resolved_value,
+                subject_id=memory.subject_id,
+                source_type=PreferenceSource.USER_EXPLICIT,
+                confidence=1.0,
+            ),
+        )
+        await self._memory().invalidate(
+            memory_id,
+            reason=f"promoted to preference {normalized_key}",
+            client_id=client.client_id,
+        )
+        await self.audit(
+            client,
+            result="promoted",
+            intent="promote_memory",
+            tool="memory",
+            target=memory_id,
+            risk="low",
+        )
+        return preference
+
     # --- preferences --------------------------------------------------------
 
     async def get_preferences(
