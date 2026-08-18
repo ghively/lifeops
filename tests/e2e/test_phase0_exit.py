@@ -135,8 +135,13 @@ class TestToolSurface:
     email tools — reads, a reversible hold, and four that only *record
     intent* through the Action outbox (book_appointment, cancel_appointment,
     send_email — approving, executing, and independently verifying stay
-    Console/HTTP operations, never MCP tools). The assertion stays exact so a
-    tool can never slip in unreviewed.
+    Console/HTTP operations, never MCP tools). The Hermes self-configuration
+    pass (sections 73-76) adds the workflow-template family and
+    propose_self_change — a pure gate that writes no skill content itself.
+    The assertion stays exact so a tool can never slip in unreviewed; the
+    2026-08-18 audit found the self-configuration tools had shipped without
+    this pin being updated, which is exactly the review this test exists to
+    force.
     """
 
     async def test_exactly_the_sanctioned_tools(self) -> None:
@@ -154,6 +159,8 @@ class TestToolSurface:
             "create_shopping_list",
             "create_task",
             "create_waiting_item",
+            "delete_workflow_template",
+            "due_routines",
             "find_person",
             "find_provider",
             "get_appointment",
@@ -172,7 +179,9 @@ class TestToolSurface:
             "list_bills",
             "list_tasks",
             "list_waiting_items",
+            "list_workflow_templates",
             "place_phone_call",
+            "propose_self_change",
             "read_calendar",
             "read_email_thread",
             "record_asset",
@@ -181,6 +190,7 @@ class TestToolSurface:
             "request_code_change",
             "request_quote",
             "save_preference",
+            "save_workflow_template",
             "search_email",
             "search_knowledge",
             "search_memory",

@@ -40,7 +40,6 @@ from lifeops.domain.approvals import (
     ApprovalStatus,
     authorises,
 )
-from lifeops.domain.approvals import consume as consume_approval
 from lifeops.domain.approvals import decide as decide_approval
 from lifeops.domain.approvals import request as request_approval
 from lifeops.domain.audit import AuditRecord
@@ -909,6 +908,43 @@ class ActionService:
                 f"no such approval: {approval_id}", approval_id=approval_id
             )
         now = now_iso(self._clock)
+
+        action = await self._actions.get(approval.action_id)
+        if action is not None and approval.status is ApprovalStatus.PENDING:
+            # Both guards run BEFORE the decision is persisted, so a refusal
+            # leaves nothing half-recorded.
+            #
+            # A card whose hash no longer matches the action's payload is a
+            # stale card: ``update_payload`` supersedes the old card when it
+            # issues a new one, but a card written before that rule (or by a
+            # racing process) must still be undecidable — approving it would
+            # move the action on the strength of a payload the human was
+            # never shown, and declining it would cancel an action whose
+            # *current* card the human may be about to approve.
+            if approval.payload_hash != action.payload_hash:
+                raise ConflictError(
+                    f"approval {approval.id} was superseded by a payload "
+                    "change; decide the action's current approval instead",
+                    approval_id=approval.id,
+                    action_id=action.id,
+                    reason="approval_superseded",
+                )
+            # And a decision may only move an action that is actually
+            # awaiting one. Without this, approving a leftover card
+            # resurrected a CANCELLED action back to APPROVED — an explicit
+            # decline undone by a second click on a different card.
+            if (
+                approval.expires_at > now
+                and action.status is not ActionStatus.NEEDS_APPROVAL
+            ):
+                raise ConflictError(
+                    f"action {action.id} is {action.status}; deciding this "
+                    "approval can no longer move it",
+                    approval_id=approval.id,
+                    action_id=action.id,
+                    reason="action_not_awaiting_approval",
+                )
+
         decided = decide_approval(approval, approved=approved, by=by, now=now)
 
         with operation(
@@ -963,7 +999,21 @@ class ActionService:
                     action_id=action.id,
                     reason="approval_required",
                 )
-            await self._approvals.update(consume_approval(approval, now=now))
+            # Spend the approval with a conditional write, not a blind update:
+            # two concurrent commits (Console double-click, an HTTP retry, the
+            # Console and the MCP process racing) both pass ``authorises``
+            # above, but only one wins this compare-and-set — the loser gets
+            # None here and must not reach the external call. This is what
+            # makes section 57's "an approval authorises exactly one commit"
+            # true under concurrency, not just sequentially.
+            consumed = await self._approvals.consume(approval.id, consumed_at=now)
+            if consumed is None:
+                raise ConflictError(
+                    f"the approval for action {action.id} was already spent "
+                    "by a concurrent commit",
+                    action_id=action.id,
+                    reason="approval_already_consumed",
+                )
             self._notify(APPROVAL_CHANGED, approval.id)
 
         with operation(
@@ -1012,6 +1062,18 @@ class ActionService:
         action.idempotency_key = make_idempotency_key(action.type, payload)
         if action.type in ACTIONS_REQUIRING_APPROVAL:
             action.status = ActionStatus.NEEDS_APPROVAL
+            # The card for the *old* payload must stop being decidable the
+            # moment a new one exists — otherwise the Approvals screen shows
+            # two live cards for one action, and declining the stale one
+            # cancels an action whose current card the human may approve a
+            # moment later (which used to resurrect it). EXPIRED is the
+            # honest status: nobody decided it; it aged out of relevance.
+            previous = await self._approvals.get_for_action(action.id)
+            if previous is not None and previous.status is ApprovalStatus.PENDING:
+                superseded = previous.model_copy(deep=True)
+                superseded.status = ApprovalStatus.EXPIRED
+                await self._approvals.update(superseded)
+                self._notify(APPROVAL_CHANGED, superseded.id)
             approval = request_approval(action, now=now, requested_by=client_id)
             await self._approvals.create(approval)
             self._notify(APPROVAL_CHANGED, approval.id)
@@ -2797,7 +2859,14 @@ class LifeOpsCore:
     ) -> Action:
         """Persist what the external system returned (section 60 step 3)."""
         action = await self._actions().get(action_id)
-        self._require(client, capability_for_action(str(action.type)))
+        # Deliberately exempt from safe mode: this is the bookkeeping write
+        # for an effect that has already happened outside. Safe mode exists
+        # to stop NEW effects; refusing this write cannot un-send the email —
+        # it can only strand the action in EXECUTING with its approval spent
+        # and no surface left to finish it. The capability check itself
+        # stays: only a client entitled to the action type may write its
+        # outcome.
+        require(client, capability_for_action(str(action.type)), safe_mode=False)
         saved = await self._record_result_with_retry(
             action_id,
             succeeded=succeeded,
@@ -2949,15 +3018,33 @@ class LifeOpsCore:
         """
         objective = objective_from_payload(action.payload)
         result = await self._telephony().dial(objective)
+        # The external effect has happened the moment ``dial`` returns. From
+        # here on, nothing may raise past this frame: a bookkeeping failure
+        # (say, the service request went terminal while the call was being
+        # placed and its state machine refuses the update) must degrade to a
+        # note, not bubble into execute_action's failure path — which would
+        # record a call that WAS placed as FAILED, discard the provider's
+        # call reference, and invite a retry that dials the provider twice.
+        bookkeeping_note = ""
         service_request_id = action.payload.get("service_request_id")
         if service_request_id:
-            await self._apply_call_result(client, str(service_request_id), result)
+            try:
+                await self._apply_call_result(client, str(service_request_id), result)
+            except LifeOpsError as exc:
+                logger.warning(
+                    "call %s placed but its service-request bookkeeping failed: %s",
+                    result.external_reference,
+                    exc,
+                )
+                bookkeeping_note = (
+                    f"; service-request update failed after the call: {exc}"
+                )
         # Only the provider's reference is an external reference. Substituting
         # the idempotency key wrote an internal identifier into the outbox as
         # if the outside world had confirmed something.
         message = (
             f"call {'connected' if result.connected else 'did not connect'}; "
-            f"objective_met={result.objective_met}"
+            f"objective_met={result.objective_met}{bookkeeping_note}"
         )
         return result.external_reference, message
 
