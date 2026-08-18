@@ -12,7 +12,7 @@
 
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Brain, History, Loader2, Pencil, Search, XCircle } from 'lucide-react'
+import { Brain, CheckCircle2, History, Loader2, Pencil, Search, XCircle } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -103,8 +103,10 @@ function MemoryDetail({
   onChanged: (next: MemoryRecord) => void
 }) {
   const queryClient = useQueryClient()
-  const [mode, setMode] = useState<'none' | 'correct' | 'invalidate'>('none')
+  const [mode, setMode] = useState<'none' | 'correct' | 'invalidate' | 'promote'>('none')
   const [draft, setDraft] = useState('')
+  const [promoteKey, setPromoteKey] = useState('')
+  const [promoteValue, setPromoteValue] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
 
   const historyQuery = useQuery({
@@ -146,8 +148,29 @@ function MemoryDetail({
     },
   })
 
-  const pending = correct.isPending || invalidate.isPending
+  const promote = useMutation({
+    mutationFn: () => memoryApi.promote(memory.id, promoteKey.trim(), promoteValue.trim() || undefined),
+    onSuccess: async () => {
+      setMode('none')
+      setPromoteKey('')
+      setPromoteValue('')
+      setActionError(null)
+      // Promotion closes the candidate's validity window as a side effect —
+      // refetch it rather than guessing the new shape.
+      onChanged(await memoryApi.get(memory.id))
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'memory'] })
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'preferences'] })
+    },
+    onError: (error) => {
+      setActionError(
+        error instanceof LifeOpsError ? error.message : 'Could not promote the memory.',
+      )
+    },
+  })
+
+  const pending = correct.isPending || invalidate.isPending || promote.isPending
   const invalidated = memory.valid_to !== null
+  const isCandidate = memory.type === 'preference_candidate'
 
   return (
     <section
@@ -182,7 +205,22 @@ function MemoryDetail({
       </div>
 
       {!invalidated && mode === 'none' && (
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {isCandidate && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setMode('promote')
+                setPromoteKey('')
+                setPromoteValue(memory.content)
+                setActionError(null)
+              }}
+            >
+              <CheckCircle2 className="mr-1 h-3 w-3" />
+              Promote to preference
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -208,6 +246,49 @@ function MemoryDetail({
             Invalidate
           </Button>
         </div>
+      )}
+
+      {mode === 'promote' && (
+        <form
+          className="space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (promoteKey.trim()) promote.mutate()
+          }}
+        >
+          <Input
+            value={promoteKey}
+            onChange={(event) => setPromoteKey(event.target.value)}
+            placeholder="Preference key, e.g. scheduling.earliest_appointment_time"
+            aria-label="Preference key"
+            disabled={pending}
+          />
+          <Input
+            value={promoteValue}
+            onChange={(event) => setPromoteValue(event.target.value)}
+            aria-label="Preference value"
+            disabled={pending}
+          />
+          <p className="text-xs text-muted-foreground">
+            This is a hypothesis until confirmed (§47) — promoting it records a
+            real preference with your explicit authority and closes this
+            candidate out.
+          </p>
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" disabled={!promoteKey.trim() || pending}>
+              {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Promote'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setMode('none')}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
       )}
 
       {mode === 'correct' && (

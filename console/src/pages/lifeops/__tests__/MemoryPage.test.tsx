@@ -34,6 +34,7 @@ vi.mock('@/services/lifeops', async () => {
       remember: vi.fn(),
       invalidate: vi.fn(),
       correct: vi.fn(),
+      promote: vi.fn(),
     },
   }
 })
@@ -281,5 +282,70 @@ describe('Memory screen', () => {
     mockedMemory.list.mockRejectedValue(new Error('Network Error'))
     renderPage()
     expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument()
+  })
+
+  it('only offers promotion for a preference_candidate', async () => {
+    renderPage()
+    await userEvent.click(
+      await screen.findByText('Favourite coffee is a flat white'),
+    )
+    expect(
+      screen.queryByRole('button', { name: /promote to preference/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('promotes a candidate to a real preference with a human-supplied key', async () => {
+    const candidate = makeMemory({
+      id: 'mem_05cand',
+      type: 'preference_candidate',
+      content: 'nothing before ten',
+    })
+    mockedMemory.list.mockResolvedValue({ memories: [candidate], total: 1 })
+    mockedMemory.history.mockResolvedValue({
+      memory_id: 'mem_05cand',
+      history: [candidate],
+      total: 1,
+    })
+    mockedMemory.promote.mockResolvedValue({
+      id: 'pref_01',
+      key: 'scheduling.earliest_appointment_time',
+      value: 'nothing before ten',
+      subject_id: 'person_gene',
+      source_type: 'user_explicit',
+      confidence: 1,
+      importance: 0.5,
+      valid_from: '2026-08-16T10:00:00Z',
+      created_at: '2026-08-16T10:00:00Z',
+    } as never)
+    mockedMemory.get.mockResolvedValue(
+      makeMemory({
+        ...candidate,
+        valid_to: '2026-08-16T11:00:00Z',
+        invalidation_reason: 'promoted to preference scheduling.earliest_appointment_time',
+      }),
+    )
+
+    renderPage()
+    await userEvent.click(await screen.findByText('nothing before ten'))
+    await userEvent.click(
+      screen.getByRole('button', { name: /promote to preference/i }),
+    )
+
+    const submit = screen.getByRole('button', { name: 'Promote', exact: true })
+    expect(submit).toBeDisabled()
+
+    await userEvent.type(
+      screen.getByLabelText('Preference key'),
+      'scheduling.earliest_appointment_time',
+    )
+    await userEvent.click(submit)
+
+    await waitFor(() =>
+      expect(mockedMemory.promote).toHaveBeenCalledWith(
+        'mem_05cand',
+        'scheduling.earliest_appointment_time',
+        'nothing before ten',
+      ),
+    )
   })
 })
