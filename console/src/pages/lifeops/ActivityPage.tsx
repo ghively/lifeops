@@ -1,11 +1,14 @@
 /**
- * Activity — a human-readable feed of what the assistant did, and why
- * (BUILD_SPEC section 21).
+ * Activity — what the assistant did, and why (BUILD_SPEC sections 21, 62).
  *
- * Phase 1 serves recent entries from an in-memory buffer in LifeOps Core:
- * the feed is ephemeral and disappears on restart. The durable, queryable
- * audit trail (BUILD_SPEC section 62) arrives in Phase 4, and the screen
- * labels itself accordingly rather than implying a history it does not have.
+ * Two sources, shown together because each covers what the other cannot:
+ *
+ *  - The durable audit log (section 62), read from NornicDB. It survives
+ *    restarts and records every semantic operation from every process —
+ *    including everything Hermes does over MCP, which this HTTP process
+ *    never sees live.
+ *  - This process's in-memory feed: finer-grained (durations, trace IDs)
+ *    but ephemeral and blind to the MCP process.
  */
 
 import { useQuery } from '@tanstack/react-query'
@@ -13,15 +16,55 @@ import { Activity, Loader2 } from 'lucide-react'
 
 import { QueryError } from '@/components/QueryError'
 import { cn } from '@/lib/utils'
-import { errorMessage, systemApi, type ActivityEntry } from '@/services/lifeops'
+import {
+  auditApi,
+  errorMessage,
+  systemApi,
+  type ActivityEntry,
+  type AuditRecord,
+} from '@/services/lifeops'
 
 function formatTime(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleTimeString(undefined, {
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function AuditRow({ record }: { record: AuditRecord }) {
+  const failed =
+    record.result.includes('fail') ||
+    record.result.includes('denied') ||
+    record.result.includes('error')
+  const detail = [record.tool, record.target, record.action].find(Boolean)
+  return (
+    <div className="rounded-lg border border-border/60 px-4 py-3">
+      <div className="flex items-baseline justify-between gap-4">
+        <p className="min-w-0 flex-1">
+          <span className="font-mono text-sm">{record.intent ?? record.result}</span>{' '}
+          <span
+            className={cn('text-xs', failed ? 'text-red-600' : 'text-muted-foreground')}
+          >
+            {record.result}
+          </span>
+        </p>
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {formatTime(record.timestamp)}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span className="font-medium">{record.client}</span>
+        {record.risk && <span>risk {record.risk}</span>}
+        {detail && <span className="font-mono">{detail}</span>}
+        {record.verification && <span>verification: {record.verification}</span>}
+        {record.trace_id && <span className="font-mono">{record.trace_id}</span>}
+      </div>
+    </div>
+  )
 }
 
 function ActivityRow({ entry }: { entry: ActivityEntry }) {
@@ -56,30 +99,39 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
 }
 
 export function ActivityPage() {
+  const auditQuery = useQuery({
+    queryKey: ['lifeops', 'audit'],
+    queryFn: () => auditApi.read({ limit: 100 }),
+    refetchInterval: 30_000,
+  })
   const activityQuery = useQuery({
     queryKey: ['lifeops', 'activity'],
     queryFn: systemApi.getActivity,
     refetchInterval: 15_000,
   })
 
-  if (activityQuery.isError) {
+  if (auditQuery.isError && activityQuery.isError) {
     return (
       <div className="p-8">
         <QueryError
-          message={errorMessage(activityQuery.error)}
-          onRetry={() => void activityQuery.refetch()}
+          message={errorMessage(auditQuery.error)}
+          onRetry={() => {
+            void auditQuery.refetch()
+            void activityQuery.refetch()
+          }}
         />
       </div>
     )
   }
 
+  const records = auditQuery.data?.records ?? []
   // Newest first, regardless of the order the buffer happened to return.
   const entries = [...(activityQuery.data ?? [])].sort(
     (a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime(),
   )
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-8">
+    <div className="mx-auto max-w-3xl space-y-8 p-8">
       <header>
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
           <Activity className="h-5 w-5" />
@@ -90,30 +142,55 @@ export function ActivityPage() {
         </p>
       </header>
 
-      {activityQuery.isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading…
-        </div>
-      ) : entries.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
-          No recent activity.
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold">Audit log</h2>
+        <p className="text-xs text-muted-foreground">
+          Durable, from every surface — including everything Hermes does over
+          MCP. Survives restarts.
         </p>
-      ) : (
-        <div className="space-y-2">
-          {entries.map((entry, index) => (
-            <ActivityRow key={`${entry.ts}-${index}`} entry={entry} />
-          ))}
-        </div>
-      )}
+        {auditQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading…
+          </div>
+        ) : records.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border/60 px-4 py-6 text-center text-sm text-muted-foreground">
+            {auditQuery.isError
+              ? `The audit log could not be read: ${errorMessage(auditQuery.error)}`
+              : 'Nothing recorded yet.'}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {records.map((record) => (
+              <AuditRow key={record.id} record={record} />
+            ))}
+          </div>
+        )}
+      </section>
 
-      <footer className="rounded-lg border border-dashed border-border/60 px-4 py-4 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">Ephemeral recent activity</p>
-        <p className="mt-1">
-          This feed is held in memory and resets when LifeOps Core restarts.
-          The durable audit trail arrives in Phase 4.
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold">This process, live</h2>
+        <p className="text-xs text-muted-foreground">
+          Finer-grained (durations, traces) but in-memory only: it resets on
+          restart and does not see the separately running MCP server.
         </p>
-      </footer>
+        {activityQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading…
+          </div>
+        ) : entries.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border/60 px-4 py-6 text-center text-sm text-muted-foreground">
+            No recent activity in this process.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {entries.map((entry, index) => (
+              <ActivityRow key={`${entry.ts}-${index}`} entry={entry} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }

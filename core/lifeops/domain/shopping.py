@@ -339,6 +339,28 @@ def mark_failed(shopping_list: ShoppingList, *, now: str) -> ShoppingList:
     return updated
 
 
+def cancel_submission(shopping_list: ShoppingList, *, now: str) -> ShoppingList:
+    """Return a SUBMITTING list to CART_BUILT.
+
+    A declined or failed checkout is not the end of the groceries: the cart
+    still exists, only the order did not go out. Without this exit,
+    SUBMITTING wedged the list forever — every operation refuses a
+    SUBMITTING list, and nothing else moved it.
+    """
+    if shopping_list.status is not ShoppingListStatus.SUBMITTING:
+        raise ValidationError(
+            f"shopping list {shopping_list.id} is {shopping_list.status}; only "
+            "a SUBMITTING list has a submission to cancel",
+            shopping_list_id=shopping_list.id,
+            status=str(shopping_list.status),
+        )
+    updated = shopping_list.model_copy(deep=True)
+    updated.status = ShoppingListStatus.CART_BUILT
+    updated.checkout_action_id = None
+    updated.updated_at = now
+    return updated
+
+
 # --- world graph projection ----------------------------------------------------
 #
 # Same discipline as ``domain/calendar.py``'s ``appointment_to_entity`` /

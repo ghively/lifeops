@@ -111,8 +111,14 @@ function SaveTemplateDialog({
             action_type: s.action_type.trim() || null,
           })),
         trigger,
+        // The input holds a *local* wall time; new Date() parses it as such
+        // and toISOString() converts to real UTC. Appending "Z" to the raw
+        // value stamped local time as UTC and shifted every save by the
+        // user's offset.
         next_run_at:
-          trigger === 'schedule' && nextRunAt ? `${nextRunAt}:00Z` : undefined,
+          trigger === 'schedule' && nextRunAt
+            ? new Date(nextRunAt).toISOString()
+            : undefined,
         // Carried explicitly: the server rebuilds the template from this
         // payload, so omitting it would switch a paused routine back on.
         enabled,
@@ -404,6 +410,9 @@ export function RoutinesPage() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'workflow-templates'] })
     },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'workflow-templates'] })
+    },
   })
 
   if (templatesQuery.isError) {
@@ -454,7 +463,13 @@ export function RoutinesPage() {
               key={template.id}
               template={template}
               onRevise={() => setDialogTemplate(template)}
-              onDelete={() => remove.mutate(template.id)}
+              onDelete={() => {
+                // A routine is durable configuration; deleting it should
+                // take one deliberate confirmation, not one stray click.
+                if (window.confirm(`Delete the routine "${template.name}"?`)) {
+                  remove.mutate(template.id)
+                }
+              }}
               deleting={remove.isPending && remove.variables === template.id}
             />
           ))}

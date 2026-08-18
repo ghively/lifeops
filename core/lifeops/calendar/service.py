@@ -77,22 +77,45 @@ class CalendarProviderService:
             "no calendar provider is enabled and fully configured yet"
         )
 
-    async def health(self) -> HealthReport:
+    async def _with_provider(self, call: Callable[[CalendarProvider], Any]) -> Any:
+        """Build the active provider, run one call, and close its transport.
+
+        Providers are constructed per call from current configuration; the
+        CalDAV adapter owns an httpx.AsyncClient, and nothing ever closed it
+        — every calendar call leaked a connection pool.
+        """
         provider = self._build()
-        healthy, message = await provider.health()
-        return self._config.record_health("calendar", healthy=healthy, message=message)
+        try:
+            return await call(provider)
+        finally:
+            closer = getattr(provider, "aclose", None)
+            if closer is not None:
+                await closer()
+
+    async def health(self) -> HealthReport:
+        async def run(provider: CalendarProvider) -> HealthReport:
+            healthy, message = await provider.health()
+            return self._config.record_health("calendar", healthy=healthy, message=message)
+
+        return await self._with_provider(run)
 
     async def list_events(self, *, start_at: str, end_at: str) -> list[CalendarEvent]:
-        return await self._build().list_events(start_at=start_at, end_at=end_at)
+        return await self._with_provider(
+            lambda p: p.list_events(start_at=start_at, end_at=end_at)
+        )
 
     async def free_busy(self, *, start_at: str, end_at: str) -> list[FreeBusySlot]:
-        return await self._build().free_busy(start_at=start_at, end_at=end_at)
+        return await self._with_provider(
+            lambda p: p.free_busy(start_at=start_at, end_at=end_at)
+        )
 
     async def create_hold(
         self, *, subject: str, start_at: str, end_at: str, notes: str = ""
     ) -> str:
-        return await self._build().create_hold(
-            subject=subject, start_at=start_at, end_at=end_at, notes=notes
+        return await self._with_provider(
+            lambda p: p.create_hold(
+                subject=subject, start_at=start_at, end_at=end_at, notes=notes
+            )
         )
 
     async def create_event(
@@ -105,13 +128,15 @@ class CalendarProviderService:
         notes: str = "",
         hold_reference: str | None = None,
     ) -> str:
-        return await self._build().create_event(
-            subject=subject, start_at=start_at, end_at=end_at,
-            location=location, notes=notes, hold_reference=hold_reference,
+        return await self._with_provider(
+            lambda p: p.create_event(
+                subject=subject, start_at=start_at, end_at=end_at,
+                location=location, notes=notes, hold_reference=hold_reference,
+            )
         )
 
     async def get_event(self, external_event_id: str) -> CalendarEvent | None:
-        return await self._build().get_event(external_event_id)
+        return await self._with_provider(lambda p: p.get_event(external_event_id))
 
     async def cancel_event(self, external_event_id: str) -> None:
-        await self._build().cancel_event(external_event_id)
+        await self._with_provider(lambda p: p.cancel_event(external_event_id))

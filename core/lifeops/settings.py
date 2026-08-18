@@ -53,6 +53,13 @@ class Settings(BaseSettings):
 
     # --- State directories --------------------------------------------------
     state_dir: Path = Field(default_factory=_default_state_dir)
+    # Where Code Change Requests land (BUILD_SPEC section 74). None means
+    # resolve automatically: the repository's changes/requests/ when running
+    # from a writable checkout, else a directory under state_dir — the MCP
+    # server's working directory is whatever its client launched it with, so
+    # a CWD-relative path would scatter requests (or fail under a read-only
+    # deployment).
+    change_requests_dir: Path | None = None
 
     # --- Behaviour ----------------------------------------------------------
     log_level: str = "INFO"
@@ -89,6 +96,24 @@ class Settings(BaseSettings):
     @property
     def logs_dir(self) -> Path:
         return self.state_dir / "logs"
+
+    @property
+    def change_requests_path(self) -> Path:
+        """Where Code Change Requests are written (section 74).
+
+        The repository's ``changes/requests/`` when this code runs from a
+        writable checkout — a coding agent reads the repository, which is the
+        point of the file format. Otherwise (installed package, read-only
+        deployment) they land under ``state_dir`` where they can at least be
+        collected.
+        """
+        if self.change_requests_dir is not None:
+            return self.change_requests_dir
+        repo_root = Path(__file__).resolve().parents[2]
+        candidate = repo_root / "changes" / "requests"
+        if candidate.parent.is_dir() and os.access(candidate.parent, os.W_OK):
+            return candidate
+        return self.state_dir / "change-requests"
 
     def ensure_dirs(self) -> None:
         for directory in (self.state_dir, self.secrets_dir, self.config_dir, self.logs_dir):

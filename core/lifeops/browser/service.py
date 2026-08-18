@@ -28,7 +28,9 @@ def _build_real(settings: dict[str, Any], secrets: SecretStore) -> BrowserWorker
     return RealBrowserWorker(
         endpoint=settings.get("endpoint"),
         headless=bool(settings.get("headless", True)),
-        timeout_s=float(settings.get("timeout_s") or 30),
+        # None means unset; a stored 0 is the user's value, not a request
+        # for the default.
+        timeout_s=30.0 if settings.get("timeout_s") is None else float(settings["timeout_s"]),
     )
 
 

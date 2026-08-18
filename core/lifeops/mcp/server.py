@@ -32,10 +32,14 @@ it still needs a human's approval before anything is booked (sections 57-58).
 
 Client identity
 ---------------
-Identity is declared per *connection*, not per call, because a tool argument
-is model-controlled and would let an agent name itself Hermes. Over stdio each
-client gets its own launch entry with ``--client``; over HTTP the identity
-comes from the ``X-LifeOps-Client`` header.
+Identity is declared per *process*, not per call, because a tool argument
+is model-controlled and would let an agent name itself Hermes. Every
+transport — stdio, sse, streamable-http — serves the single ``--client``
+identity the process was launched with; nothing reads a header, so an HTTP
+deployment that needs distinct identities needs distinct server processes.
+(An earlier version of this docstring claimed an ``X-LifeOps-Client``
+header selected the identity over HTTP; no such code exists, and believing
+it would hand every connecting client the launch identity.)
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
+from pydantic import ValidationError as PydanticValidationError
 
 from lifeops.container import Container
 from lifeops.domain.calendar import AppointmentHoldDraft
@@ -104,13 +109,27 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
         lifespan=lifespan,
     )
 
-    def _fail(exc: LifeOpsError) -> dict[str, Any]:
+    def _fail(exc: LifeOpsError | PydanticValidationError) -> dict[str, Any]:
         """Return a structured failure.
 
         Errors come back as data rather than as an exception string so the
         calling model can distinguish "you may not do that" from "that does
         not exist" and react appropriately instead of retrying blindly.
+
+        Pydantic errors are translated too: several tools build domain
+        drafts inline, and an over-length memory or a typo'd shopping-item
+        key must come back as the same {ok: false} shape, not escape as an
+        unstructured protocol error.
         """
+        if isinstance(exc, PydanticValidationError):
+            first = exc.errors()[0]
+            field = ".".join(str(part) for part in first["loc"])
+            return {
+                "ok": False,
+                "error": "validation_error",
+                "message": f"{field}: {first['msg']}",
+                "field": field,
+            }
         return {"ok": False, "error": exc.code, "message": exc.message, **exc.details}
 
     def _memory_view(memory: MemoryRecord) -> dict[str, Any]:
@@ -164,7 +183,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     }
                 person = await container.core.get_person(client, person_id=person_id)
                 return {"ok": True, "person": person.model_dump()}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -211,7 +230,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ],
                     "total": len(prefs),
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -253,7 +272,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ],
                     "total": len(tasks),
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     # --- writes -------------------------------------------------------------
@@ -320,7 +339,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         "supersedes": pref.supersedes,
                     },
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -380,7 +399,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         "due_at": task.due_at,
                     },
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     # --- durable work (Phase 4, BUILD_SPEC sections 13, 14, 51, 53, 54) -------
@@ -437,7 +456,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ),
                 )
                 return {"ok": True, "provider": entity.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -479,7 +498,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ),
                 )
                 return {"ok": True, "asset": entity.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -562,7 +581,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         "status": str(item.status),
                     },
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -651,7 +670,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         "current_action": task.current_action,
                     },
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     # --- memory (Phase 2, BUILD_SPEC sections 42-47) --------------------------
@@ -694,7 +713,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     "memories": [_memory_view(m) for m in memories],
                     "total": len(memories),
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -763,7 +782,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ),
                 )
                 return {"ok": True, "memory": _memory_view(memory)}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -792,7 +811,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     client, memory_id=memory_id, reason=reason
                 )
                 return {"ok": True, "memory": _memory_view(memory)}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     # --- world graph (Phase 3, BUILD_SPEC section 92) -------------------------
@@ -826,7 +845,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     "people": [p.model_dump() for p in people],
                     "total": len(people),
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -883,7 +902,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     "providers": [node.model_dump(mode="json") for node in graph.nodes],
                     "total": len(graph.nodes),
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -911,7 +930,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     client, entity_id=entity_id
                 )
                 return {"ok": True, "neighborhood": neighborhood.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -938,7 +957,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                 # `covers` travels with the answer so the model does not read
                 # an empty history as "nothing ever happened".
                 return {"ok": True, **history.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     # --- calendar and email (Phase 7, BUILD_SPEC sections 61, 63, 64, 96) ----
@@ -977,7 +996,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     "events": [e.model_dump(mode="json") for e in events],
                     "total": len(events),
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -999,7 +1018,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     client, start_at=start_at, end_at=end_at
                 )
                 return {"ok": True, "free_busy": result.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1045,7 +1064,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ),
                 )
                 return {"ok": True, "appointment": appointment.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1073,7 +1092,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     client, appointment_id=appointment_id
                 )
                 return {"ok": True, "action": action.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1094,7 +1113,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     client, appointment_id=appointment_id
                 )
                 return {"ok": True, "action": action.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1119,7 +1138,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     "messages": [m.model_dump(mode="json") for m in messages],
                     "total": len(messages),
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1138,7 +1157,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             try:
                 thread = await container.core.read_email_thread(client, thread_id=thread_id)
                 return {"ok": True, "thread": thread.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1184,7 +1203,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ),
                 )
                 return {"ok": True, "action": action.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1226,7 +1245,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ),
                 )
                 return {"ok": True, "service_request": request.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1250,7 +1269,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     client, service_request_id=service_request_id
                 )
                 return {"ok": True, "service_request": request.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1289,7 +1308,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     collect=collect,
                 )
                 return {"ok": True, "action": action.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1322,7 +1341,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     collect=collect,
                 )
                 return {"ok": True, "action": action.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1353,7 +1372,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     appointment_id=appointment_id,
                 )
                 return {"ok": True, "action": action.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1380,7 +1399,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     "results": [r.model_dump(mode="json") for r in results],
                     "total": len(results),
                 }
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1418,7 +1437,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ),
                 )
                 return {"ok": True, "shopping_list": shopping_list.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1440,7 +1459,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             try:
                 action = await container.core.build_grocery_cart(client, list_id=list_id)
                 return {"ok": True, "action": action.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1471,7 +1490,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     ),
                 )
                 return {"ok": True, "shopping_list": shopping_list.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     @server.tool(
@@ -1494,7 +1513,68 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             try:
                 action = await container.core.submit_grocery_order(client, list_id=list_id)
                 return {"ok": True, "action": action.model_dump(mode="json")}
-            except LifeOpsError as exc:
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="request_code_change",
+        title="Request a code change",
+        description=(
+            "File a Code Change Request (BUILD_SPEC sections 73-74). Use "
+            "this when a problem lives in protected machinery you may not "
+            "modify yourself — authorization, approval validation, payment "
+            "code, the secret store, MCP authentication, CI — or when any "
+            "code change is needed that goes beyond your permitted "
+            "self-changes (skills, preferences, routines, workflow "
+            "templates). This writes a request file for a coding agent or "
+            "human to act on; it changes NOTHING itself, and nothing will "
+            "change until someone picks the request up. Describe the "
+            "observed and desired behaviour concretely — the reader was not "
+            "there."
+        ),
+    )
+    async def request_code_change(
+        component: Annotated[
+            str, Field(description="Which part of LifeOps, e.g. 'approval validation'.")
+        ],
+        problem: Annotated[str, Field(description="What is wrong, in one or two sentences.")],
+        observed_behavior: Annotated[str, Field(description="What happens now.")],
+        desired_behavior: Annotated[str, Field(description="What should happen instead.")],
+        risk: Annotated[
+            str, Field(description="Your judgement of the change's risk: low, medium, or high.")
+        ] = "medium",
+        task_ids: Annotated[
+            list[str] | None,
+            Field(description="Related LifeOps task IDs, as evidence."),
+        ] = None,
+        trace_ids: Annotated[
+            list[str] | None,
+            Field(description="Trace IDs of failing operations, as evidence."),
+        ] = None,
+        failure_count: Annotated[
+            int, Field(description="How many times the problem was observed.")
+        ] = 0,
+        suggested_acceptance_tests: Annotated[
+            list[str] | None,
+            Field(description="What a fix must demonstrably do."),
+        ] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                request = await container.core.request_code_change(
+                    client,
+                    component=component,
+                    problem=problem,
+                    observed_behavior=observed_behavior,
+                    desired_behavior=desired_behavior,
+                    risk=risk,
+                    task_ids=task_ids,
+                    trace_ids=trace_ids,
+                    failure_count=failure_count,
+                    suggested_acceptance_tests=suggested_acceptance_tests,
+                )
+                return {"ok": True, "change_request": request.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
     register_resources(server, core=container.core, client=client, clock=container.clock)
