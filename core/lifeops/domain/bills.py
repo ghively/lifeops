@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from lifeops.errors import ValidationError
 from lifeops.ids import new_ulid_id, slug_id
@@ -139,25 +139,10 @@ class PayeeDraft(BaseModel):
 
     display_name: str = Field(min_length=1, max_length=200)
     provider_entity_id: str | None = None
+    #: Checked by ``validate_secret_ref`` when the payee is recorded, not by a
+    #: field validator: a pydantic ValueError here surfaces as a 500 rather
+    #: than the 422 with a stable code that both the Console and a model need.
     secret_ref: str | None = None
-
-    @field_validator("secret_ref")
-    @classmethod
-    def _looks_like_a_reference(cls, value: str | None) -> str | None:
-        """Refuse anything that looks like the credential itself.
-
-        A caller passing a card number here would otherwise persist it to
-        NornicDB, which section 72 and SECURITY.md both forbid. Digits are the
-        cheap tell, and a reference never needs to be mostly digits.
-        """
-        if value is None:
-            return None
-        digits = sum(character.isdigit() for character in value)
-        if digits >= 8:
-            raise ValueError(
-                "secret_ref must reference a stored secret, not contain one"
-            )
-        return value
 
 
 class BillDraft(BaseModel):
@@ -172,6 +157,26 @@ class BillDraft(BaseModel):
 
 
 # --- pure rules ---------------------------------------------------------------
+
+
+def validate_secret_ref(value: str | None) -> str | None:
+    """Refuse anything that looks like the credential itself.
+
+    Section 72: credentials are never exposed to Hermes, and the cheapest way
+    to guarantee that is for them never to enter the graph. A reference never
+    needs to be mostly digits, so digits are the tell.
+
+    Raises a LifeOps ValidationError rather than a pydantic one so the HTTP
+    surface answers 422 with a stable code instead of a 500.
+    """
+    if value is None:
+        return None
+    if sum(character.isdigit() for character in value) >= 8:
+        raise ValidationError(
+            "secret_ref must reference a stored secret, not contain one",
+            field="secret_ref",
+        )
+    return value
 
 
 def validate_amount(amount: str) -> str:
