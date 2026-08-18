@@ -19,6 +19,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from lifeops.domain.actions import Action, authorised_scope
+from lifeops.errors import ValidationError
 from lifeops.ids import new_approval_id
 
 #: How long an approval stays usable. Long enough to walk away from the
@@ -138,7 +139,20 @@ def authorises(approval: Approval, action: Action, *, now: str) -> bool:
 def decide(
     approval: Approval, *, approved: bool, by: str, now: str
 ) -> Approval:
-    """Record the human's decision."""
+    """Record the human's decision.
+
+    A decision is final: re-deciding a DECLINED approval to APPROVED within
+    the TTL would resurrect an already-cancelled action, and re-deciding
+    after execution would overwrite the outbox's record of what happened.
+    """
+    if approval.status is not ApprovalStatus.PENDING:
+        raise ValidationError(
+            f"approval {approval.id} is already {approval.status}; "
+            "a decision is final",
+            field="status",
+            approval_id=approval.id,
+            status=str(approval.status),
+        )
     updated = approval.model_copy(deep=True)
     if approval.expires_at <= now:
         updated.status = ApprovalStatus.EXPIRED
