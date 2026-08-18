@@ -229,22 +229,17 @@ authentication layer, and the launch configuration is the trust anchor.
 Mitigated by the fact that such a process already has the user's filesystem
 access. Revisit if LifeOps ever moves to a networked MCP transport.
 
-### The Activity screen shows only its own process (the audit log is durable)
+### Configuration routes check MANAGE_CONFIGURATION (since 2026-08-18)
 
-Phase 4 added the durable audit trail in NornicDB (`GET /audit` serves it),
-so "why did Hermes do that?" survives restarts. But the Console's Activity
-screen still reads the HTTP process's in-memory buffer: operations performed
-in the separately running MCP process — everything Hermes does — never appear
-there. The durable record has them; the screen does not yet read it.
-
-### The configuration surface has no capability check
-
-`MANAGE_CONFIGURATION` is granted to the Console in the manifest but enforced
-nowhere: the `/config/*` routes take no client identity and check no
-capability, so they are gated only by the optional bearer password. With auth
-disabled, any local process can toggle safe mode or edit provider
-configuration. Setting the console password closes this; a capability check
-on the config routes is the outstanding fix.
+The `/config/*` and `/voice/*` management routes require the
+`MANAGE_CONFIGURATION` capability, enforced in the HTTP adapter because the
+config surface deliberately bypasses LifeOpsCore. The check ignores safe
+mode on purpose: configuration is how the emergency stop is lifted, so the
+stop must not lock the door to its own switch. Note the limit of what this
+buys: HTTP identity is a self-declared header (see Identity above), so with
+auth disabled a local process can still claim the Console's identity — the
+capability check removes the accidental paths, the console password removes
+the deliberate ones. Set the password.
 
 ### WebSocket events carry no payload beyond the type (accepted)
 
