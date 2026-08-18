@@ -1,14 +1,14 @@
 /**
  * Search — universal search across LifeOps (BUILD_SPEC section 19).
  *
- * Phase 1 searches people, preferences, and tasks through LifeOps Core's
- * `/search` endpoint. Memory, documents, knowledge, and the other result
- * kinds in the spec arrive as their phases land; the screen says so instead
- * of implying they were searched and found nothing.
+ * Ten of the section's twelve categories: people, preferences, tasks,
+ * providers, assets, appointments, memory, documents, knowledge, and bills.
+ * Events and actions/historical facts are still missing — the footer says
+ * so rather than implying everything was searched.
  *
- * Tasks link to the Tasks screen. People and preferences have no dedicated
- * screen in Phase 1, so they render as plain rows rather than links to a
- * placeholder.
+ * Tasks link to the Tasks screen. The rest render as plain rows: providers,
+ * assets, appointments, memory, documents, knowledge, and bills have no
+ * dedicated Console screen to link to yet.
  */
 
 import { useState } from 'react'
@@ -40,7 +40,14 @@ export function SearchPage() {
     results !== undefined &&
     results.people.length === 0 &&
     results.preferences.length === 0 &&
-    results.tasks.length === 0
+    results.tasks.length === 0 &&
+    results.providers.length === 0 &&
+    results.assets.length === 0 &&
+    results.appointments.length === 0 &&
+    results.memories.length === 0 &&
+    results.documents.length === 0 &&
+    results.knowledge.length === 0 &&
+    results.bills.length === 0
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-8">
@@ -50,7 +57,8 @@ export function SearchPage() {
           Search
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Search across the people, preferences, and tasks LifeOps holds.
+          Search across people, preferences, tasks, providers, assets,
+          appointments, memory, documents, knowledge, and bills.
         </p>
       </header>
 
@@ -76,7 +84,8 @@ export function SearchPage() {
 
       {query.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
-          Search people, preferences, and tasks.
+          Search people, preferences, tasks, providers, assets, appointments,
+          memory, documents, knowledge, and bills.
         </p>
       ) : searchQuery.isError ? (
         <QueryError
@@ -159,14 +168,157 @@ export function SearchPage() {
               </div>
             </section>
           )}
+
+          {results.providers.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Providers
+              </h2>
+              <div className="space-y-2">
+                {results.providers.map((provider) => (
+                  <div
+                    key={provider.id}
+                    className="rounded-lg border border-border/60 px-4 py-3"
+                  >
+                    <p className="font-medium">{provider.display_name}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {results.assets.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Assets
+              </h2>
+              <div className="space-y-2">
+                {results.assets.map((asset) => (
+                  <div
+                    key={asset.id}
+                    className="rounded-lg border border-border/60 px-4 py-3"
+                  >
+                    <p className="font-medium">{asset.display_name}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {results.appointments.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Appointments
+              </h2>
+              <div className="space-y-2">
+                {results.appointments.map((appointment) => (
+                  <div
+                    key={appointment.id}
+                    className="rounded-lg border border-border/60 px-4 py-3"
+                  >
+                    <p className="font-medium">{appointment.subject}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {appointment.start_at}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {results.memories.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Memory
+              </h2>
+              <div className="space-y-2">
+                {results.memories.map((memory) => (
+                  <div
+                    key={memory.id}
+                    className="rounded-lg border border-border/60 px-4 py-3"
+                  >
+                    <p className="font-medium">{memory.content}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {results.documents.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Documents
+              </h2>
+              <div className="space-y-2">
+                {results.documents.map((document) => (
+                  <div
+                    key={document.id}
+                    className="rounded-lg border border-border/60 px-4 py-3"
+                  >
+                    <p className="font-medium">{document.title}</p>
+                    {document.summary && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {document.summary}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {results.knowledge.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Knowledge
+              </h2>
+              <div className="space-y-2">
+                {results.knowledge.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-lg border border-border/60 px-4 py-3"
+                  >
+                    <p className="font-medium">{item.title}</p>
+                    {item.content && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {item.content}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {results.bills.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Bills
+              </h2>
+              <div className="space-y-2">
+                {results.bills.map((bill) => (
+                  <div
+                    key={bill.id}
+                    className="rounded-lg border border-border/60 px-4 py-3"
+                  >
+                    <p className="font-medium">{bill.description}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {bill.amount} {bill.currency}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       ) : null}
 
       <footer className="rounded-lg border border-dashed border-border/60 px-4 py-4 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">Phase 1</p>
+        <p className="font-medium text-foreground">Still missing</p>
         <p className="mt-1">
-          Memory, documents, knowledge, providers, and the rest of the world
-          model join search as their phases land.
+          Events (no domain model exists yet to search) and actions/historical
+          facts (the durable audit log has its own screen instead). Ranking and
+          semantic retrieval remain a substring match for now.
         </p>
       </footer>
     </div>
