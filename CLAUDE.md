@@ -213,12 +213,14 @@ regression here — the fakes will stay green.
 
 Recorded in [SECURITY.md](SECURITY.md), not hidden. The 2026-08-18 full
 audit ([docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md))
-holds the complete open-findings list — spec gaps (Console placeholder
-screens, the Voice Bridge, Hermes skills, universal search breadth,
-`request_code_change` unexposed) and design-decision bugs (payee approval
-split-brain, expired-approval deadlock, shopping SUBMITTING wedge,
-verify-after-hold-expiry, config routes without a capability check, the
-Console's missing execute/verify surface). Highlights:
+holds the complete findings list. The design-decision bugs it originally
+recorded (payee approval split-brain, expired-approval deadlock, shopping
+SUBMITTING wedge, verify-after-hold-expiry, unenforced config capability,
+the Console's missing execute/verify surface, `request_code_change`
+unexposed) were all fixed in the follow-up pass on the same branch; what
+remains open are the spec gaps — Console placeholder screens (Calendar,
+Knowledge, Files, Hermes), the Phase-0 Today view, the Voice Bridge,
+Hermes skills, and universal search breadth. Highlights:
 
 - World entity facts are current-only: there is no per-fact supersession
   chain, unlike preferences and memories. `get_entity_history` therefore

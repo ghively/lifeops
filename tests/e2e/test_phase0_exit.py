@@ -169,6 +169,7 @@ class TestToolSurface:
             "record_asset",
             "record_provider",
             "remember",
+            "request_code_change",
             "request_quote",
             "save_preference",
             "search_email",

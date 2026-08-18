@@ -180,7 +180,7 @@ def _audit_record(stack: DurableStack, *, suffix: str, **overrides: object) -> A
 
 
 async def _ordered_audit_ids(
-    stack: DurableStack, *, expected: set[str], attempts: int = 10
+    stack: DurableStack, *, expected: set[str], attempts: int = 15
 ) -> list[str]:
     """Audit ids for this test's target, newest first, once both are visible.
 
@@ -191,7 +191,9 @@ async def _ordered_audit_ids(
 
     Polling for the expected set makes the test assert *ordering*, which is
     what it is for, rather than incidentally asserting write latency. It still
-    fails if a record never arrives — it gives up after ``attempts``.
+    fails if a record never arrives — it gives up after ``attempts`` (a full
+    suite run under load once exceeded the previous ~5.5s budget; the current
+    one allows ~12s before giving up).
     """
     import asyncio
 
