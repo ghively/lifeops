@@ -595,6 +595,19 @@ export const tasksApi = {
   ) => lifeops.patch<Task>(`/tasks/${id}`, payload).then((r) => r.data),
 }
 
+export const calendarApi = {
+  /**
+   * Appointments LifeOps is driving — holds and bookings (BUILD_SPEC
+   * sections 63, 96). 400s with `configuration_error` on a deployment with
+   * no calendar provider configured; callers should treat that as "no
+   * calendar yet", not a failure.
+   */
+  listAppointments: (params?: { task_id?: string }) =>
+    lifeops
+      .get<{ appointments: Appointment[]; total: number }>('/appointments', { params })
+      .then((r) => r.data),
+}
+
 export const waitingApi = {
   /** The Waiting screen's list (BUILD_SPEC section 13). */
   list: (params?: { status?: WaitingStatus[]; limit?: number }) =>
