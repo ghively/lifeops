@@ -275,6 +275,32 @@ class TestClientIdentityHeader:
 
 
 class TestConfiguration:
+    async def test_configuration_requires_the_capability(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """MANAGE_CONFIGURATION is Console-only in the manifest, and the
+        config surface bypasses LifeOpsCore — so the check lives in the
+        adapter, and without it the grant was decoration: any identity
+        could flip safe mode or repoint a provider."""
+        hermes = {"X-LifeOps-Client": "hermes-personal"}
+        assert (
+            await client.put(
+                f"{API}/config/system", json={"safe_mode": False}, headers=hermes
+            )
+        ).status_code == 403
+        assert (
+            await client.get(f"{API}/config/providers", headers=hermes)
+        ).status_code == 403
+        assert (
+            await client.put(
+                f"{API}/config/providers/browser",
+                json={"enabled": True},
+                headers=hermes,
+            )
+        ).status_code == 403
+        # The Console (headerless on this API) still passes.
+        assert (await client.get(f"{API}/config/providers")).status_code == 200
+
     async def test_lists_every_provider_with_its_schema(
         self, client: httpx.AsyncClient
     ) -> None:
