@@ -86,10 +86,20 @@ def calendar_service(
 def telephony_service(
     config_service: ConfigurationService, fake_telephony: FakeTelephonyProvider
 ) -> TelephonyProviderService:
-    """Section 88/104: a fresh deployment ships with telephony disabled and no
-    real factory. Tests enable it and inject the fake — the only working
-    implementation this phase ships (telephony/service.py)."""
-    config_service.update_provider("telephony", {"enabled": True})
+    """Section 88/104: a fresh deployment ships with telephony disabled.
+    Tests enable it and inject the fake rather than the real Twilio adapter
+    — account_sid/auth_token/from_number are required fields on the real
+    adapter's shape, so they must be set for status.missing_required to
+    clear even though this fixture never reaches the real factory."""
+    config_service.update_provider(
+        "telephony",
+        {
+            "enabled": True,
+            "account_sid": "AC" + "0" * 32,
+            "auth_token": "test-auth-token",
+            "from_number": "+15551234567",
+        },
+    )
     return TelephonyProviderService(
         config=config_service,
         secret_store=InMemorySecretStore(),

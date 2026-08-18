@@ -347,16 +347,22 @@ TELEPHONY = ProviderDefinition(
     id="telephony",
     category=ProviderCategory.TELEPHONY,
     display_name="Telephony",
-    summary="Place and receive calls with a constrained objective.",
+    summary="Place calls with a constrained objective, over Twilio's REST API.",
     available_in_phase=8,
     fields=[
         _ENABLED,
-        TextField("sip_uri", "SIP URI"),
-        TextField("username", "Username"),
-        SecretField("password", "Password"),
-        TextField("caller_id", "Caller ID"),
+        TextField("account_sid", "Account SID", required=True, placeholder="AC..."),
+        SecretField("auth_token", "Auth token", required=True),
+        TextField(
+            "from_number",
+            "Caller ID (E.164)",
+            required=True,
+            placeholder="+15551234567",
+            description="A phone number or Verified Caller ID on the Twilio account.",
+        ),
     ],
     capabilities=["dial", "hangup", "send_dtmf", "get_status", "health_check"],
+    docs_url="https://www.twilio.com/docs/voice/api/call-resource",
 )
 
 

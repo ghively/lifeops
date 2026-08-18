@@ -2,14 +2,12 @@
 (BUILD_SPEC sections 68, 88), mirroring ``calendar/service.py`` and
 ``email/service.py``.
 
-Unlike those two, ``_DEFAULT_FACTORIES`` is empty. Section 88 and the phase 8
-build instructions are explicit: no telephony SDK dependency is added, and the
-transport stays abstract rather than shipping a real adapter with nothing
-genuine behind it. Enabling the ``telephony`` provider in the Console therefore
-still raises ``ProviderNotConfiguredError`` when something tries to place a
-call — an honest "not implemented yet", never a faked success (AGENTS.md).
-Tests inject ``FakeTelephonyProvider`` through the ``factories`` constructor
-argument, the same seam ``CalendarProviderService`` offers for CalDAV.
+``TwilioTelephonyProvider`` (``telephony/twilio.py``) is the real adapter —
+see its module docstring for what "real" does and does not mean here (call
+control is genuine; a destination phone number and a conversation are not,
+for reasons that predate this adapter). Tests inject
+``FakeTelephonyProvider`` through the ``factories`` constructor argument, the
+same seam ``CalendarProviderService`` offers for CalDAV.
 """
 
 from __future__ import annotations
@@ -21,15 +19,31 @@ from lifeops.config.provider_registry import ProviderCategory, providers_in_cate
 from lifeops.config.service import ConfigurationService, HealthReport
 from lifeops.domain.telephony import CallObjective, CallResult
 from lifeops.errors import ProviderNotConfiguredError
-from lifeops.secrets.interface import SecretStore
+from lifeops.secrets.interface import SecretStore, secret_ref
 from lifeops.telephony.provider import TelephonyProvider
+from lifeops.telephony.twilio import TwilioTelephonyProvider
 
 ProviderFactory = Callable[[dict[str, Any], SecretStore], TelephonyProvider]
 
-#: No real backend is wired in this phase (see module docstring). Kept as a
-#: named, empty constant — rather than inlined — so the reason is visible at
-#: the definition site, not just in prose above it.
-_DEFAULT_FACTORIES: dict[str, ProviderFactory] = {}
+
+def _build_twilio(settings: dict[str, Any], secrets: SecretStore) -> TelephonyProvider:
+    auth_token = secrets.get(secret_ref("telephony", "auth_token"))
+    if not auth_token:
+        raise ProviderNotConfiguredError(
+            "Twilio has no auth token configured", provider="telephony"
+        )
+    account_sid = settings.get("account_sid")
+    from_number = settings.get("from_number")
+    if not account_sid or not from_number:
+        raise ProviderNotConfiguredError(
+            "Twilio needs an account SID and a from number", provider="telephony"
+        )
+    return TwilioTelephonyProvider(
+        account_sid=str(account_sid), auth_token=auth_token, from_number=str(from_number)
+    )
+
+
+_DEFAULT_FACTORIES: dict[str, ProviderFactory] = {"telephony": _build_twilio}
 
 
 class TelephonyProviderService:

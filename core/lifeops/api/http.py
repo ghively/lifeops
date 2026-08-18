@@ -1805,11 +1805,12 @@ async def test_provider(
 ) -> TestProviderResponse:
     """Run the provider's health check.
 
-    ElevenLabs (phase 5), the local voice adapters (phase 6), and calendar/
-    email (phase 7) have real adapters and are actually called here. Every
-    other provider still ships no adapter, so this reports honestly that one
-    is not implemented yet rather than returning a fake success. A Test
-    button that lies is worse than one that says "not yet".
+    ElevenLabs (phase 5), the local voice adapters (phase 6), calendar/email
+    (phase 7), browser (phase 9), and telephony (phase 8) have real adapters
+    and are actually called here. Every other provider still ships no
+    adapter, so this reports honestly that one is not implemented yet rather
+    than returning a fake success. A Test button that lies is worse than one
+    that says "not yet".
     """
     definition = get_provider(provider_id)
     if definition is None:
@@ -1821,6 +1822,8 @@ async def test_provider(
         return await _test_calendar_or_email(container, provider_id)
     if provider_id == "browser":
         return await _test_browser(container)
+    if provider_id == "telephony":
+        return await _test_telephony(container)
 
     status = container.config.get_status(provider_id)
     message = (
@@ -1881,6 +1884,29 @@ async def _test_browser(container: Container) -> TestProviderResponse:
     status = container.config.get_status("browser")
     return TestProviderResponse(
         provider="browser",
+        healthy=report.healthy,
+        state=str(status.state),
+        message=report.message,
+        checked_at=report.checked_at,
+    )
+
+
+async def _test_telephony(container: Container) -> TestProviderResponse:
+    """Actually call the telephony provider (phase 8) when it is enabled; it
+    genuinely reaches Twilio's account endpoint and reports whether the
+    account SID/auth token were accepted (AGENTS.md never fakes success).
+    This proves credentials and connectivity only — it says nothing about
+    whether a call could ever be placed, since ``dial()`` has a separate,
+    documented gap (telephony/twilio.py's module docstring)."""
+    try:
+        report = await container.telephony.health()
+    except ProviderNotConfiguredError as exc:
+        report = container.config.record_health(
+            "telephony", healthy=False, message=str(exc), reason="not_configured"
+        )
+    status = container.config.get_status("telephony")
+    return TestProviderResponse(
+        provider="telephony",
         healthy=report.healthy,
         state=str(status.state),
         message=report.message,

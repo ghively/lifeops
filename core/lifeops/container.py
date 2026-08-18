@@ -76,10 +76,12 @@ class Container:
             config=self.config, secret_store=self.secret_store
         )
         self.email = EmailProviderService(config=self.config, secret_store=self.secret_store)
-        # Phase 8 (BUILD_SPEC section 97). No real backend is wired — section
-        # 88 forbids adding a telephony SDK dependency or asking for a
-        # credential — so this stays honestly disabled until a later phase
-        # adds a factory (telephony/service.py).
+        # Phase 8 (BUILD_SPEC sections 68, 69, 97). A real Twilio adapter is
+        # wired (telephony/twilio.py — see its module docstring for what
+        # "real" does and does not mean: call control is genuine, but no
+        # destination number resolves anywhere yet, and no conversation
+        # capability exists without the Voice Bridge). Stays disabled by
+        # default per section 88 until account credentials are entered.
         self.telephony = TelephonyProviderService(
             config=self.config, secret_store=self.secret_store
         )
