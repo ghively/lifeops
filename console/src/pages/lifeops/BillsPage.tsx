@@ -67,7 +67,15 @@ function formatDate(iso: string | null): string {
   if (!iso) return 'no due date'
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  // A due date is stored as midnight UTC; rendering that instant in a
+  // negative-offset zone shows the previous day. Format it in UTC so a bill
+  // entered as due Aug 18 never displays as Aug 17.
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
 }
 
 // --- propose a payee ---------------------------------------------------------
