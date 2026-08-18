@@ -306,6 +306,18 @@ export interface RemoteLogEntry {
   ts: string
 }
 
+/** A read-only calendar entry (BUILD_SPEC section 63 step 1) — what's on
+ * the calendar, distinct from an Appointment LifeOps is actively driving. */
+export interface CalendarEvent {
+  id: string
+  external_event_id: string
+  calendar_provider_id: string
+  title: string
+  start_at: string
+  end_at: string
+  location: string
+}
+
 /** One Appointment (BUILD_SPEC sections 63, 96): a hold or booking. */
 export interface Appointment {
   id: string
@@ -606,6 +618,35 @@ export const calendarApi = {
     lifeops
       .get<{ appointments: Appointment[]; total: number }>('/appointments', { params })
       .then((r) => r.data),
+
+  getAppointment: (id: string) =>
+    lifeops.get<Appointment>(`/appointments/${id}`).then((r) => r.data),
+
+  /** Section 63 step 1: what is on the calendar, read-only. */
+  readEvents: (params: { start_at: string; end_at: string }) =>
+    lifeops
+      .get<{ events: CalendarEvent[]; total: number }>('/calendar/events', { params })
+      .then((r) => r.data),
+
+  /** Section 63 step 3: a reversible hold, not yet a commitment. */
+  hold: (payload: {
+    subject: string
+    start_at: string
+    end_at: string
+    provider_entity_id?: string
+    task_id?: string
+    location?: string
+    notes?: string
+    hold_minutes?: number
+  }) => lifeops.post<Appointment>('/appointments/holds', payload).then((r) => r.data),
+
+  /** Section 63 step 4, through the outbox — records intent only. Approving
+   * and executing happen on the Approvals/Actions screens. */
+  book: (id: string) =>
+    lifeops.post<LifeOpsAction>(`/appointments/${id}/book`).then((r) => r.data),
+
+  cancel: (id: string) =>
+    lifeops.post<LifeOpsAction>(`/appointments/${id}/cancel`).then((r) => r.data),
 }
 
 export const waitingApi = {
