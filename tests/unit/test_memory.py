@@ -406,6 +406,96 @@ class TestInvalidate:
             await core.invalidate_memory(HERMES, memory_id="memory_absent")
 
 
+class TestPromotion:
+    """Section 47's confirm/promote step: a candidate becomes a real
+    preference, and the candidate that produced it closes out."""
+
+    async def test_promoting_a_candidate_creates_a_preference_and_closes_it(
+        self, core: LifeOpsCore
+    ) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="nothing before ten",
+                type=MemoryType.PREFERENCE_CANDIDATE,
+            ),
+        )
+
+        preference = await core.promote_memory(
+            HERMES, memory_id=candidate.id, key="scheduling.earliest_appointment_time"
+        )
+        assert preference.key == "scheduling.earliest_appointment_time"
+        assert preference.value == "nothing before ten"
+        assert preference.source_type is PreferenceSource.USER_EXPLICIT
+        assert preference.subject_id == candidate.subject_id
+
+        current = await core.get_preferences(HERMES)
+        assert any(p.key == preference.key for p in current)
+
+        closed = await core.get_memory(HERMES, memory_id=candidate.id)
+        assert not closed.is_current
+        assert "promoted" in (closed.invalidation_reason or "")
+
+    async def test_an_explicit_value_overrides_the_memorys_own_content(
+        self, core: LifeOpsCore
+    ) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="maybe likes mornings?",
+                type=MemoryType.PREFERENCE_CANDIDATE,
+            ),
+        )
+        preference = await core.promote_memory(
+            HERMES, memory_id=candidate.id, key="scheduling.time_of_day", value="mornings"
+        )
+        assert preference.value == "mornings"
+
+    async def test_a_non_candidate_memory_cannot_be_promoted(
+        self, core: LifeOpsCore
+    ) -> None:
+        semantic = await core.remember(
+            HERMES, MemoryDraft(content="drives a blue car", type=MemoryType.SEMANTIC)
+        )
+        with pytest.raises(ValidationError):
+            await core.promote_memory(HERMES, memory_id=semantic.id, key="car.color")
+
+    async def test_an_already_promoted_candidate_cannot_be_promoted_again(
+        self, core: LifeOpsCore
+    ) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(content="nothing before ten", type=MemoryType.PREFERENCE_CANDIDATE),
+        )
+        await core.promote_memory(
+            HERMES, memory_id=candidate.id, key="scheduling.earliest_appointment_time"
+        )
+        with pytest.raises(ConflictError):
+            await core.promote_memory(
+                HERMES, memory_id=candidate.id, key="scheduling.earliest_appointment_time"
+            )
+
+    async def test_an_empty_key_is_rejected(self, core: LifeOpsCore) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(content="nothing before ten", type=MemoryType.PREFERENCE_CANDIDATE),
+        )
+        with pytest.raises(ValidationError):
+            await core.promote_memory(HERMES, memory_id=candidate.id, key="   ")
+
+    async def test_promotion_requires_both_write_memory_and_write_preference(
+        self, core: LifeOpsCore
+    ) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(content="nothing before ten", type=MemoryType.PREFERENCE_CANDIDATE),
+        )
+        with pytest.raises(CapabilityDeniedError):
+            await core.promote_memory(
+                CODING_CLIENT, memory_id=candidate.id, key="scheduling.earliest_appointment_time"
+            )
+
+
 class TestMemorySafety:
     """BUILD_SPEC section 44: memory observes; it never rewrites reality."""
 

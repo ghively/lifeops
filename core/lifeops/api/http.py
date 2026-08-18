@@ -73,6 +73,7 @@ from lifeops.api.schemas import (
     PreferenceListResponse,
     PreferenceResponse,
     ProductResultResponse,
+    PromoteMemoryRequest,
     RememberRequest,
     RequestProviderContactRequest,
     RequestServiceBookingRequest,
@@ -672,6 +673,23 @@ async def correct_memory(
         client, memory_id=memory_id, new_content=payload.content
     )
     return _memory_out(record)
+
+
+@router.post(
+    "/memory/{memory_id}/promote", response_model=PreferenceResponse, tags=["memory"]
+)
+async def promote_memory(
+    memory_id: str,
+    payload: PromoteMemoryRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> PreferenceResponse:
+    """Section 47's confirm/promote step: a reviewed PREFERENCE_CANDIDATE
+    becomes a real preference, and the candidate closes out."""
+    preference = await container.core.promote_memory(
+        client, memory_id=memory_id, key=payload.key, value=payload.value
+    )
+    return _preference_out(preference)
 
 
 # --- tasks ---

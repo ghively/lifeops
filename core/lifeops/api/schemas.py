@@ -291,6 +291,17 @@ class CorrectMemoryRequest(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
 
 
+class PromoteMemoryRequest(BaseModel):
+    """Section 47's confirm/promote step: a human supplies the preference
+    key a free-text PREFERENCE_CANDIDATE memory doesn't carry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=200)
+    #: Defaults to the memory's own content when omitted.
+    value: str | None = Field(default=None, max_length=2000)
+
+
 # --- world (BUILD_SPEC sections 36, 39, 92) ------------------------------------
 #
 # These mirror ``lifeops.domain.world`` one-for-one. The wire contract is

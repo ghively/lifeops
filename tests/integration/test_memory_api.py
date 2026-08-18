@@ -314,6 +314,77 @@ class TestCorrectAndInvalidate:
         assert response.json()["code"] == "not_found"
 
 
+class TestPromote:
+    """Section 47's confirm/promote step, over HTTP."""
+
+    async def test_promoting_a_candidate_returns_the_new_preference(
+        self, env: tuple[httpx.AsyncClient, Any, StubContainer]
+    ) -> None:
+        client, _, _ = env
+        candidate = (
+            await _remember(client, "nothing before ten", type="preference_candidate")
+        ).json()
+
+        response = await client.post(
+            f"{API}/memory/{candidate['id']}/promote",
+            json={"key": "scheduling.earliest_appointment_time"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["key"] == "scheduling.earliest_appointment_time"
+        assert body["value"] == "nothing before ten"
+        assert body["source_type"] == "user_explicit"
+
+        promoted = (await client.get(f"{API}/memory/{candidate['id']}")).json()
+        assert promoted["valid_to"] is not None
+
+    async def test_an_explicit_value_overrides_the_memorys_content(
+        self, env: tuple[httpx.AsyncClient, Any, StubContainer]
+    ) -> None:
+        client, _, _ = env
+        candidate = (
+            await _remember(client, "maybe mornings?", type="preference_candidate")
+        ).json()
+        response = await client.post(
+            f"{API}/memory/{candidate['id']}/promote",
+            json={"key": "scheduling.time_of_day", "value": "mornings"},
+        )
+        assert response.json()["value"] == "mornings"
+
+    async def test_promoting_a_non_candidate_is_a_stable_error(
+        self, env: tuple[httpx.AsyncClient, Any, StubContainer]
+    ) -> None:
+        client, _, _ = env
+        memory = (await _remember(client, "drives a blue car")).json()
+        response = await client.post(
+            f"{API}/memory/{memory['id']}/promote", json={"key": "car.color"}
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "validation_error"
+
+    async def test_unknown_promote_is_404(
+        self, env: tuple[httpx.AsyncClient, Any, StubContainer]
+    ) -> None:
+        client, _, _ = env
+        response = await client.post(
+            f"{API}/memory/mem_nope/promote", json={"key": "whatever"}
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "not_found"
+
+    async def test_promote_requires_an_empty_key_to_be_rejected(
+        self, env: tuple[httpx.AsyncClient, Any, StubContainer]
+    ) -> None:
+        client, _, _ = env
+        candidate = (
+            await _remember(client, "nothing before ten", type="preference_candidate")
+        ).json()
+        response = await client.post(
+            f"{API}/memory/{candidate['id']}/promote", json={"key": "   "}
+        )
+        assert response.status_code == 422
+
+
 class TestCapabilities:
     """Section 44's enforcement point: memory ops are capability-gated like
     every other state change, so an unprivileged client observes nothing."""
