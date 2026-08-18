@@ -1,5 +1,44 @@
 # Full codebase audit — 2026-08-18
 
+> **Disposition (updated same day, on this branch).** All eight P0 findings
+> are fixed here, each pinned by a test:
+>
+> - **P0-1** — the exit-test tool pin now lists all 50 tools, verified
+>   in-process against `build_server(...).list_tools()`; the pin's docstring
+>   records why it drifted.
+> - **P0-2** — CI now runs `tests/chaos`, sets `LIFEOPS_NORNIC_RESTART_CMD`
+>   (docker restart + health wait) so exit criterion D actually executes, and
+>   runs `npm run lint`; `make check` gained `console-lint`. The Actions
+>   runner/billing failure that has kept every CI run from starting is an
+>   account-level issue that cannot be fixed from the repository — until it
+>   is resolved, `make check` remains the only real gate.
+> - **P0-3** — approval consumption is a conditional write
+>   (`ApprovalRepository.consume`, `WHERE ap.consumed_at IS NULL`) in the
+>   Nornic repository and the fake; `begin_commit` refuses the loser.
+>   Test: `tests/chaos/test_approval_races.py::TestConcurrentCommit`.
+> - **P0-4** — `update_payload` expires the superseded pending card;
+>   `decide` refuses a stale-hash card (`approval_superseded`) and refuses to
+>   move an action not awaiting approval (`action_not_awaiting_approval`).
+>   Tests: `TestStaleApprovalCards`.
+> - **P0-5** — `_execute_phone_call` records the placed call truthfully even
+>   when post-dial bookkeeping fails (degrades to a logged note).
+>   Test: `TestPlacedCallBookkeepingFailure`.
+> - **P0-6** — `record_action_result` is exempt from safe mode (capability
+>   check kept); a mid-flight emergency stop can no longer strand an action.
+>   Test: `TestSafeModeCannotStrandAnAction`.
+> - **P0-7** — `resolve_client` under `DENY` now refuses a *missing* identity
+>   too (SECURITY.md's claim is true again), and the HTTP adapter refuses an
+>   unknown `X-LifeOps-Client` instead of downgrading (headerless still means
+>   the Console, as documented). Tests in `tests/policy/test_capabilities.py`
+>   and `tests/integration/test_http_api.py`.
+> - **P0-8** — IMAP and SMTP now use `ssl.create_default_context()`;
+>   certificates are verified before a credential is sent.
+>
+> **P1, P2, and the documentation corrections are deliberately not fixed
+> here.** They are recorded below and referenced from
+> [docs/REMAINING_WORK.md](../REMAINING_WORK.md) as the follow-up backlog,
+> per the user's instruction to fix P0 and document the rest.
+
 A complete sweep of the repository: LifeOps Core (`core/lifeops/`, ~26k lines),
 the Console (`console/src/`, 77 files), the test suites (~1,200 tests), shell
 scripts, deploy units, CI, the Hermes skills, and every documentation file —

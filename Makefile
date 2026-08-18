@@ -12,7 +12,7 @@ WITH_NORNIC = set -a; [ -f $(NORNIC_ENV) ] && . $(NORNIC_ENV); set +a;
 .DEFAULT_GOAL := help
 .PHONY: help setup setup-core setup-console nornic-build nornic-start nornic-stop \
         dev stop status health test test-fast test-integration test-e2e \
-        console-test console-build lint typecheck check clean
+        console-test console-lint console-build lint typecheck check clean
 
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -75,6 +75,9 @@ test:  ## Every Python test
 console-test:  ## Console unit tests
 	@cd console && npm test
 
+console-lint:  ## Lint the Console (react-hooks rules catch real bugs)
+	@cd console && npm run lint
+
 console-build:  ## Type-check and build the Console
 	@cd console && npm run build
 
@@ -86,7 +89,7 @@ lint:  ## Lint Python
 typecheck:  ## Type-check Python
 	@.venv/bin/mypy
 
-check: lint typecheck test console-test console-build  ## Everything CI runs
+check: lint typecheck test console-lint console-test console-build  ## The full local gate (CI runs the same suites, plus repo-hygiene asserts)
 
 clean:  ## Remove build artefacts (never touches LifeOps state or secrets)
 	@rm -rf console/dist console/node_modules/.vite .pytest_cache
