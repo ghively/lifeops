@@ -236,3 +236,42 @@ class TestCodeChangeRequests:
         filed = [r for r in records if r.intent == "request_code_change"]
         assert filed
         assert filed[0].details.get("protected") == "True"
+
+
+class TestPausingARoutine:
+    """A paused routine that resumes itself is worse than one that cannot be
+    paused at all — the user disabled it for a reason and would not be told."""
+
+    async def test_a_routine_can_be_paused(self, core: LifeOpsCore) -> None:
+        saved = await core.save_workflow_template(
+            HERMES, WorkflowTemplateDraft(name="Nightly sweep", enabled=False)
+        )
+        assert saved.enabled is False
+
+    async def test_revising_a_paused_routine_leaves_it_paused(
+        self, core: LifeOpsCore
+    ) -> None:
+        await core.save_workflow_template(
+            HERMES, WorkflowTemplateDraft(name="Nightly sweep", enabled=False)
+        )
+        revised = await core.save_workflow_template(
+            HERMES,
+            WorkflowTemplateDraft(
+                name="Nightly sweep", description="now with a note", enabled=False
+            ),
+        )
+        assert revised.enabled is False
+
+    async def test_a_paused_scheduled_routine_never_comes_due(
+        self, core: LifeOpsCore
+    ) -> None:
+        await core.save_workflow_template(
+            HERMES,
+            WorkflowTemplateDraft(
+                name="Nightly sweep",
+                trigger=TriggerKind.SCHEDULE,
+                next_run_at="2020-01-01T00:00:00Z",
+                enabled=False,
+            ),
+        )
+        assert await core.due_routines(HERMES) == []

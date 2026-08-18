@@ -87,6 +87,8 @@ function SaveTemplateDialog({
   const [description, setDescription] = useState(editing?.description ?? '')
   const [trigger, setTrigger] = useState<TriggerKind>(editing?.trigger ?? 'manual')
   const [nextRunAt, setNextRunAt] = useState(toLocalInputValue(editing?.next_run_at ?? null))
+  // A new routine starts enabled; revising one keeps whatever it was.
+  const [enabled, setEnabled] = useState(editing?.enabled ?? true)
   const [steps, setSteps] = useState<DraftStep[]>(
     editing?.steps.map((s) => ({ description: s.description, action_type: s.action_type ?? '' })) ?? [],
   )
@@ -111,6 +113,9 @@ function SaveTemplateDialog({
         trigger,
         next_run_at:
           trigger === 'schedule' && nextRunAt ? `${nextRunAt}:00Z` : undefined,
+        // Carried explicitly: the server rebuilds the template from this
+        // payload, so omitting it would switch a paused routine back on.
+        enabled,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'workflow-templates'] })
@@ -260,6 +265,20 @@ function SaveTemplateDialog({
               Add step
             </Button>
           </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
+              disabled={save.isPending}
+              className="h-4 w-4"
+            />
+            <span>Enabled</span>
+            <span className="text-xs text-muted-foreground">
+              A paused routine keeps its schedule but never runs.
+            </span>
+          </label>
 
           {error && (
             <p className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700">
