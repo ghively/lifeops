@@ -169,6 +169,21 @@ def _add_minutes(instant: str, minutes: int) -> str:
     return (moment + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
 
 
+def validate_hold_window(draft: AppointmentHoldDraft) -> None:
+    """Refuse an impossible window *before* anything external happens.
+
+    Callers must run this ahead of the provider call: validating only inside
+    ``place_hold`` meant a bad draft placed a real external hold first, then
+    raised locally — leaking a hold with no local record to cancel it from.
+    """
+    if draft.end_at <= draft.start_at:
+        raise ValidationError(
+            "an appointment cannot end before it starts",
+            start_at=draft.start_at,
+            end_at=draft.end_at,
+        )
+
+
 def place_hold(
     draft: AppointmentHoldDraft,
     *,
@@ -180,12 +195,7 @@ def place_hold(
     (section 63 step 3). Never called before the provider call succeeds —
     the hold reference is required so an Appointment never claims a hold that
     was never actually taken."""
-    if draft.end_at <= draft.start_at:
-        raise ValidationError(
-            "an appointment cannot end before it starts",
-            start_at=draft.start_at,
-            end_at=draft.end_at,
-        )
+    validate_hold_window(draft)
     return Appointment(
         id=Appointment.make_id(),
         subject=draft.subject.strip(),

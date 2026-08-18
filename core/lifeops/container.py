@@ -141,6 +141,9 @@ class Container:
             clock=self.clock,
             safe_mode=safe_mode,
             events=self.events,
+            # Resolved here, not left CWD-relative: the MCP server's working
+            # directory is whatever its client launched it with.
+            change_request_dir=str(self.settings.change_requests_path),
         )
 
         # BUILD_SPEC section 55: a small in-process worker, not a queue or a

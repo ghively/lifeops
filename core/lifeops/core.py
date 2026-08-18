@@ -28,6 +28,7 @@ from lifeops.domain.actions import (
     ActionDraft,
     ActionStatus,
     ActionType,
+    make_idempotency_key,
     payload_hash,
     record_attempt,
     risk_for_action,
@@ -63,6 +64,7 @@ from lifeops.domain.calendar import (
     confirm_booking,
     entity_to_appointment,
     hold_is_expired,
+    validate_hold_window,
 )
 from lifeops.domain.calendar import cancel_appointment as cancel_appointment_domain
 from lifeops.domain.calendar import place_hold as place_hold_domain
@@ -870,6 +872,11 @@ class ActionService:
         now = now_iso(self._clock)
         action.payload = dict(payload)
         action.payload_hash = payload_hash(payload)
+        # The key derives from the payload (section 61): left stale, a fresh
+        # prepare of the *new* payload would not dedup against this live
+        # action, and a provider honouring the key would dedup the revised
+        # order against the original attempt's content.
+        action.idempotency_key = make_idempotency_key(action.type, payload)
         if action.type in ACTIONS_REQUIRING_APPROVAL:
             action.status = ActionStatus.NEEDS_APPROVAL
             approval = request_approval(action, now=now, requested_by=client_id)
@@ -994,6 +1001,10 @@ class AppointmentService:
     # --- section 63 step 3: hold ---------------------------------------------
 
     async def hold(self, draft: AppointmentHoldDraft, *, client_id: str) -> Appointment:
+        # Validate before the provider call: a bad draft must fail locally,
+        # not place a real external hold and then raise with nothing recorded
+        # to cancel it from.
+        validate_hold_window(draft)
         hold_reference = await self._calendar.create_hold(
             subject=draft.subject,
             start_at=draft.start_at,
@@ -1906,6 +1917,17 @@ class LifeOpsCore:
 
     async def create_task(self, client: ClientIdentity, draft: TaskDraft) -> Task:
         self._require(client, Capability.CREATE_TASK)
+        if draft.state is not TaskState.CAPTURED:
+            # The draft's comment promised this; nothing enforced it. A task
+            # born COMPLETED (or VERIFYING) never traversed the machine — and
+            # with verification_required it would sit COMPLETED with pending
+            # verification and no evidence.
+            raise ValidationError(
+                f"a task starts CAPTURED, not {draft.state}; drive it through "
+                "the state machine after creation",
+                field="state",
+                state=str(draft.state),
+            )
 
         now = now_iso(self._clock)
         owner = draft.owner_entity_id
@@ -3687,9 +3709,22 @@ class LifeOpsCore:
         retrieval arrive with the memory layer (Phase 2).
         """
         self._require(client, Capability.READ_WORLD)
+        # Each section honours its own read capability, the same per-section
+        # filtering get_entity_detail does — READ_WORLD alone must not be a
+        # side door to preferences and tasks.
+        can_read_prefs = Capability.READ_PREFERENCES in client.capabilities
+        can_read_tasks = Capability.READ_TASKS in client.capabilities
         with operation("search.query", client_id=client.client_id):
             return SearchResults(
                 people=await self._people.find_by_name(query),
-                preferences=await self._preferences.search(query, limit=limit),
-                tasks=list(await self._tasks.search(query, limit=limit)),
+                preferences=(
+                    await self._preferences.search(query, limit=limit)
+                    if can_read_prefs
+                    else []
+                ),
+                tasks=(
+                    list(await self._tasks.search(query, limit=limit))
+                    if can_read_tasks
+                    else []
+                ),
             )
