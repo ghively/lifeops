@@ -964,6 +964,38 @@ class CreateDocumentRequest(BaseModel):
     summary: str = Field(default="", max_length=4000)
 
 
+# --- knowledge (BUILD_SPEC sections 18, 36, 50) --------------------------------
+
+
+class KnowledgeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    category: str
+    content: str
+    source_document_id: str | None
+    created_at: str
+    updated_at: str
+    created_by_client: str | None
+
+
+class CreateKnowledgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=300)
+    category: str = Field(default="", max_length=100)
+    content: str = Field(default="", max_length=8000)
+    source_document_id: str | None = None
+
+
+class KnowledgeListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    knowledge: list[KnowledgeResponse]
+    total: int
+
+
 # --- service requests (BUILD_SPEC sections 36, 67, 68, 97, 101) ---------------
 
 

@@ -62,6 +62,11 @@ _LABEL_FOR_TYPE: dict[WorldEntityType, str] = {
     # written through ``WORLD_MANAGED_ENTITY_TYPES`` rather than the
     # generic-create path too.
     WorldEntityType.SHOPPING_LIST: "ShoppingList",
+    # Knowledge (section 18) is written through ``record_knowledge``, the
+    # same non-generic path Document uses, for the same reason: free-text
+    # content deserves its own draft shape rather than the generic entity
+    # path's bare key/value validation.
+    WorldEntityType.KNOWLEDGE: "Knowledge",
 }
 
 # Labels come from this module's own constant map keyed on the ID prefix —

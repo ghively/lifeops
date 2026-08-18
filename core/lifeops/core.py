@@ -80,6 +80,13 @@ from lifeops.domain.email import (
     EmailThread,
 )
 from lifeops.domain.email import build_send_payload as build_send_email_payload
+from lifeops.domain.knowledge import (
+    Knowledge,
+    KnowledgeDraft,
+    entity_to_knowledge,
+    knowledge_to_entity,
+)
+from lifeops.domain.knowledge import create_knowledge as create_knowledge_domain
 from lifeops.domain.memory import (
     MemoryDraft,
     MemoryRecord,
@@ -437,6 +444,18 @@ class WorldService:
         if entity is None:
             raise NotFoundError(f"no such entity: {entity_id}", entity_id=entity_id)
         return entity
+
+    async def list_full(
+        self, *, entity_types: list[WorldEntityType] | None = None, limit: int = 500
+    ) -> list[WorldEntity]:
+        """Full entities of the given types, facts included.
+
+        ``graph()`` downgrades entities to lightweight ``WorldNode`` rows for
+        the World screen; a caller that needs to search *content* (section
+        50's ``search_knowledge``, not just a name) needs the facts bag
+        ``graph()`` throws away.
+        """
+        return await self._world.list_entities(types=entity_types, limit=limit)
 
     async def graph(
         self,
@@ -3145,6 +3164,70 @@ class LifeOpsCore:
             target=document.id,
         )
         return document
+
+    # --- knowledge (BUILD_SPEC sections 18, 36, 50) ----------------------------
+
+    async def record_knowledge(
+        self, client: ClientIdentity, draft: KnowledgeDraft
+    ) -> Knowledge:
+        """Record a piece of reference content (section 18).
+
+        ``write_world`` over MCP is deliberately narrow — record_provider,
+        record_asset, and create_service_request are the only tools that
+        spend it (BUILD_SPEC section 51) — so this is Console/HTTP-only, the
+        same boundary ``create_document`` already draws.
+        """
+        self._require(client, Capability.WRITE_WORLD)
+        now = now_iso(self._clock)
+        knowledge = create_knowledge_domain(draft, now=now, client_id=client.client_id)
+        if self._world_repo is None:
+            raise ConfigurationError(
+                "no world repository is configured", component="world"
+            )
+        entity = await self._world_repo.create(knowledge_to_entity(knowledge))
+        self._publish(WORLD_CHANGED, entity_id=entity.id)
+        await self.audit(
+            client,
+            result="created",
+            intent="record_knowledge",
+            tool="knowledge",
+            target=knowledge.id,
+        )
+        return knowledge
+
+    async def get_knowledge(
+        self, client: ClientIdentity, *, knowledge_id: str
+    ) -> Knowledge:
+        self._require(client, Capability.READ_WORLD)
+        entity = await self._world().get(knowledge_id)
+        return entity_to_knowledge(entity)
+
+    async def search_knowledge(
+        self, client: ClientIdentity, *, query: str = "", limit: int = 50
+    ) -> list[Knowledge]:
+        """Search reference content by title, category, or body (section 50).
+
+        The World screen's ``graph()`` text filter only matches display
+        names — fine for finding a provider by name, useless for finding a
+        checklist by what it says. This searches the full facts bag instead,
+        the same substring approach ``LifeOpsCore.search`` uses elsewhere
+        (section 19: "Phase 1 is a case-insensitive substring match").
+        """
+        self._require(client, Capability.READ_WORLD)
+        entities = await self._world().list_full(
+            entity_types=[WorldEntityType.KNOWLEDGE], limit=limit
+        )
+        needle = query.strip().lower()
+        results = [entity_to_knowledge(e) for e in entities]
+        if not needle:
+            return results
+        return [
+            k
+            for k in results
+            if needle in k.title.lower()
+            or needle in k.category.lower()
+            or needle in k.content.lower()
+        ]
 
     # --- shopping (BUILD_SPEC section 98) -------------------------------------
     #
