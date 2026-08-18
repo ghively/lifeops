@@ -18,37 +18,33 @@ API shape with a mocked transport (``tests/unit/test_telephony_twilio.py``),
 not against a live account — unlike the browser adapter, which could be
 exercised against a real, pre-installed Chromium.
 
-Two gaps this module is honest about rather than papering over, both
-discovered while wiring this, not assumed going in:
+One gap this module is honest about rather than papering over: **no
+conversation capability.** ``dial()``'s whole point is to conduct a
+constrained conversation and report what it learned (section 68's
+objective, section 69's structured result) — that needs the Voice Bridge
+(ASR + TTS + an LLM loop over live audio), which does not exist and, per
+CLAUDE.md's Known gaps, belongs in the Hermes runtime rather than this
+repository. A real, connected call therefore still cannot report
+``objective_met=True``: it states its purpose via a static ``<Say>`` and
+holds, and reports that nothing was asked or answered through
+``transcript`` rather than fabricating an answer.
 
-1. **No conversation capability.** ``dial()``'s whole point is to conduct a
-   constrained conversation and report what it learned (section 68's
-   objective, section 69's structured result) — that needs the Voice Bridge
-   (ASR + TTS + an LLM loop over live audio), which does not exist. A real,
-   connected call therefore still cannot report ``objective_met=True``, and
-   says so through ``transcript`` rather than fabricating an answer.
-
-2. **No destination phone number.** This is the deeper, pre-existing gap:
-   ``CallObjective`` carries a ``provider_entity_id`` but nothing anywhere
-   in this codebase — not ``CallObjective``, not ``_prepare_provider_contact``
-   in ``core.py``, not this Protocol's ``dial`` signature — ever resolves a
-   phone number to actually call. This is not specific to Twilio or to this
-   adapter; every telephony backend, real or fake, is missing the same
-   plumbing. Threading a destination number through the objective/Action
-   payload (and giving Provider entities a canonical phone fact) is a
-   separate, cross-cutting change to the domain model and MCP tool schemas
-   that this task did not have approval to make. ``dial()`` therefore raises
-   a specific ``ProviderError`` naming this gap — which is the Protocol's
-   own documented contract for "the call not being placeable at all", not a
-   workaround.
+What is no longer a gap: **the destination number.** ``CallObjective`` now
+carries a required ``to_number`` (``domain/telephony.py``), resolved in
+``core.py``'s ``_prepare_provider_contact`` from the provider's own world-
+entity ``'phone'`` fact before an objective is ever built — the deeper,
+pre-existing plumbing gap this module used to document (nothing anywhere
+resolved a phone number to actually call) is closed, so ``dial()`` places a
+real outbound call rather than always refusing.
 
 ``hangup``, ``send_dtmf``, and ``get_status`` operate on a call SID Twilio
-already issued, so they need no destination number and are genuinely real.
+already issued, so they need no destination number and were already real.
 """
 
 from __future__ import annotations
 
 from urllib.parse import quote
+from xml.sax.saxutils import escape
 
 import httpx
 
@@ -66,14 +62,6 @@ _CONNECTED_STATUSES = frozenset({"in-progress", "completed"})
 _NO_CONVERSATION_TRANSCRIPT = (
     "LifeOps placed this call for real, but cannot yet hold a phone "
     "conversation (no Voice Bridge) — nothing was asked or answered."
-)
-
-_NO_DESTINATION_NUMBER_MESSAGE = (
-    "no destination phone number is available for this call — "
-    "CallObjective carries a provider_entity_id, but nothing in LifeOps "
-    "resolves that to an actual phone number before dial() is called. "
-    "This is a pre-existing gap in the telephony call flow, not specific "
-    "to this adapter or to Twilio (see this module's docstring)."
 )
 
 #: DTMF tones Twilio's <Play digits="..."> verb accepts.
@@ -125,11 +113,43 @@ class TwilioTelephonyProvider:
             return False, "Twilio rejected the account SID/auth token"
         return False, f"Twilio returned HTTP {response.status_code}"
 
+    def _hold_twiml(self, objective: CallObjective) -> str:
+        """No Voice Bridge exists to hold a live conversation (module
+        docstring's gap), so the call states its purpose and holds — a human
+        who answers hears why LifeOps called, even though nothing yet
+        listens for a reply. Escaped since ``objective.objective`` is text a
+        caller controls, not a trusted literal."""
+        message = escape(f"This is an automated call regarding: {objective.objective}")
+        return f'<Response><Say>{message}</Say><Pause length="20"/></Response>'
+
     async def dial(self, objective: CallObjective) -> CallResult:
-        # See the module docstring's gap #2 — this is not placeable at all,
-        # which is exactly the Protocol's documented reason to raise rather
-        # than return a CallResult.
-        raise ProviderError(_NO_DESTINATION_NUMBER_MESSAGE, provider="telephony")
+        try:
+            response = await self._client.post(
+                self._account_path("/Calls.json"),
+                data={
+                    "To": objective.to_number,
+                    "From": self._from_number,
+                    "Twiml": self._hold_twiml(objective),
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise _transport_error(exc) from exc
+        _raise_for_status(response)
+        data = response.json()
+        # A brand-new call's status is 'queued' or 'ringing' here — Twilio
+        # has not connected it yet at the time this response returns, so
+        # connected is honestly False; get_status(), polled later against
+        # the sid below, is where a real connection is learned.
+        status = data.get("status")
+        return CallResult(
+            connected=status in _CONNECTED_STATUSES,
+            # No conversation capability exists yet (module docstring), so
+            # this can never truthfully claim the objective was met.
+            objective_met=False,
+            follow_up_required=True,
+            external_reference=data.get("sid"),
+            transcript=_NO_CONVERSATION_TRANSCRIPT,
+        )
 
     async def hangup(self, external_reference: str) -> None:
         try:

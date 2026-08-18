@@ -24,11 +24,15 @@ from lifeops.domain.telephony import (
 from lifeops.errors import ValidationError
 from lifeops.telephony.fake import FakeTelephonyProvider
 
+TEST_NUMBER = "+15550100"
+
 
 class TestBuildObjective:
     def test_authority_never_grants_charge_or_repair(self) -> None:
         objective = build_objective(
-            objective="schedule_electrician", collect=["availability", "diagnostic_fee"]
+            objective="schedule_electrician",
+            to_number=TEST_NUMBER,
+            collect=["availability", "diagnostic_fee"],
         )
         assert objective.authority.authorize_charge is False
         assert objective.authority.authorize_repairs is False
@@ -42,9 +46,19 @@ class TestBuildObjective:
         assert "authorize_charge" not in params
         assert "authorize_repairs" not in params
 
+    def test_a_call_needs_a_destination(self) -> None:
+        """No parameter default lets a call be built with nowhere to dial —
+        section 68/97's structural-enforcement pattern applies here too."""
+        import inspect
+
+        params = inspect.signature(build_objective).parameters
+        assert "to_number" in params
+        assert params["to_number"].default is inspect.Parameter.empty
+
     def test_other_authority_flags_pass_through(self) -> None:
         objective = build_objective(
             objective="schedule_electrician",
+            to_number=TEST_NUMBER,
             provide_service_address=True,
             reserve_slot=True,
         )
@@ -54,12 +68,13 @@ class TestBuildObjective:
 
 class TestValidateObjective:
     def test_a_clean_objective_passes(self) -> None:
-        objective = build_objective(objective="schedule_electrician")
+        objective = build_objective(objective="schedule_electrician", to_number=TEST_NUMBER)
         validate_objective(objective)  # does not raise
 
     def test_a_tampered_charge_authority_is_refused(self) -> None:
         tampered = CallObjective(
             objective="schedule_electrician",
+            to_number=TEST_NUMBER,
             authority=CallAuthority(authorize_charge=True),
         )
         with pytest.raises(ValidationError):
@@ -68,34 +83,51 @@ class TestValidateObjective:
     def test_a_tampered_repair_authority_is_refused(self) -> None:
         tampered = CallObjective(
             objective="schedule_electrician",
+            to_number=TEST_NUMBER,
             authority=CallAuthority(authorize_repairs=True),
         )
+        with pytest.raises(ValidationError):
+            validate_objective(tampered)
+
+    def test_a_blank_destination_is_refused_even_though_it_passed_construction(
+        self,
+    ) -> None:
+        """A stored payload's to_number could be whitespace-only and still
+        satisfy Pydantic's min_length=1 — this is the defence-in-depth check
+        for that, matching the charge/repair checks above."""
+        tampered = CallObjective(objective="schedule_electrician", to_number="   ")
         with pytest.raises(ValidationError):
             validate_objective(tampered)
 
 
 class TestPayloadRoundTrip:
     def test_call_payload_carries_the_service_request_id(self) -> None:
-        objective = build_objective(objective="schedule_electrician", collect=["availability"])
+        objective = build_objective(
+            objective="schedule_electrician", to_number=TEST_NUMBER, collect=["availability"]
+        )
         payload = call_payload(objective, service_request_id="servicerequest_01")
         assert payload["service_request_id"] == "servicerequest_01"
         assert payload["objective"] == "schedule_electrician"
+        assert payload["to_number"] == TEST_NUMBER
 
     def test_objective_from_payload_round_trips(self) -> None:
         objective = build_objective(
             objective="schedule_electrician",
+            to_number=TEST_NUMBER,
             provider_entity_id="provider_abc",
             collect=["availability", "diagnostic_fee"],
         )
         payload = call_payload(objective, service_request_id="servicerequest_01")
         restored = objective_from_payload(payload)
         assert restored.objective == objective.objective
+        assert restored.to_number == objective.to_number
         assert restored.collect == objective.collect
         assert restored.authority.authorize_charge is False
 
     def test_a_tampered_stored_payload_is_refused_on_read_back(self) -> None:
         payload = {
             "objective": "schedule_electrician",
+            "to_number": TEST_NUMBER,
             "collect": [],
             "authority": {
                 "request_information": True,
@@ -115,7 +147,9 @@ class TestFakeTelephonyProvider:
             availability=["Thursday 1:00-3:00 PM"], diagnostic_fee="$89"
         )
         objective = build_objective(
-            objective="schedule_electrician", collect=["availability", "diagnostic_fee"]
+            objective="schedule_electrician",
+            to_number=TEST_NUMBER,
+            collect=["availability", "diagnostic_fee"],
         )
         result = asyncio.run(provider.dial(objective))
         assert result.connected is True
@@ -126,7 +160,9 @@ class TestFakeTelephonyProvider:
 
     def test_it_only_returns_facts_that_were_asked_for(self) -> None:
         provider = FakeTelephonyProvider(diagnostic_fee="$89")
-        objective = build_objective(objective="schedule_electrician", collect=["diagnostic_fee"])
+        objective = build_objective(
+            objective="schedule_electrician", to_number=TEST_NUMBER, collect=["diagnostic_fee"]
+        )
         result = asyncio.run(provider.dial(objective))
         assert result.availability == []
         assert result.diagnostic_fee == "$89"
@@ -134,7 +170,9 @@ class TestFakeTelephonyProvider:
     def test_no_answer_requires_follow_up(self) -> None:
         """Section 101 step 8: create a waiting item when necessary."""
         provider = FakeTelephonyProvider(connected=False)
-        objective = build_objective(objective="schedule_electrician", collect=["availability"])
+        objective = build_objective(
+            objective="schedule_electrician", to_number=TEST_NUMBER, collect=["availability"]
+        )
         result = asyncio.run(provider.dial(objective))
         assert result.connected is False
         assert result.follow_up_required is True
@@ -142,7 +180,9 @@ class TestFakeTelephonyProvider:
 
     def test_get_status_returns_the_prior_result(self) -> None:
         provider = FakeTelephonyProvider()
-        objective = build_objective(objective="schedule_electrician", collect=["availability"])
+        objective = build_objective(
+            objective="schedule_electrician", to_number=TEST_NUMBER, collect=["availability"]
+        )
         result = asyncio.run(provider.dial(objective))
         replayed = asyncio.run(provider.get_status(result.external_reference))
         assert replayed == result

@@ -25,6 +25,7 @@ from lifeops.clock import FrozenClock
 from lifeops.config.service import ConfigurationService
 from lifeops.core import LifeOpsCore
 from lifeops.domain.people import Person
+from lifeops.domain.world import WorldEntity, WorldEntityType
 from lifeops.events import EventBus
 from lifeops.repositories.fakes import (
     FakeActionRepository,
@@ -137,6 +138,20 @@ class StubContainer:
             updated_at="2026-01-01T00:00:00Z",
         )
         await self.people.upsert(person)
+        for provider_id, name in (
+            ("provider_abc_electric", "ABC Electric"),
+            ("provider_hvac", "ABC HVAC"),
+        ):
+            self.world.seed(
+                WorldEntity(
+                    id=provider_id,
+                    entity_type=WorldEntityType.PROVIDER,
+                    display_name=name,
+                    facts={"phone": "+15550100"},
+                    created_at="2026-01-01T00:00:00Z",
+                    updated_at="2026-01-01T00:00:00Z",
+                )
+            )
 
     async def shutdown(self) -> None:
         return None

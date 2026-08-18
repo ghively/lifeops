@@ -25,6 +25,7 @@ from lifeops.domain.service_request import ServiceRequestDraft
 from lifeops.domain.tasks import TaskDraft
 from lifeops.domain.voice import SynthesisOptions
 from lifeops.domain.waiting import WaitingStatus
+from lifeops.domain.world import WorldEntity, WorldEntityType
 from lifeops.errors import ProviderError
 from lifeops.policy.capabilities import HERMES
 from lifeops.repositories.fakes import (
@@ -162,6 +163,16 @@ class TestTelephonyNeverConnects:
         )
         preferences = FakePreferenceRepository()
         world = FakeWorldRepository(preferences=preferences)
+        world.seed(
+            WorldEntity(
+                id="provider_chaos_hvac",
+                entity_type=WorldEntityType.PROVIDER,
+                display_name="Chaos HVAC",
+                facts={"phone": "+15550100"},
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
         waiting = FakeWaitingRepository()
         core = LifeOpsCore(
             people=people,
