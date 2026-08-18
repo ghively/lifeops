@@ -8,6 +8,16 @@
  * they can judge it. Correction is supersession and invalidation closes a
  * validity window; nothing here edits a record in place or touches
  * transactional state (section 44).
+ *
+ * Section 17 names seven views (Preferences, Personal facts, Relationships,
+ * Episodic memories, Semantic memories, Procedures/routines, Invalidated/
+ * superseded history). This screen implements six of them — "Personal facts"
+ * and "Semantic memories" both point at the one `semantic` MemoryType, so
+ * they collapse to a single view rather than showing the same records twice
+ * under two names. "Preferences" is the one view backed by a different
+ * domain entirely (Preference, not Memory) — it gets its own query and its
+ * own lightweight card/detail pair rather than being forced into the
+ * MemoryRecord shape it doesn't have.
  */
 
 import { useState } from 'react'
@@ -24,18 +34,38 @@ import {
   MEMORY_TYPE_LABELS,
   errorMessage,
   memoryApi,
+  preferencesApi,
   type MemoryRecord,
   type MemoryType,
+  type Preference,
 } from '@/services/lifeops'
 
-const TYPE_FILTERS: Array<{ id: MemoryType | 'all'; label: string }> = [
+type ViewId =
+  | 'all'
+  | 'preferences'
+  | 'personal_facts'
+  | 'relationships'
+  | 'episodic'
+  | 'procedures'
+  | 'invalidated'
+
+const VIEWS: Array<{ id: ViewId; label: string }> = [
   { id: 'all', label: 'All' },
-  { id: 'semantic', label: MEMORY_TYPE_LABELS.semantic },
-  { id: 'episodic', label: MEMORY_TYPE_LABELS.episodic },
-  { id: 'preference_candidate', label: MEMORY_TYPE_LABELS.preference_candidate },
-  { id: 'summary', label: MEMORY_TYPE_LABELS.summary },
-  { id: 'association', label: MEMORY_TYPE_LABELS.association },
+  { id: 'preferences', label: 'Preferences' },
+  { id: 'personal_facts', label: 'Personal facts' },
+  { id: 'relationships', label: 'Relationships' },
+  { id: 'episodic', label: 'Episodic memories' },
+  { id: 'procedures', label: 'Procedures/routines' },
+  { id: 'invalidated', label: 'Invalidated/superseded history' },
 ]
+
+/** The MemoryType each view maps to, where it maps to exactly one. */
+const VIEW_MEMORY_TYPE: Partial<Record<ViewId, MemoryType>> = {
+  personal_facts: 'semantic',
+  relationships: 'association',
+  episodic: 'episodic',
+  procedures: 'summary',
+}
 
 const SOURCE_FILTERS: Array<{ id: string; label: string }> = [
   { id: 'all', label: 'Any source' },
@@ -403,23 +433,195 @@ function MemoryDetail({
   )
 }
 
+function PreferenceCard({
+  preference,
+  selected,
+  onSelect,
+}: {
+  preference: Preference
+  selected: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        'w-full rounded-lg border border-border/60 bg-card px-4 py-3 text-left transition-colors',
+        selected ? 'border-foreground' : 'hover:bg-muted/40',
+      )}
+    >
+      <p className="text-sm font-medium">{preference.key}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{preference.value}</p>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>{sourceLabel(preference.source_type)}</span>
+        <span>confidence {preference.confidence.toFixed(2)}</span>
+      </div>
+    </button>
+  )
+}
+
+function PreferenceDetail({
+  preference,
+  onChanged,
+}: {
+  preference: Preference
+  onChanged: (next: Preference | null) => void
+}) {
+  const queryClient = useQueryClient()
+  const [mode, setMode] = useState<'none' | 'restate'>('none')
+  const [draft, setDraft] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const restate = useMutation({
+    mutationFn: (value: string) => preferencesApi.save({ key: preference.key, value }),
+    onSuccess: (next) => {
+      setMode('none')
+      setDraft('')
+      setActionError(null)
+      onChanged(next)
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'preferences'] })
+    },
+    onError: (error) => {
+      setActionError(
+        error instanceof LifeOpsError ? error.message : 'Could not save the preference.',
+      )
+    },
+  })
+
+  const invalidate = useMutation({
+    mutationFn: () => preferencesApi.invalidate(preference.id),
+    onSuccess: () => {
+      setActionError(null)
+      onChanged(null)
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'preferences'] })
+    },
+    onError: (error) => {
+      setActionError(
+        error instanceof LifeOpsError ? error.message : 'Could not invalidate the preference.',
+      )
+    },
+  })
+
+  const pending = restate.isPending || invalidate.isPending
+
+  return (
+    <section
+      aria-label={`Preference detail: ${preference.key}`}
+      className="space-y-4 rounded-lg border border-border/60 bg-card px-4 py-4"
+    >
+      <div>
+        <p className="text-sm font-medium">{preference.key}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{preference.value}</p>
+      </div>
+
+      <div className="space-y-1 rounded-md border border-border/40 bg-muted/30 px-3 py-2">
+        <ProvenanceRow label="Source" value={sourceLabel(preference.source_type)} />
+        <ProvenanceRow label="Source reference" value={preference.source_id} />
+        <ProvenanceRow label="Observed" value={preference.observed_at} />
+        <ProvenanceRow label="Valid from" value={preference.valid_from} />
+        <ProvenanceRow label="Supersedes" value={preference.supersedes} />
+        <ProvenanceRow label="Recorded by" value={preference.created_by_client} />
+        <ProvenanceRow
+          label="Confidence / importance"
+          value={`${preference.confidence.toFixed(2)} / ${preference.importance.toFixed(2)}`}
+        />
+      </div>
+
+      {mode === 'none' && (
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setMode('restate')
+              setDraft(preference.value)
+              setActionError(null)
+            }}
+          >
+            <Pencil className="mr-1 h-3 w-3" />
+            Correct / supersede
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => invalidate.mutate()}
+            disabled={pending}
+          >
+            <XCircle className="mr-1 h-3 w-3" />
+            Invalidate
+          </Button>
+        </div>
+      )}
+
+      {mode === 'restate' && (
+        <form
+          className="space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const value = draft.trim()
+            if (value) restate.mutate(value)
+          }}
+        >
+          <Input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            aria-label="Corrected preference value"
+            disabled={pending}
+          />
+          <p className="text-xs text-muted-foreground">
+            Saving a new value for {preference.key} supersedes this one — the old
+            version closes and stays queryable in the World screen's history view.
+          </p>
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" disabled={!draft.trim() || pending}>
+              {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setMode('none')}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {actionError && (
+        <p className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700">
+          {actionError}
+        </p>
+      )}
+    </section>
+  )
+}
+
 export function MemoryPage() {
   const [query, setQuery] = useState('')
-  const [typeFilter, setTypeFilter] = useState<MemoryType | 'all'>('all')
+  const [view, setView] = useState<ViewId>('all')
   const [sourceFilter, setSourceFilter] = useState('all')
   const [selected, setSelected] = useState<MemoryRecord | null>(null)
+  const [selectedPreference, setSelectedPreference] = useState<Preference | null>(null)
 
   const trimmedQuery = query.trim()
-  const searching = trimmedQuery.length > 0
+  // Preferences have no search integration here (they have no search
+  // endpoint of their own in this screen) — free text only ever narrows the
+  // memory views, so it's disabled while "Preferences" is active.
+  const searching = trimmedQuery.length > 0 && view !== 'preferences'
 
   const listQuery = useQuery({
-    queryKey: ['lifeops', 'memory', 'list', typeFilter],
+    queryKey: ['lifeops', 'memory', 'list', view],
     queryFn: () =>
       memoryApi.list({
-        type: typeFilter === 'all' ? undefined : [typeFilter],
+        type: VIEW_MEMORY_TYPE[view] ? [VIEW_MEMORY_TYPE[view] as MemoryType] : undefined,
+        invalidated_only: view === 'invalidated',
         limit: 200,
       }),
-    enabled: !searching,
+    enabled: !searching && view !== 'preferences',
   })
 
   const searchQuery = useQuery({
@@ -428,10 +630,25 @@ export function MemoryPage() {
     enabled: searching,
   })
 
-  const activeQuery = searching ? searchQuery : listQuery
-  const memories = (activeQuery.data?.memories ?? []).filter(
-    (memory) => sourceFilter === 'all' || memory.source_type === sourceFilter,
-  )
+  const preferencesQuery = useQuery({
+    queryKey: ['lifeops', 'preferences', 'list'],
+    queryFn: () => preferencesApi.list(),
+    enabled: view === 'preferences',
+  })
+
+  const activeQuery = view === 'preferences' ? preferencesQuery : searching ? searchQuery : listQuery
+  const memories =
+    view === 'preferences'
+      ? []
+      : ((searching ? searchQuery.data?.memories : listQuery.data?.memories) ?? []).filter(
+          (memory) => sourceFilter === 'all' || memory.source_type === sourceFilter,
+        )
+  const preferences =
+    view === 'preferences'
+      ? (preferencesQuery.data?.preferences ?? []).filter(
+          (preference) => sourceFilter === 'all' || preference.source_type === sourceFilter,
+        )
+      : []
 
   if (activeQuery.isError) {
     return (
@@ -463,9 +680,12 @@ export function MemoryPage() {
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search memories…"
+            placeholder={
+              view === 'preferences' ? 'Search is not available for preferences' : 'Search memories…'
+            }
             aria-label="Search memories"
             className="pl-8"
+            disabled={view === 'preferences'}
           />
         </div>
         <select
@@ -483,14 +703,18 @@ export function MemoryPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {TYPE_FILTERS.map((option) => (
+        {VIEWS.map((option) => (
           <button
             key={option.id}
             type="button"
-            onClick={() => setTypeFilter(option.id)}
+            onClick={() => {
+              setView(option.id)
+              setSelected(null)
+              setSelectedPreference(null)
+            }}
             className={cn(
               'rounded-full border px-3 py-1 text-xs transition-colors',
-              typeFilter === option.id
+              view === option.id
                 ? 'border-foreground bg-foreground text-background'
                 : 'border-border text-muted-foreground hover:bg-muted',
             )}
@@ -499,7 +723,9 @@ export function MemoryPage() {
           </button>
         ))}
         <span className="ml-auto text-xs text-muted-foreground">
-          Closed and superseded versions live in each memory's history.
+          {view === 'invalidated'
+            ? 'Closed and superseded records, newest-closed first.'
+            : "Closed and superseded versions live in each record's history."}
         </span>
       </div>
 
@@ -508,9 +734,30 @@ export function MemoryPage() {
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading…
         </div>
+      ) : view === 'preferences' ? (
+        preferences.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
+            No preferences recorded yet.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {preferences.map((preference) => (
+              <PreferenceCard
+                key={preference.id}
+                preference={preference}
+                selected={selectedPreference?.id === preference.id}
+                onSelect={() =>
+                  setSelectedPreference((current) =>
+                    current?.id === preference.id ? null : preference,
+                  )
+                }
+              />
+            ))}
+          </div>
+        )
       ) : memories.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
-          {searching ? 'No memories match that search.' : 'Nothing remembered yet.'}
+          {searching ? 'No memories match that search.' : 'Nothing recorded in this view yet.'}
         </p>
       ) : (
         <div className="space-y-2">
@@ -527,7 +774,14 @@ export function MemoryPage() {
         </div>
       )}
 
-      {selected && <MemoryDetail memory={selected} onChanged={setSelected} />}
+      {view === 'preferences'
+        ? selectedPreference && (
+            <PreferenceDetail
+              preference={selectedPreference}
+              onChanged={setSelectedPreference}
+            />
+          )
+        : selected && <MemoryDetail memory={selected} onChanged={setSelected} />}
     </div>
   )
 }

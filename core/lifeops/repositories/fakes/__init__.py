@@ -251,6 +251,25 @@ class FakeMemoryRepository:
         matches.sort(key=lambda m: (m.created_at, m.id), reverse=True)
         return [copy.deepcopy(m) for m in matches[:limit]]
 
+    async def list_invalidated(
+        self,
+        subject_id: str | None = None,
+        *,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """The Memory screen's "invalidated/superseded history" view
+        (section 17) — closed records only, newest-closed first."""
+        matches = [
+            m
+            for m in self._memories.values()
+            if m.valid_to is not None
+            and (subject_id is None or m.subject_id == subject_id)
+            and (memory_types is None or m.type in memory_types)
+        ]
+        matches.sort(key=lambda m: (m.valid_to or "", m.id), reverse=True)
+        return [copy.deepcopy(m) for m in matches[:limit]]
+
     async def search(
         self,
         query: str,

@@ -150,6 +150,17 @@ class MemoryRepository(Protocol):
         """Ranked text search over current memories (section 47 recall)."""
         ...
 
+    async def list_invalidated(
+        self,
+        subject_id: str | None = None,
+        *,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """Closed records only (section 17's "invalidated/superseded
+        history" view), newest-closed first."""
+        ...
+
     async def list_history(self, memory_id: str) -> list[MemoryRecord]:
         """Every version in the record's SUPERSEDES chain, newest first."""
         ...

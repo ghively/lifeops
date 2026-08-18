@@ -1021,6 +1021,10 @@ export const memoryApi = {
     subject_id?: string
     type?: MemoryType[]
     include_invalid?: boolean
+    /** Section 17's "invalidated/superseded history" view: closed records
+     * only, not merged with current ones (that's `include_invalid`, which
+     * the server still refuses). */
+    invalidated_only?: boolean
     limit?: number
   }) => lifeops.get<MemoryList>('/memory', { params }).then((r) => r.data),
 

@@ -300,3 +300,24 @@ class TestTemporalSupersession:
         assert rows[0]["reason"] == "user asked to forget"
 
         assert await core.recall(HERMES, query="Rex", subject_id=person.id) == []
+
+
+class TestListInvalidated:
+    """Section 17's "invalidated/superseded history" view against a real
+    NornicDB — proves the Cypher filters on valid_to correctly rather than
+    trusting the fakes' Python filter to match."""
+
+    async def test_lists_only_closed_records_for_the_subject(self, stack) -> None:
+        core, person, _, _ = stack
+        current = await core.remember(
+            HERMES, MemoryDraft(content="has a dog named Rex", subject_id=person.id)
+        )
+        closed = await core.remember(
+            HERMES, MemoryDraft(content="had a cat named Tom", subject_id=person.id)
+        )
+        await core.invalidate_memory(HERMES, memory_id=closed.id, reason="cat passed away")
+
+        invalidated = await core.list_invalidated_memories(HERMES, subject_id=person.id)
+        ids = {m.id for m in invalidated}
+        assert ids == {closed.id}
+        assert current.id not in ids
