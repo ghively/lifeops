@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { WorldPage } from '../WorldPage'
 import {
+  preferencesApi,
   worldApi,
   type MemoryRecord,
   type Task,
@@ -40,6 +41,9 @@ vi.mock('@/services/lifeops', async () => {
       createEntity: vi.fn(),
       link: vi.fn(),
       unlink: vi.fn(),
+    },
+    preferencesApi: {
+      history: vi.fn(),
     },
   }
 })
@@ -139,6 +143,11 @@ beforeEach(() => {
     source: PERSON,
     target: HOUSEHOLD,
     type: 'MEMBER_OF',
+  })
+  vi.mocked(preferencesApi.history).mockResolvedValue({
+    key: 'scheduling.earliest',
+    history: [],
+    total: 0,
   })
 })
 
@@ -341,5 +350,127 @@ describe('domain operations', () => {
       'RELATED_MEMORY',
       'REFERENCES',
     ])
+  })
+})
+
+describe('the section 15 temporal/current toggle', () => {
+  const PREFERENCE = 'preference_01'
+
+  function preferenceGraph(): WorldGraph {
+    return {
+      nodes: [
+        { id: PERSON, entity_type: 'person', label: 'Gene', status: 'active' },
+        {
+          id: PREFERENCE,
+          entity_type: 'preference',
+          label: 'nothing before ten',
+          status: 'active',
+        },
+      ],
+      edges: [{ source: PERSON, target: PREFERENCE, type: 'PREFERS' }],
+    }
+  }
+
+  function preferenceDetail(): WorldEntityDetail {
+    return {
+      entity: {
+        id: PREFERENCE,
+        entity_type: 'preference',
+        display_name: 'nothing before ten',
+        facts: { key: 'scheduling.earliest', source: 'user_explicit' },
+        created_at: '2026-08-16T10:00:00Z',
+        updated_at: '2026-08-16T10:00:00Z',
+        created_by_client: 'hermes-personal',
+      },
+      relationships: [{ source: PERSON, target: PREFERENCE, type: 'PREFERS' }],
+      neighbors: [{ id: PERSON, entity_type: 'person', label: 'Gene', status: 'active' }],
+      related_tasks: [],
+      related_memories: [],
+    }
+  }
+
+  it('shows current facts by default', async () => {
+    vi.mocked(worldApi.graph).mockResolvedValue(preferenceGraph())
+    vi.mocked(worldApi.entity).mockResolvedValue(preferenceDetail())
+    renderPage()
+
+    await userEvent.click(await screen.findByText('node:nothing before ten'))
+    expect(await screen.findByText('Current facts')).toBeInTheDocument()
+    expect(screen.queryByText('Preference history')).not.toBeInTheDocument()
+  })
+
+  it('switches to preference history in History mode', async () => {
+    vi.mocked(worldApi.graph).mockResolvedValue(preferenceGraph())
+    vi.mocked(worldApi.entity).mockResolvedValue(preferenceDetail())
+    vi.mocked(preferencesApi.history).mockResolvedValue({
+      key: 'scheduling.earliest',
+      history: [
+        {
+          id: 'pref_current',
+          subject_id: PERSON,
+          key: 'scheduling.earliest',
+          value: 'nothing before ten',
+          source_type: 'user_explicit',
+          source_id: null,
+          confidence: 1,
+          importance: 0.5,
+          observed_at: '2026-08-16T10:00:00Z',
+          created_at: '2026-08-16T10:00:00Z',
+          valid_from: '2026-08-16T10:00:00Z',
+          valid_to: null,
+          supersedes: 'pref_old',
+          created_by_client: 'hermes-personal',
+          notes: null,
+          is_current: true,
+        },
+        {
+          id: 'pref_old',
+          subject_id: PERSON,
+          key: 'scheduling.earliest',
+          value: 'nothing before nine',
+          source_type: 'user_explicit',
+          source_id: null,
+          confidence: 1,
+          importance: 0.5,
+          observed_at: '2026-08-01T10:00:00Z',
+          created_at: '2026-08-01T10:00:00Z',
+          valid_from: '2026-08-01T10:00:00Z',
+          valid_to: '2026-08-16T10:00:00Z',
+          supersedes: null,
+          created_by_client: 'hermes-personal',
+          notes: null,
+          is_current: false,
+        },
+      ],
+      total: 2,
+    })
+    renderPage()
+
+    await userEvent.click(await screen.findByText('node:nothing before ten'))
+    await screen.findByText('Current facts')
+
+    await userEvent.click(screen.getByRole('button', { name: /history/i }))
+
+    expect(await screen.findByText('Preference history')).toBeInTheDocument()
+    // "nothing before ten" also appears in the header (it's the display
+    // name); the point under test is that the history entry renders too.
+    expect(screen.getAllByText('nothing before ten').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('nothing before nine')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(preferencesApi.history).toHaveBeenCalledWith('scheduling.earliest'),
+    )
+  })
+
+  it('tells a non-preference entity it has no history to show', async () => {
+    renderPage()
+    await userEvent.click(await screen.findByText('node:Main House'))
+    await screen.findByText('Current facts')
+
+    await userEvent.click(screen.getByRole('button', { name: /history/i }))
+
+    expect(
+      await screen.findByText(/carries only current facts/i),
+    ).toBeInTheDocument()
+    expect(preferencesApi.history).not.toHaveBeenCalled()
   })
 })

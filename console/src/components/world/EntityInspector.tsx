@@ -17,6 +17,7 @@ import {
   LifeOpsError,
   TASK_STATE_LABELS,
   errorMessage,
+  preferencesApi,
   relationshipsFrom,
   worldApi,
   worldTypeLabel,
@@ -59,11 +60,15 @@ function Empty({ children }: { children: string }) {
 
 export function EntityInspector({
   entityId,
+  viewMode = 'current',
   onClose,
   onNavigate,
   onGraphChanged,
 }: {
   entityId: string
+  /** Section 15's temporal/current toggle. Only a Preference entity has
+   * anything to show in 'history' mode — see the note below Current facts. */
+  viewMode?: 'current' | 'history'
   onClose: () => void
   onNavigate: (id: string) => void
   onGraphChanged: () => void
@@ -78,6 +83,14 @@ export function EntityInspector({
   const historyQuery = useQuery({
     queryKey: ['lifeops', 'world', 'history', entityId],
     queryFn: () => worldApi.history(entityId),
+  })
+
+  const isPreference = detailQuery.data?.entity.entity_type === 'preference'
+  const preferenceKey = detailQuery.data?.entity.facts.key
+  const preferenceHistoryQuery = useQuery({
+    queryKey: ['lifeops', 'preferences', 'history', preferenceKey],
+    queryFn: () => preferencesApi.history(preferenceKey as string),
+    enabled: viewMode === 'history' && isPreference && Boolean(preferenceKey),
   })
 
   const unlink = useMutation({
@@ -146,20 +159,63 @@ export function EntityInspector({
         </Button>
       </header>
 
-      <Section title="Current facts">
-        {facts.length === 0 ? (
-          <Empty>No facts recorded.</Empty>
-        ) : (
-          <dl className="space-y-1">
-            {facts.map(([key, value]) => (
-              <div key={key} className="flex items-baseline justify-between gap-3 text-sm">
-                <dt className="shrink-0 text-muted-foreground">{key}</dt>
-                <dd className="truncate text-right">{value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-      </Section>
+      {viewMode === 'history' && isPreference ? (
+        <Section title="Preference history">
+          {preferenceHistoryQuery.isLoading ? (
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading history…
+            </p>
+          ) : preferenceHistoryQuery.isError ? (
+            <p className="text-xs text-red-600">
+              {errorMessage(preferenceHistoryQuery.error)}
+            </p>
+          ) : (preferenceHistoryQuery.data?.history ?? []).length === 0 ? (
+            <Empty>No recorded history.</Empty>
+          ) : (
+            <ol className="space-y-1.5">
+              {(preferenceHistoryQuery.data?.history ?? []).map((version) => (
+                <li key={version.id} className="text-xs">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <History className="h-3 w-3" />
+                    since {version.valid_from}
+                    {version.valid_to !== null && ` · until ${version.valid_to}`}
+                  </span>
+                  <span
+                    className={
+                      version.valid_to !== null
+                        ? 'text-sm text-muted-foreground line-through'
+                        : 'text-sm font-medium'
+                    }
+                  >
+                    {version.value}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </Section>
+      ) : (
+        <Section title="Current facts">
+          {facts.length === 0 ? (
+            <Empty>No facts recorded.</Empty>
+          ) : (
+            <dl className="space-y-1">
+              {facts.map(([key, value]) => (
+                <div key={key} className="flex items-baseline justify-between gap-3 text-sm">
+                  <dt className="shrink-0 text-muted-foreground">{key}</dt>
+                  <dd className="truncate text-right">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {viewMode === 'history' && (
+            <p className="text-[11px] italic text-muted-foreground">
+              This entity type carries only current facts (BUILD_SPEC section
+              40) — there is no per-fact history to show yet.
+            </p>
+          )}
+        </Section>
+      )}
 
       <Section title="Relationships">
         {relationships.length === 0 ? (

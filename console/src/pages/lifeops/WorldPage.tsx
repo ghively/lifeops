@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Globe, Link2, Loader2, Plus, Search } from 'lucide-react'
+import { Clock3, Globe, Link2, Loader2, Plus, Search } from 'lucide-react'
 
 import { QueryError } from '@/components/QueryError'
 import { Button } from '@/components/ui/button'
@@ -64,6 +64,13 @@ export function WorldPage() {
   const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null)
   const [expansions, setExpansions] = useState<Record<string, WorldGraph>>({})
   const [dialog, setDialog] = useState<'none' | 'create' | 'link'>('none')
+  // Section 15's temporal/current toggle. Only preferences carry real
+  // supersession history (BUILD_SPEC section 40) — generic world-entity
+  // facts are overwritten in place with no validity window, so "history"
+  // mode changes what the inspector shows for a Preference node rather than
+  // pretending the graph can time-travel for entities that have no history
+  // to travel through.
+  const [viewMode, setViewMode] = useState<'current' | 'history'>('current')
 
   const graphQuery = useQuery({
     queryKey: ['lifeops', 'world', 'graph', typeFilter],
@@ -185,6 +192,40 @@ export function WorldPage() {
           </p>
         </div>
         <div className="ml-auto flex gap-2">
+          <div
+            className="flex items-center gap-1 rounded-md border border-border p-0.5"
+            role="group"
+            aria-label="View mode"
+          >
+            <button
+              type="button"
+              aria-pressed={viewMode === 'current'}
+              onClick={() => setViewMode('current')}
+              className={cn(
+                'rounded px-2 py-1 text-xs transition-colors',
+                viewMode === 'current'
+                  ? 'bg-foreground text-background'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+            >
+              Current
+            </button>
+            <button
+              type="button"
+              aria-pressed={viewMode === 'history'}
+              onClick={() => setViewMode('history')}
+              className={cn(
+                'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
+                viewMode === 'history'
+                  ? 'bg-foreground text-background'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+              title="Preferences show their full history; other entities are current-only (BUILD_SPEC section 40)"
+            >
+              <Clock3 className="h-3 w-3" />
+              History
+            </button>
+          </div>
           <Button variant="outline" size="sm" onClick={() => setDialog('create')}>
             <Plus className="mr-1 h-4 w-4" />
             Add entity
@@ -310,6 +351,7 @@ export function WorldPage() {
         {selectedId && (
           <EntityInspector
             entityId={selectedId}
+            viewMode={viewMode}
             onClose={() => setSelectedId(null)}
             onNavigate={(id) => goToNode(id)}
             onGraphChanged={resetGraphState}
