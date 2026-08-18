@@ -1,14 +1,14 @@
 /**
  * Search — universal search across LifeOps (BUILD_SPEC section 19).
  *
- * Ten of the section's twelve categories: people, preferences, tasks,
- * providers, assets, appointments, memory, documents, knowledge, and bills.
- * Events and actions/historical facts are still missing — the footer says
- * so rather than implying everything was searched.
+ * All twelve of the section's categories: people, preferences, tasks,
+ * providers, assets, appointments, events, memory, documents, knowledge,
+ * bills, actions, and historical facts (the durable audit log).
  *
- * Tasks, documents, and knowledge link to their own screens. The rest render
- * as plain rows: providers, assets, appointments, memory, and bills have no
- * dedicated Console screen to link to yet.
+ * Tasks, documents, and knowledge link to their own screens; actions and
+ * historical facts link to Activity, which already renders both in full.
+ * The rest render as plain rows: providers, assets, appointments, events,
+ * memory, and bills have no dedicated Console screen to link to yet.
  */
 
 import { useState } from 'react'
@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { QueryError } from '@/components/QueryError'
 import {
+  ACTION_TYPE_LABELS,
   TASK_STATE_LABELS,
   errorMessage,
   searchApi,
@@ -44,10 +45,13 @@ export function SearchPage() {
     results.providers.length === 0 &&
     results.assets.length === 0 &&
     results.appointments.length === 0 &&
+    results.events.length === 0 &&
     results.memories.length === 0 &&
     results.documents.length === 0 &&
     results.knowledge.length === 0 &&
-    results.bills.length === 0
+    results.bills.length === 0 &&
+    results.actions.length === 0 &&
+    results.historical_facts.length === 0
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-8">
@@ -58,7 +62,8 @@ export function SearchPage() {
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Search across people, preferences, tasks, providers, assets,
-          appointments, memory, documents, knowledge, and bills.
+          appointments, events, memory, documents, knowledge, bills, actions,
+          and historical facts.
         </p>
       </header>
 
@@ -85,7 +90,8 @@ export function SearchPage() {
       {query.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
           Search people, preferences, tasks, providers, assets, appointments,
-          memory, documents, knowledge, and bills.
+          events, memory, documents, knowledge, bills, actions, and
+          historical facts.
         </p>
       ) : searchQuery.isError ? (
         <QueryError
@@ -226,6 +232,24 @@ export function SearchPage() {
             </section>
           )}
 
+          {results.events.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Events
+              </h2>
+              <div className="space-y-2">
+                {results.events.map((event) => (
+                  <div
+                    key={event.id}
+                    className="rounded-lg border border-border/60 px-4 py-3"
+                  >
+                    <p className="font-medium">{event.display_name}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {results.memories.length > 0 && (
             <section className="space-y-2">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -312,17 +336,55 @@ export function SearchPage() {
               </div>
             </section>
           )}
+
+          {results.actions.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Actions
+              </h2>
+              <div className="space-y-2">
+                {results.actions.map((action) => (
+                  <Link
+                    key={action.id}
+                    to="/activity"
+                    className="block rounded-lg border border-border/60 px-4 py-3 transition-colors hover:bg-muted/50"
+                  >
+                    <p className="font-medium">
+                      {ACTION_TYPE_LABELS[action.type] ?? action.type}
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {action.status}
+                      {action.failure_reason ? ` — ${action.failure_reason}` : ''}
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {results.historical_facts.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Historical facts
+              </h2>
+              <div className="space-y-2">
+                {results.historical_facts.map((record) => (
+                  <Link
+                    key={record.id}
+                    to="/activity"
+                    className="block rounded-lg border border-border/60 px-4 py-3 transition-colors hover:bg-muted/50"
+                  >
+                    <p className="font-medium">{record.intent ?? record.result}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {record.result}
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       ) : null}
-
-      <footer className="rounded-lg border border-dashed border-border/60 px-4 py-4 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">Still missing</p>
-        <p className="mt-1">
-          Events (no domain model exists yet to search) and actions/historical
-          facts (the durable audit log has its own screen instead). Ranking and
-          semantic retrieval remain a substring match for now.
-        </p>
-      </footer>
     </div>
   )
 }

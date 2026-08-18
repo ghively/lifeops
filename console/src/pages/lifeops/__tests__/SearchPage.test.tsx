@@ -1,7 +1,7 @@
 /**
  * Search screen behaviour (BUILD_SPEC section 19).
  *
- * Searches ten of the section's twelve categories through LifeOps Core and
+ * Searches all twelve of the section's categories through LifeOps Core and
  * groups the results. Only kinds with a screen link anywhere; the rest render
  * plainly rather than promising a screen that does not exist yet.
  */
@@ -38,10 +38,13 @@ const EMPTY_RESULTS: SearchResults = {
   providers: [],
   assets: [],
   appointments: [],
+  events: [],
   memories: [],
   documents: [],
   knowledge: [],
   bills: [],
+  actions: [],
+  historical_facts: [],
 }
 
 function makePerson(overrides: Partial<Person> = {}): Person {
@@ -283,5 +286,79 @@ describe('Search', () => {
     expect(screen.getByText('Water heater warranty')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Bills' })).toBeInTheDocument()
     expect(screen.getByText('March invoice')).toBeInTheDocument()
+  })
+
+  it('renders events, actions, and historical facts — the last two categories', async () => {
+    mockedSearch.search.mockResolvedValue({
+      ...EMPTY_RESULTS,
+      events: [
+        {
+          id: 'event_01',
+          entity_type: 'event',
+          display_name: 'Dentist follow-up',
+          facts: {},
+          created_at: '2026-08-16T10:00:00Z',
+          updated_at: '2026-08-16T10:00:00Z',
+          created_by_client: null,
+        },
+      ],
+      actions: [
+        {
+          id: 'action_01',
+          type: 'place_phone_call',
+          status: 'executed',
+          idempotency_key: 'idem_01',
+          payload_hash: 'hash_01',
+          payload: {},
+          task_id: null,
+          target_entity_id: 'provider_abc_electric',
+          created_at: '2026-08-16T10:00:00Z',
+          attempt_count: 1,
+          last_attempt_at: '2026-08-16T10:00:00Z',
+          external_reference: 'CA123',
+          verification_state: 'verified',
+          failure_reason: null,
+          created_by_client: 'hermes-personal',
+        },
+      ],
+      historical_facts: [
+        {
+          id: 'audit_01',
+          requester: 'hermes-personal',
+          user: 'person_gene',
+          client: 'hermes-personal',
+          session: null,
+          intent: 'place_phone_call',
+          tool: 'place_phone_call',
+          risk: 'R2',
+          approval: null,
+          action: 'action_01',
+          target: 'provider_abc_electric',
+          result: 'ok',
+          verification: null,
+          timestamp: '2026-08-16T10:00:00Z',
+          trace_id: null,
+          details: {},
+        },
+      ],
+    })
+    renderPage()
+
+    await userEvent.type(screen.getByLabelText('Search query'), 'electric')
+    await userEvent.click(screen.getByRole('button', { name: /search/i }))
+
+    expect(await screen.findByRole('heading', { name: 'Events' })).toBeInTheDocument()
+    expect(screen.getByText('Dentist follow-up')).toBeInTheDocument()
+
+    expect(screen.getByRole('heading', { name: 'Actions' })).toBeInTheDocument()
+    expect(screen.getByText('Place a phone call')).toBeInTheDocument()
+    const actionRow = screen.getByText('Place a phone call').closest('a')
+    expect(actionRow).toHaveAttribute('href', '/activity')
+
+    expect(
+      screen.getByRole('heading', { name: 'Historical facts' }),
+    ).toBeInTheDocument()
+    const factRow = screen.getByText('place_phone_call').closest('a')
+    expect(factRow).toHaveAttribute('href', '/activity')
   })
 })

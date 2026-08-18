@@ -1741,8 +1741,8 @@ async def universal_search(
     q: Annotated[str, Query(min_length=1, max_length=200)],
     limit: Annotated[int, Query(ge=1, le=100)] = 10,
 ) -> dict[str, Any]:
-    """Case-insensitive substring search across ten of section 19's twelve
-    categories (domain/search.py explains the two still missing)."""
+    """Case-insensitive substring search across all twelve of section 19's
+    categories."""
     results = await container.core.search(client, query=q, limit=limit)
     return {
         "people": [_person_out(p).model_dump() for p in results.people],
@@ -1751,10 +1751,13 @@ async def universal_search(
         "providers": [_entity_out(e).model_dump() for e in results.providers],
         "assets": [_entity_out(e).model_dump() for e in results.assets],
         "appointments": [_appointment_out(a).model_dump() for a in results.appointments],
+        "events": [_entity_out(e).model_dump() for e in results.events],
         "memories": [_memory_out(m).model_dump() for m in results.memories],
         "documents": [_document_out(d).model_dump() for d in results.documents],
         "knowledge": [_knowledge_out(k).model_dump() for k in results.knowledge],
         "bills": [_bill_out(b).model_dump() for b in results.bills],
+        "actions": [_action_out(a).model_dump() for a in results.actions],
+        "historical_facts": [_audit_out(r).model_dump() for r in results.historical_facts],
     }
 
 
