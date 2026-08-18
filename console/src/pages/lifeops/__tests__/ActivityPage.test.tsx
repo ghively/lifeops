@@ -3,10 +3,15 @@
  *
  * Two sources, honestly labelled: the durable audit log (every surface,
  * survives restarts) and this process's finer-grained in-memory feed.
+ *
+ * Section 21 asks for a human-readable narrative first, with technical
+ * detail (trace ID, client ID, tool, risk class, duration, action ID,
+ * verification evidence) behind an expand action — what's under test here.
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -37,16 +42,16 @@ function makeAuditRecord(overrides: Partial<AuditRecord> = {}): AuditRecord {
     user: null,
     client: 'hermes-personal',
     session: null,
-    intent: 'book_appointment',
-    tool: 'book_appointment',
+    intent: 'create_appointment_hold',
+    tool: 'calendar',
     risk: 'R3',
     approval: null,
     action: 'action_01',
     target: null,
-    result: 'prepared',
+    result: 'held',
     verification: null,
     timestamp: '2026-08-16T10:30:00Z',
-    trace_id: null,
+    trace_id: 'trace_xyz',
     details: {},
     ...overrides,
   }
@@ -55,7 +60,7 @@ function makeAuditRecord(overrides: Partial<AuditRecord> = {}): AuditRecord {
 function makeEntry(overrides: Partial<ActivityEntry> = {}): ActivityEntry {
   return {
     ts: '2026-08-16T10:32:00Z',
-    operation: 'memory.search',
+    operation: 'memory.recall',
     result: 'ok',
     duration_ms: 12.4,
     client_id: 'hermes-personal',
@@ -89,22 +94,59 @@ afterEach(() => {
 })
 
 describe('Activity', () => {
-  it('renders recent activity from LifeOps Core', async () => {
+  it('renders a human-readable narrative, not the raw operation name', async () => {
     renderPage()
-    expect(await screen.findByText('memory.search')).toBeInTheDocument()
-    expect(screen.getAllByText('hermes-personal').length).toBeGreaterThan(0)
-    expect(screen.getByText('12 ms')).toBeInTheDocument()
+    expect(await screen.findByText('Hermes searched memory.')).toBeInTheDocument()
+    expect(screen.queryByText('memory.recall')).not.toBeInTheDocument()
+  })
+
+  it('narrates the durable audit log too, honestly labelled', async () => {
+    renderPage()
+    expect(
+      await screen.findByText('Hermes held a calendar appointment.'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Audit log')).toBeInTheDocument()
+    expect(screen.queryByText('create_appointment_hold')).not.toBeInTheDocument()
+    // The live feed says what it cannot see, instead of implying coverage.
+    expect(screen.getByText(/does not see the separately running MCP server/i)).toBeInTheDocument()
+  })
+
+  it('hides technical detail until expanded, then shows it', async () => {
+    renderPage()
+    const row = await screen.findByRole('button', {
+      name: /show technical detail for: hermes held a calendar appointment/i,
+    })
+
+    expect(screen.queryByText('trace_xyz')).not.toBeInTheDocument()
+    expect(screen.queryByText('action_01')).not.toBeInTheDocument()
+
+    await userEvent.click(row)
+
+    expect(screen.getByText('trace_xyz')).toBeInTheDocument()
+    expect(screen.getByText('action_01')).toBeInTheDocument()
+    expect(screen.getByText('R3')).toBeInTheDocument()
+
+    await userEvent.click(row)
+    expect(screen.queryByText('trace_xyz')).not.toBeInTheDocument()
+  })
+
+  it('falls back to a plain, still-readable line for an unmapped operation', async () => {
+    mockedSystem.getActivity.mockResolvedValue([
+      makeEntry({ operation: 'task.transition', result: 'ok' }),
+    ])
+    renderPage()
+    expect(await screen.findByText('Hermes — Task transition (ok).')).toBeInTheDocument()
   })
 
   it('shows newest entries first regardless of buffer order', async () => {
     mockedSystem.getActivity.mockResolvedValue([
       makeEntry({ operation: 'task.create', ts: '2026-08-16T10:32:00Z' }),
-      makeEntry({ operation: 'preference.save', ts: '2026-08-16T10:38:00Z' }),
+      makeEntry({ operation: 'memory.recall', ts: '2026-08-16T10:38:00Z' }),
     ])
     renderPage()
 
-    const earlier = await screen.findByText('task.create')
-    const later = screen.getByText('preference.save')
+    const earlier = await screen.findByText('Hermes created a task.')
+    const later = screen.getByText('Hermes searched memory.')
     // `later` must come before `earlier` in document order.
     expect(
       later.compareDocumentPosition(earlier) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -113,27 +155,24 @@ describe('Activity', () => {
 
   it('flags a failed operation instead of hiding it', async () => {
     mockedSystem.getActivity.mockResolvedValue([
-      makeEntry({ operation: 'task.transition', result: 'error' }),
+      makeEntry({ operation: 'task.create', result: 'error' }),
     ])
     renderPage()
-    const result = await screen.findByText('error')
-    expect(result).toHaveClass('text-red-600')
+    const narrative = await screen.findByText('Hermes created a task.')
+    expect(narrative).toHaveClass('text-red-600')
   })
 
-  it('shows the entity an entry touched when it carries one', async () => {
+  it('shows the touched entity id behind the expand action', async () => {
     mockedSystem.getActivity.mockResolvedValue([
-      makeEntry({ task_id: 'task_01xyz' }),
+      makeEntry({ operation: 'task.create', task_id: 'task_01xyz' }),
     ])
     renderPage()
-    expect(await screen.findByText('task_01xyz')).toBeInTheDocument()
-  })
-
-  it('shows the durable audit log, honestly labelled', async () => {
-    renderPage()
-    expect(await screen.findByText('Audit log')).toBeInTheDocument()
-    expect((await screen.findAllByText('book_appointment')).length).toBeGreaterThan(0)
-    // The live feed says what it cannot see, instead of implying coverage.
-    expect(screen.getByText(/does not see the separately running MCP server/i)).toBeInTheDocument()
+    const row = await screen.findByRole('button', {
+      name: /show technical detail for: hermes created a task/i,
+    })
+    expect(screen.queryByText('task_01xyz')).not.toBeInTheDocument()
+    await userEvent.click(row)
+    expect(screen.getByText('task_01xyz')).toBeInTheDocument()
   })
 
   it('has an honest empty state', async () => {
