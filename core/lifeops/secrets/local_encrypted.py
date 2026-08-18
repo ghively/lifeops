@@ -43,6 +43,7 @@ class LocalEncryptedSecretStore:
         self._key_path = directory / "master.key"
         self._vault_path = directory / "secrets.json"
         self._cache: dict[str, Any] | None = None
+        self._stamp: tuple[int, int] | None = None
         self._dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self._dir, 0o700)
 
@@ -81,11 +82,23 @@ class LocalEncryptedSecretStore:
 
     # --- vault I/O ----------------------------------------------------------
 
+    def _file_stamp(self) -> tuple[int, int] | None:
+        try:
+            stat = self._vault_path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
     def _read_vault(self) -> dict[str, Any]:
-        if self._cache is not None:
+        # Cache keyed on the file's identity: the HTTP and MCP servers are
+        # separate processes over one vault, and a credential edited or
+        # deleted from the Console must reach a running MCP process.
+        stamp = self._file_stamp()
+        if self._cache is not None and stamp == self._stamp:
             return self._cache
-        if not self._vault_path.exists():
+        if stamp is None:
             self._cache = {"version": _VAULT_VERSION, "secrets": {}}
+            self._stamp = None
             return self._cache
         try:
             data = json.loads(self._vault_path.read_text())
@@ -98,6 +111,7 @@ class LocalEncryptedSecretStore:
                 f"unsupported secret vault version {data.get('version')!r}"
             )
         self._cache = data
+        self._stamp = stamp
         return data
 
     def _write_vault(self, data: dict[str, Any]) -> None:
@@ -115,6 +129,7 @@ class LocalEncryptedSecretStore:
             raise
         os.chmod(self._vault_path, 0o600)
         self._cache = data
+        self._stamp = self._file_stamp()
 
     # --- SecretStore --------------------------------------------------------
 

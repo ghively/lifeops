@@ -1949,9 +1949,10 @@ async def update_system_config(
 ) -> dict[str, Any]:
     changes = payload.model_dump(exclude_unset=True, exclude_none=True)
     updated = container.config.update_system(changes)
-    # Safe mode has to take effect immediately, not on next restart.
-    if "safe_mode" in changes:
-        container.core.safe_mode = updated.safe_mode
+    # No in-process propagation needed: core.safe_mode reads the config
+    # live (Container wires a callable source), which is also what carries
+    # the toggle to the separately running MCP server. Assigning a bool
+    # here would pin this process and defeat that.
     _publish_config_changed(container, scope="system")
     return updated.model_dump()
 
