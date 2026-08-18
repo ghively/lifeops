@@ -74,6 +74,7 @@ from lifeops.api.schemas import (
     RequestProviderContactRequest,
     RequestServiceBookingRequest,
     SavePreferenceRequest,
+    SaveWorkflowTemplateRequest,
     SendEmailRequest,
     ServiceRequestListResponse,
     ServiceRequestResponse,
@@ -93,6 +94,8 @@ from lifeops.api.schemas import (
     UpdateTaskRequest,
     WaitingItemResponse,
     WaitingListResponse,
+    WorkflowTemplateListResponse,
+    WorkflowTemplateResponse,
     WorldEdge,
     WorldEntityResponse,
     WorldGraphResponse,
@@ -128,6 +131,7 @@ from lifeops.domain.shopping import (
 from lifeops.domain.tasks import Task, TaskDraft, TaskState, TaskUpdate, transition_table
 from lifeops.domain.voice import SynthesisOptions
 from lifeops.domain.waiting import WaitingDraft, WaitingItem, WaitingStatus
+from lifeops.domain.workflow_templates import WorkflowTemplate, WorkflowTemplateDraft
 from lifeops.domain.world import EntityDetail, EntityDraft, WorldGraph
 from lifeops.domain.world import WorldEntity as DomainWorldEntity
 from lifeops.errors import LifeOpsError, NotFoundError, ProviderNotConfiguredError, ValidationError
@@ -1527,6 +1531,68 @@ async def settle_bill(
         client, bill_id=bill_id, external_reference=payload.external_reference
     )
     return _bill_out(bill)
+
+
+# --- workflow templates (BUILD_SPEC sections 73, 100) -------------------------
+
+
+def _template_out(template: WorkflowTemplate) -> WorkflowTemplateResponse:
+    return WorkflowTemplateResponse(**template.model_dump())
+
+
+@router.get(
+    "/workflow-templates", response_model=WorkflowTemplateListResponse, tags=["routines"]
+)
+async def list_workflow_templates(
+    container: ContainerDep,
+    client: ClientDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> WorkflowTemplateListResponse:
+    templates = [
+        _template_out(t)
+        for t in await container.core.list_workflow_templates(client, limit=limit)
+    ]
+    return WorkflowTemplateListResponse(templates=templates, total=len(templates))
+
+
+@router.get(
+    "/workflow-templates/due", response_model=WorkflowTemplateListResponse, tags=["routines"]
+)
+async def list_due_routines(
+    container: ContainerDep,
+    client: ClientDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> WorkflowTemplateListResponse:
+    """Scheduled routines whose time has come (section 55's due-work lease,
+    reused rather than a second scheduler)."""
+    templates = [
+        _template_out(t) for t in await container.core.due_routines(client, limit=limit)
+    ]
+    return WorkflowTemplateListResponse(templates=templates, total=len(templates))
+
+
+@router.post(
+    "/workflow-templates",
+    response_model=WorkflowTemplateResponse,
+    status_code=201,
+    tags=["routines"],
+)
+async def save_workflow_template(
+    payload: SaveWorkflowTemplateRequest, container: ContainerDep, client: ClientDep
+) -> WorkflowTemplateResponse:
+    """Create or revise a template — a permitted self-change (section 73). The
+    name determines identity, so saving an existing name revises it."""
+    template = await container.core.save_workflow_template(
+        client, WorkflowTemplateDraft(**payload.model_dump())
+    )
+    return _template_out(template)
+
+
+@router.delete("/workflow-templates/{template_id}", status_code=204, tags=["routines"])
+async def delete_workflow_template(
+    template_id: str, container: ContainerDep, client: ClientDep
+) -> None:
+    await container.core.delete_workflow_template(client, template_id=template_id)
 
 
 # --- search (BUILD_SPEC section 19) ------------------------------------------

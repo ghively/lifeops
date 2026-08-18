@@ -24,11 +24,13 @@ import { ThemeProvider } from './components/theme/ThemeProvider'
 import { useAuthStore } from './lib/auth'
 import { ActivityPage } from './pages/lifeops/ActivityPage'
 import { ApprovalsPage } from './pages/lifeops/ApprovalsPage'
+import { BillsPage } from './pages/lifeops/BillsPage'
 import { ComingInPhasePage } from './pages/lifeops/ComingInPhasePage'
 import { ConfigurationPage } from './pages/lifeops/ConfigurationPage'
 import { LoginPage } from './pages/lifeops/LoginPage'
 import { MemoryPage } from './pages/lifeops/MemoryPage'
 import { NeedsAttentionPage } from './pages/lifeops/NeedsAttentionPage'
+import { RoutinesPage } from './pages/lifeops/RoutinesPage'
 import { SearchPage } from './pages/lifeops/SearchPage'
 import { LifeOpsTasksPage } from './pages/lifeops/TasksPage'
 import { SystemPage } from './pages/lifeops/SystemPage'
@@ -141,6 +143,8 @@ function App() {
                   <Route path="/approvals" element={<ApprovalsPage />} />
                   <Route path="/waiting" element={<WaitingPage />} />
                   <Route path="/tasks" element={<LifeOpsTasksPage />} />
+                  <Route path="/bills" element={<BillsPage />} />
+                  <Route path="/routines" element={<RoutinesPage />} />
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/memory" element={<MemoryPage />} />
                   <Route path="/world" element={<WorldPage />} />

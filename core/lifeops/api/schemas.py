@@ -16,6 +16,7 @@ from lifeops.domain.service_request import ServiceRequestStatus
 from lifeops.domain.shopping import ShoppingListStatus
 from lifeops.domain.tasks import TaskPriority, TaskState, VerificationState
 from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingStatus
+from lifeops.domain.workflow_templates import TriggerKind
 
 
 class ErrorResponse(BaseModel):
@@ -513,6 +514,57 @@ class SettleBillRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     external_reference: str = Field(min_length=1, max_length=200)
+
+
+# --- workflow templates (BUILD_SPEC sections 73, 100) -------------------------
+
+
+class WorkflowStepSchema(BaseModel):
+    """Mirrors ``lifeops.domain.workflow_templates.WorkflowStep`` one-for-one,
+    the same discipline the rest of this module follows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order: int = Field(ge=0)
+    description: str = Field(min_length=1, max_length=500)
+    action_type: str | None = None
+
+
+class WorkflowTemplateResponse(BaseModel):
+    """One WorkflowTemplate (section 73's routine templates)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    description: str | None
+    steps: list[WorkflowStepSchema]
+    trigger: TriggerKind
+    next_run_at: str | None
+    enabled: bool
+    created_at: str
+    updated_at: str
+    created_by_client: str | None
+
+
+class WorkflowTemplateListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    templates: list[WorkflowTemplateResponse]
+    total: int
+
+
+class SaveWorkflowTemplateRequest(BaseModel):
+    """Create or revise a template. The name determines identity — saving an
+    existing name revises it rather than creating a second one (section 73)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    steps: list[WorkflowStepSchema] = Field(default_factory=list)
+    trigger: TriggerKind = TriggerKind.MANUAL
+    next_run_at: str | None = None
 
 
 # --- configuration -----------------------------------------------------------

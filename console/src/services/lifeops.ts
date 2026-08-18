@@ -590,6 +590,180 @@ export const auditApi = {
     lifeops.get<AuditList>('/audit', { params }).then((r) => r.data),
 }
 
+// --- bills, payees, and workflow templates (BUILD_SPEC sections 72-73, 99-100) -
+//
+// LifeOps Core decides everything that matters: whether a payee is usable,
+// whether a payment needs approval (always, section 72), and what a saved
+// routine template is allowed to contain. The Console only renders and
+// submits. Amounts are strings end to end — see the Bills screen's header
+// comment for why that is load-bearing, not cosmetic.
+
+export type BillStatus = 'due' | 'scheduled' | 'paid' | 'overdue' | 'disputed' | 'cancelled'
+
+/** One Payee (BUILD_SPEC section 72). Never carries a credential — only a
+ * handle into the secret store. Unusable for payment until approved. */
+export interface Payee {
+  id: string
+  display_name: string
+  provider_entity_id: string | null
+  secret_ref: string | null
+  created_at: string
+  approved_at: string | null
+  approved_by: string | null
+  created_by_client: string | null
+  is_approved: boolean
+}
+
+export interface PayeeList {
+  payees: Payee[]
+  total: number
+}
+
+/** One Bill (BUILD_SPEC sections 72, 99). `amount` is a string — see the
+ * Bills screen for why it must never be parsed into a number. */
+export interface Bill {
+  id: string
+  payee_id: string
+  description: string
+  amount: string
+  currency: string
+  due_at: string | null
+  status: BillStatus
+  action_id: string | null
+  paid_at: string | null
+  external_reference: string | null
+  source_document_id: string | null
+  created_at: string
+  updated_at: string
+  created_by_client: string | null
+  is_payable: boolean
+}
+
+export interface BillList {
+  bills: Bill[]
+  total: number
+}
+
+export const BILL_STATUS_LABELS: Record<BillStatus, string> = {
+  due: 'Due',
+  scheduled: 'Scheduled',
+  paid: 'Paid',
+  overdue: 'Overdue',
+  disputed: 'Disputed',
+  cancelled: 'Cancelled',
+}
+
+export const payeesApi = {
+  list: () => lifeops.get<PayeeList>('/payees').then((r) => r.data),
+
+  /**
+   * Propose a payee. Section 72: a new payee always requires approval, so
+   * this returns the action awaiting a decision, not a usable payee.
+   */
+  propose: (payload: { display_name: string; provider_entity_id?: string; secret_ref?: string }) =>
+    lifeops
+      .post<{ action_id: string; status: string }>('/payees', payload)
+      .then((r) => r.data),
+
+  approve: (payeeId: string) =>
+    lifeops.post<Payee>(`/payees/${payeeId}/approve`).then((r) => r.data),
+}
+
+export const billsApi = {
+  list: (params?: { statuses?: BillStatus[]; limit?: number }) =>
+    lifeops.get<BillList>('/bills', { params }).then((r) => r.data),
+
+  get: (id: string) => lifeops.get<Bill>(`/bills/${id}`).then((r) => r.data),
+
+  /** Record something owed. This tracks a debt; it pays nothing. */
+  record: (payload: {
+    payee_id: string
+    description: string
+    amount: string
+    currency?: string
+    due_at?: string
+    source_document_id?: string
+  }) => lifeops.post<Bill>('/bills', payload).then((r) => r.data),
+
+  /**
+   * Prepare a payment. Always needs approval (section 72) — the Console must
+   * not imply anything was paid.
+   */
+  preparePayment: (billId: string) =>
+    lifeops
+      .post<{ action_id: string; status: string }>(`/bills/${billId}/payment`)
+      .then((r) => r.data),
+
+  /** Settle a bill with the provider's own confirmation reference — never
+   * optional, never auto-filled (section 72). */
+  settle: (billId: string, externalReference: string) =>
+    lifeops
+      .post<Bill>(`/bills/${billId}/settle`, { external_reference: externalReference })
+      .then((r) => r.data),
+}
+
+/** How a routine starts (BUILD_SPEC sections 73, 100). */
+export type TriggerKind = 'manual' | 'schedule' | 'event'
+
+export const TRIGGER_KIND_LABELS: Record<TriggerKind, string> = {
+  manual: 'Manual',
+  schedule: 'Schedule',
+  event: 'Event',
+}
+
+/** Mirrors ``lifeops.domain.workflow_templates.WorkflowStep`` one-for-one. */
+export interface WorkflowStep {
+  order: number
+  description: string
+  action_type: string | null
+}
+
+/** One WorkflowTemplate — a named, reusable shape of work Hermes may create
+ * and revise itself through the Console (section 73). */
+export interface WorkflowTemplate {
+  id: string
+  name: string
+  description: string | null
+  steps: WorkflowStep[]
+  trigger: TriggerKind
+  next_run_at: string | null
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  created_by_client: string | null
+}
+
+export interface WorkflowTemplateList {
+  templates: WorkflowTemplate[]
+  total: number
+}
+
+export const workflowTemplatesApi = {
+  list: (params?: { limit?: number }) =>
+    lifeops.get<WorkflowTemplateList>('/workflow-templates', { params }).then((r) => r.data),
+
+  /** Scheduled routines whose time has come. */
+  due: (params?: { limit?: number }) =>
+    lifeops
+      .get<WorkflowTemplateList>('/workflow-templates/due', { params })
+      .then((r) => r.data),
+
+  /**
+   * Create or revise a template. The name determines identity — saving an
+   * existing name revises it rather than creating a second one (section 73).
+   */
+  save: (payload: {
+    name: string
+    description?: string
+    steps?: WorkflowStep[]
+    trigger?: TriggerKind
+    next_run_at?: string
+  }) => lifeops.post<WorkflowTemplate>('/workflow-templates', payload).then((r) => r.data),
+
+  delete: (templateId: string) =>
+    lifeops.delete(`/workflow-templates/${templateId}`).then(() => undefined),
+}
+
 export const peopleApi = {
   me: () => lifeops.get<Person>('/people/me').then((r) => r.data),
   list: () =>
