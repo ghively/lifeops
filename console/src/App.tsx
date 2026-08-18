@@ -26,6 +26,7 @@ import { ActionsPage } from './pages/lifeops/ActionsPage'
 import { ActivityPage } from './pages/lifeops/ActivityPage'
 import { ApprovalsPage } from './pages/lifeops/ApprovalsPage'
 import { BillsPage } from './pages/lifeops/BillsPage'
+import { CalendarPage } from './pages/lifeops/CalendarPage'
 import { ComingInPhasePage } from './pages/lifeops/ComingInPhasePage'
 import { ConfigurationPage } from './pages/lifeops/ConfigurationPage'
 import { LoginPage } from './pages/lifeops/LoginPage'
@@ -67,13 +68,6 @@ const PENDING_ROUTES: Array<{
   phase: number
   description: string
 }> = [
-  {
-    path: '/calendar',
-    title: 'Calendar',
-    phase: 7,
-    description:
-      'Availability, holds, and events. The calendar APIs shipped with phase 7; this screen has not been built yet.',
-  },
   {
     path: '/knowledge',
     title: 'Knowledge',
@@ -148,6 +142,7 @@ function App() {
                   <Route path="/tasks" element={<LifeOpsTasksPage />} />
                   <Route path="/bills" element={<BillsPage />} />
                   <Route path="/routines" element={<RoutinesPage />} />
+                  <Route path="/calendar" element={<CalendarPage />} />
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/memory" element={<MemoryPage />} />
                   <Route path="/world" element={<WorldPage />} />
