@@ -16,6 +16,11 @@ from typing import Any
 from lifeops.domain.preferences import Preference, PreferenceSource
 from lifeops.repositories.nornic.client import NornicClient
 
+
+def _score(value: Any, *, default: float) -> float:
+    """A stored 0..1 score, defaulting when the property is absent."""
+    return default if value is None else float(value)
+
 _RETURN = """
     p.id AS id,
     p.subject_id AS subject_id,
@@ -43,8 +48,8 @@ def _row_to_preference(row: dict[str, Any]) -> Preference:
         value=row["value"],
         source_type=PreferenceSource(row.get("source_type") or "user_explicit"),
         source_id=row.get("source_id"),
-        confidence=float(row.get("confidence") if row.get("confidence") is not None else 1.0),
-        importance=float(row.get("importance") if row.get("importance") is not None else 0.5),
+        confidence=_score(row.get("confidence"), default=1.0),
+        importance=_score(row.get("importance"), default=0.5),
         observed_at=row["observed_at"],
         created_at=row["created_at"],
         valid_from=row["valid_from"],
@@ -138,7 +143,7 @@ class NornicPreferenceRepository:
             MATCH (p:Preference)
             WHERE p.subject_id = $subject_id AND p.key = $key AND p.valid_to IS NULL
             RETURN {_RETURN}
-            ORDER BY p.valid_from DESC
+            ORDER BY p.valid_from DESC, p.id DESC
             LIMIT 1
             """,
             subject_id=subject_id,
@@ -168,7 +173,7 @@ class NornicPreferenceRepository:
             MATCH (p:Preference)
             WHERE p.subject_id = $subject_id AND p.key = $key
             RETURN {_RETURN}
-            ORDER BY p.valid_from DESC
+            ORDER BY p.valid_from DESC, p.id DESC
             """,
             subject_id=subject_id,
             key=key,
