@@ -379,10 +379,13 @@ export interface SearchResults {
   providers: WorldEntity[]
   assets: WorldEntity[]
   appointments: Appointment[]
+  events: WorldEntity[]
   memories: MemoryRecord[]
   documents: LifeOpsDocument[]
   knowledge: Knowledge[]
   bills: Bill[]
+  actions: LifeOpsAction[]
+  historical_facts: AuditRecord[]
 }
 
 // --- memory types (BUILD_SPEC sections 42-47) ---------------------------------

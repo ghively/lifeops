@@ -3955,11 +3955,10 @@ class LifeOpsCore:
     async def search(
         self, client: ClientIdentity, *, query: str, limit: int = 10
     ) -> SearchResults:
-        """Universal search (section 19): people, preferences, tasks,
-        providers, assets, appointments, memory, documents, knowledge, and
-        bills — ten of the section's twelve categories (domain/search.py
-        explains why events and actions/historical facts are not among
-        them).
+        """Universal search (section 19): all twelve categories — people,
+        preferences, tasks, providers, assets, appointments, events, memory,
+        documents, knowledge, bills, actions, and historical facts (the
+        durable audit log).
 
         Phase 1 is a case-insensitive substring match; ranking and semantic
         retrieval arrive with the memory layer (Phase 2).
@@ -3976,6 +3975,7 @@ class LifeOpsCore:
             providers: list[WorldEntity] = []
             assets: list[WorldEntity] = []
             appointments: list[Appointment] = []
+            events: list[WorldEntity] = []
             documents: list[Document] = []
             knowledge: list[Knowledge] = []
             if has_world:
@@ -3993,6 +3993,9 @@ class LifeOpsCore:
                         limit=limit,
                     )
                 ]
+                events = await self._world().search_full(
+                    entity_types=[WorldEntityType.EVENT], query=query, limit=limit
+                )
                 documents = [
                     entity_to_document(e)
                     for e in await self._world().search_full(
@@ -4011,14 +4014,38 @@ class LifeOpsCore:
                 ]
 
             bills: list[Bill] = []
-            if can_read_tasks and self._bills_repo is not None:
+            actions: list[Action] = []
+            historical_facts: list[AuditRecord] = []
+            if can_read_tasks:
                 needle = query.strip().lower()
-                all_bills = await self._bills().list_bills(limit=200)
-                bills = [
-                    b
-                    for b in all_bills
-                    if not needle or needle in b.description.lower()
-                ][:limit]
+                if self._bills_repo is not None:
+                    all_bills = await self._bills().list_bills(limit=200)
+                    bills = [
+                        b
+                        for b in all_bills
+                        if not needle or needle in b.description.lower()
+                    ][:limit]
+                if self._action_service is not None:
+                    all_actions = await self._actions().list(limit=200)
+                    actions = [
+                        a
+                        for a in all_actions
+                        if not needle
+                        or needle in str(a.type).lower()
+                        or (a.failure_reason and needle in a.failure_reason.lower())
+                        or (a.external_reference and needle in a.external_reference.lower())
+                    ][:limit]
+                if self._audit_repo is not None:
+                    all_audit = await self._audit_repo.list_recent(limit=200)
+                    historical_facts = [
+                        r
+                        for r in all_audit
+                        if not needle
+                        or (r.intent and needle in r.intent.lower())
+                        or (r.tool and needle in r.tool.lower())
+                        or needle in r.result.lower()
+                        or (r.target and needle in r.target.lower())
+                    ][:limit]
 
             return SearchResults(
                 people=await self._people.find_by_name(query),
@@ -4035,6 +4062,7 @@ class LifeOpsCore:
                 providers=providers,
                 assets=assets,
                 appointments=appointments,
+                events=events,
                 memories=(
                     await self._memory().recall(query=query, limit=limit)
                     if can_read_memory and self._memory_service is not None
@@ -4043,4 +4071,6 @@ class LifeOpsCore:
                 documents=documents,
                 knowledge=knowledge,
                 bills=bills,
+                actions=actions,
+                historical_facts=historical_facts,
             )

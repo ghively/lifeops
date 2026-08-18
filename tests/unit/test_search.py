@@ -1,5 +1,6 @@
-"""Universal search (BUILD_SPEC section 19): people, preferences, tasks,
-providers, assets, appointments, memory, documents, knowledge, and bills.
+"""Universal search (BUILD_SPEC section 19): all twelve categories — people,
+preferences, tasks, providers, assets, appointments, events, memory,
+documents, knowledge, bills, actions, and historical facts.
 """
 
 from __future__ import annotations
@@ -8,8 +9,14 @@ import pytest
 
 from lifeops.clock import FrozenClock
 from lifeops.core import LifeOpsCore
+from lifeops.domain.actions import ActionDraft, ActionType
 from lifeops.domain.bills import BillDraft, PayeeDraft
-from lifeops.domain.calendar import Appointment, AppointmentStatus
+from lifeops.domain.calendar import (
+    Appointment,
+    AppointmentStatus,
+    CalendarEvent,
+    calendar_event_to_entity,
+)
 from lifeops.domain.documents import DocumentDraft
 from lifeops.domain.knowledge import KnowledgeDraft
 from lifeops.domain.memory import MemoryDraft
@@ -23,6 +30,7 @@ from lifeops.policy.capabilities import CONSOLE, HERMES, ClientIdentity, ClientR
 from lifeops.repositories.fakes import (
     FakeActionRepository,
     FakeApprovalRepository,
+    FakeAuditRepository,
     FakeBillRepository,
     FakeMemoryRepository,
     FakePersonRepository,
@@ -99,8 +107,9 @@ class TestSearch:
 
 @pytest.fixture
 async def full_core(clock: FrozenClock) -> LifeOpsCore:
-    """A LifeOpsCore with world, memory, and bills wired, for the seven
-    categories the audit found universal search missing."""
+    """A LifeOpsCore with world, memory, bills, and audit wired, for the
+    categories the two 2026-08-18 audit passes found universal search
+    missing."""
     people = FakePersonRepository()
     await people.upsert(
         Person(
@@ -117,6 +126,7 @@ async def full_core(clock: FrozenClock) -> LifeOpsCore:
         bills=FakeBillRepository(),
         actions=FakeActionRepository(),
         approvals=FakeApprovalRepository(),
+        audit=FakeAuditRepository(),
         clock=clock,
     )
 
@@ -213,7 +223,75 @@ class TestWidenedCategories:
         assert results.providers == []
         assert results.assets == []
         assert results.appointments == []
+        assert results.events == []
         assert results.memories == []
         assert results.documents == []
         assert results.knowledge == []
         assert results.bills == []
+        assert results.actions == []
+        assert results.historical_facts == []
+
+
+class TestLastTwoCategories:
+    """The two categories the second 2026-08-18 audit pass found still
+    missing: events (a real Event projection already existed —
+    domain/calendar.py's calendar_event_to_entity — search just never
+    reached for it) and actions/historical facts (both map to a concrete,
+    already-persisted object: Action and AuditRecord)."""
+
+    async def test_matches_an_event_by_title(self, full_core: LifeOpsCore) -> None:
+        event = CalendarEvent(
+            id="event_dentist",
+            external_event_id="ext_1",
+            title="Dentist follow-up",
+            start_at=TS,
+            end_at=TS,
+        )
+        await full_core._world_repo.create(calendar_event_to_entity(event, now=TS))
+        results = await full_core.search(CONSOLE, query="dentist")
+        assert [e.display_name for e in results.events] == ["Dentist follow-up"]
+
+    async def test_matches_an_action_by_type(self, full_core: LifeOpsCore) -> None:
+        await full_core.prepare_action(
+            CONSOLE, ActionDraft(type=ActionType.SEND_EMAIL, payload={})
+        )
+        results = await full_core.search(CONSOLE, query="email")
+        assert [str(a.type) for a in results.actions] == ["send_email"]
+
+    async def test_actions_are_empty_without_read_tasks(
+        self, full_core: LifeOpsCore
+    ) -> None:
+        await full_core.prepare_action(
+            CONSOLE, ActionDraft(type=ActionType.SEND_EMAIL, payload={})
+        )
+        world_only_client = ClientIdentity(
+            client_id="world-only-actions",
+            role=ClientRole.INTERACTIVE_ASSISTANT,
+            display_name="World only",
+            capabilities=frozenset({Capability.READ_WORLD}),
+        )
+        results = await full_core.search(world_only_client, query="email")
+        assert results.actions == []
+
+    async def test_matches_a_historical_fact_by_intent(
+        self, full_core: LifeOpsCore
+    ) -> None:
+        await full_core.audit(
+            CONSOLE, result="ok", intent="schedule_electrician",
+            target="provider_abc_electric",
+        )
+        results = await full_core.search(CONSOLE, query="electrician")
+        assert [r.intent for r in results.historical_facts] == ["schedule_electrician"]
+
+    async def test_historical_facts_are_empty_without_read_tasks(
+        self, full_core: LifeOpsCore
+    ) -> None:
+        await full_core.audit(CONSOLE, result="ok", intent="schedule_electrician")
+        world_only_client = ClientIdentity(
+            client_id="world-only-facts",
+            role=ClientRole.INTERACTIVE_ASSISTANT,
+            display_name="World only",
+            capabilities=frozenset({Capability.READ_WORLD}),
+        )
+        results = await full_core.search(world_only_client, query="electrician")
+        assert results.historical_facts == []
