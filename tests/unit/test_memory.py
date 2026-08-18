@@ -489,6 +489,36 @@ class TestInvalidate:
             await core.invalidate_memory(HERMES, memory_id="memory_absent")
 
 
+class TestListInvalidated:
+    """Section 17's "invalidated/superseded history" view — closed records
+    only, distinct from a single memory's own history chain."""
+
+    async def test_lists_only_closed_records(self, core: LifeOpsCore) -> None:
+        current = await core.remember(HERMES, MemoryDraft(content="has a dog named Rex"))
+        closed = await core.remember(HERMES, MemoryDraft(content="had a cat named Tom"))
+        await core.invalidate_memory(HERMES, memory_id=closed.id, reason="cat passed away")
+
+        invalidated = await core.list_invalidated_memories(HERMES)
+        assert [m.id for m in invalidated] == [closed.id]
+        assert current.id not in [m.id for m in invalidated]
+
+    async def test_empty_when_nothing_is_closed(self, core: LifeOpsCore) -> None:
+        await core.remember(HERMES, MemoryDraft(content="has a dog named Rex"))
+        assert await core.list_invalidated_memories(HERMES) == []
+
+    async def test_requires_read_memory(self, core: LifeOpsCore) -> None:
+        from lifeops.policy import ClientIdentity, ClientRole
+
+        no_memory_client = ClientIdentity(
+            client_id="no-memory",
+            role=ClientRole.WORKER,
+            display_name="Worker",
+            capabilities=frozenset(),
+        )
+        with pytest.raises(CapabilityDeniedError):
+            await core.list_invalidated_memories(no_memory_client)
+
+
 class TestPromotion:
     """Section 47's confirm/promote step: a candidate becomes a real
     preference, and the candidate that produced it closes out."""

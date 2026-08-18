@@ -568,25 +568,33 @@ async def list_memories(
     subject_id: Annotated[str | None, Query()] = None,
     type: Annotated[list[MemoryType] | None, Query()] = None,
     include_invalid: Annotated[bool, Query()] = False,
+    invalidated_only: Annotated[bool, Query()] = False,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> MemoryListResponse:
     """Current memories, most relevant first.
 
     A blank-query recall is the list operation: LifeOpsCore exposes no
-    separate listing. ``include_invalid`` is refused loudly rather than
-    silently ignored — closed records are reachable per memory through the
-    history route, and a list that claims to include them while excluding
-    them would be a lie.
+    separate listing. ``include_invalid`` (current *and* closed, merged into
+    one ranked list) is refused loudly rather than silently ignored — that
+    merge isn't built. ``invalidated_only`` is a different, narrower thing
+    that is built: section 17's dedicated "invalidated/superseded history"
+    view, closed records only, not mixed with current ones.
     """
     if include_invalid:
         raise ValidationError(
-            "listing invalidated memories is not supported yet; "
+            "merging current and invalidated memories into one list is not "
+            "supported; pass invalidated_only for the closed-records view, or "
             "open a memory's history instead",
             reason="include_invalid_unsupported",
         )
-    records = await container.core.recall(
-        client, query="", subject_id=subject_id, memory_types=type, limit=limit
-    )
+    if invalidated_only:
+        records = await container.core.list_invalidated_memories(
+            client, subject_id=subject_id, memory_types=type, limit=limit
+        )
+    else:
+        records = await container.core.recall(
+            client, query="", subject_id=subject_id, memory_types=type, limit=limit
+        )
     return MemoryListResponse(
         memories=[_memory_out(r) for r in records], total=len(records)
     )

@@ -172,6 +172,31 @@ class NornicMemoryRepository:
         )
         return [_row_to_memory(r) for r in rows]
 
+    async def list_invalidated(
+        self,
+        subject_id: str | None = None,
+        *,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """The Memory screen's "invalidated/superseded history" view
+        (section 17) — closed records only, newest-closed first."""
+        rows = await self._client.read(
+            f"""
+            MATCH (m:Memory)
+            WHERE m.valid_to IS NOT NULL
+              AND ($subject_id IS NULL OR m.subject_id = $subject_id)
+              AND ($memory_types IS NULL OR m.type IN $memory_types)
+            RETURN {_RETURN}
+            ORDER BY m.valid_to DESC, m.id DESC
+            LIMIT $limit
+            """,
+            subject_id=subject_id,
+            memory_types=[str(t) for t in memory_types] if memory_types else None,
+            limit=limit,
+        )
+        return [_row_to_memory(r) for r in rows]
+
     async def search(
         self,
         query: str,

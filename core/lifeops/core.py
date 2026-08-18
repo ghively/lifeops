@@ -302,6 +302,18 @@ class MemoryService:
             subject_id, memory_types=memory_types, limit=limit
         )
 
+    async def list_invalidated(
+        self,
+        *,
+        subject_id: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """Section 17's "invalidated/superseded history" view."""
+        return await self._memories.list_invalidated(
+            subject_id, memory_types=memory_types, limit=limit
+        )
+
     async def get(self, memory_id: str) -> MemoryRecord:
         memory = await self._memories.get(memory_id)
         if memory is None:
@@ -1814,6 +1826,27 @@ class LifeOpsCore:
         """Every version of a memory, newest first (section 45 provenance)."""
         self._require(client, Capability.READ_MEMORY)
         return await self._memory().history(memory_id)
+
+    async def list_invalidated_memories(
+        self,
+        client: ClientIdentity,
+        *,
+        subject_id: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """Section 17's "invalidated/superseded history" view — every closed
+        record across subjects, not one memory's own chain (that's
+        memory_history). The list route refuses this by default (a closed
+        record is reachable per-memory through history) because listing every
+        closed record needed its own read path, which this is."""
+        self._require(client, Capability.READ_MEMORY)
+        resolved = (
+            await self._resolve_subject(subject_id) if subject_id is not None else None
+        )
+        return await self._memory().list_invalidated(
+            subject_id=resolved, memory_types=memory_types, limit=limit
+        )
 
     async def invalidate_memory(
         self, client: ClientIdentity, *, memory_id: str, reason: str | None = None
