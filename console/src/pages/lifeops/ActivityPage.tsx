@@ -34,7 +34,7 @@ import {
   type AuditRecord,
 } from '@/services/lifeops'
 
-function formatTime(iso: string): string {
+export function formatTime(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
   return date.toLocaleString(undefined, {
@@ -53,7 +53,7 @@ const CLIENT_LABELS: Record<string, string> = {
   'lifeops-worker': 'The due-work worker',
 }
 
-function clientLabel(clientId: string | null | undefined): string {
+export function clientLabel(clientId: string | null | undefined): string {
   if (!clientId) return 'LifeOps'
   return CLIENT_LABELS[clientId] ?? clientId
 }
@@ -117,7 +117,7 @@ const ACTIVITY_NARRATIVES: Record<string, (entry: ActivityEntry) => string> = {
   'world.graph': (e) => `${clientLabel(e.client_id)} viewed the world graph.`,
 }
 
-function narrateAudit(record: AuditRecord): string {
+export function narrateAudit(record: AuditRecord): string {
   const key = record.intent ?? ''
   const builder = AUDIT_NARRATIVES[key]
   if (builder) return builder(record)
