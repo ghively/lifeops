@@ -47,6 +47,7 @@ from lifeops.domain.bills import (
     PayeeDraft,
     may_pay,
     validate_amount,
+    validate_secret_ref,
 )
 from lifeops.domain.calendar import (
     Appointment,
@@ -3196,7 +3197,7 @@ class LifeOpsCore:
             id=Payee.make_id(draft.display_name),
             display_name=draft.display_name.strip(),
             provider_entity_id=draft.provider_entity_id,
-            secret_ref=draft.secret_ref,
+            secret_ref=validate_secret_ref(draft.secret_ref),
             created_at=now_iso(self._clock),
             created_by_client=client.client_id,
         )

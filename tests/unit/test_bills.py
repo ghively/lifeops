@@ -106,9 +106,12 @@ class TestSectionSeventyTwoRules:
     def test_a_payee_record_refuses_to_carry_a_credential(self) -> None:
         """Rule 5: credentials never reach the graph, so they can never be
         exposed to Hermes from it."""
-        with pytest.raises(ValueError):
-            PayeeDraft(display_name="Utility", secret_ref="4111111111111111")
-        assert PayeeDraft(display_name="Utility", secret_ref="payee/utility").secret_ref
+        from lifeops.domain.bills import validate_secret_ref
+
+        with pytest.raises(ValidationError):
+            validate_secret_ref("4111111111111111")
+        assert validate_secret_ref("payee/utility") == "payee/utility"
+        assert validate_secret_ref(None) is None
 
 
 class TestPayeeApprovalGate:

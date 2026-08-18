@@ -433,6 +433,88 @@ class EntityHistoryResponse(BaseModel):
     covers: list[str] = Field(default_factory=list)
 
 
+# --- bills and payees (BUILD_SPEC sections 72, 99) -----------------------------
+
+
+class PayeeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    display_name: str
+    provider_entity_id: str | None
+    #: A handle into the secret store. Never a credential — section 72.
+    secret_ref: str | None
+    created_at: str
+    approved_at: str | None
+    approved_by: str | None
+    created_by_client: str | None
+    is_approved: bool
+
+
+class PayeeListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    payees: list[PayeeResponse]
+    total: int
+
+
+class CreatePayeeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=200)
+    provider_entity_id: str | None = None
+    secret_ref: str | None = Field(default=None, max_length=200)
+
+
+class BillResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    payee_id: str
+    description: str
+    #: A string, never a number. Section 72 binds an approval to the amount,
+    #: and JSON floats would reintroduce the precision the domain removed.
+    amount: str
+    currency: str
+    due_at: str | None
+    status: str
+    action_id: str | None
+    paid_at: str | None
+    external_reference: str | None
+    source_document_id: str | None
+    created_at: str
+    updated_at: str
+    created_by_client: str | None
+    is_payable: bool
+
+
+class BillListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bills: list[BillResponse]
+    total: int
+
+
+class CreateBillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    payee_id: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=500)
+    amount: str = Field(min_length=1, max_length=40)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    due_at: str | None = None
+    source_document_id: str | None = None
+
+
+class SettleBillRequest(BaseModel):
+    """Section 72: external confirmation required. The reference is the
+    provider's, not ours — a bill is not paid because LifeOps believes it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    external_reference: str = Field(min_length=1, max_length=200)
+
+
 # --- configuration -----------------------------------------------------------
 
 
