@@ -20,6 +20,13 @@ executable path.
 
 ---
 
+**Superseded, same day, same branch:** most of what this table and the
+detailed sections below call "not implemented" was subsequently built — see
+"Follow-up (same day, same branch): what closed" at the end of this document
+for what changed, and CLAUDE.md's "Known gaps" for the current living
+summary. The table and sections below are left exactly as originally
+written, as the point-in-time record.
+
 ## Summary
 
 | Area | State |
@@ -270,3 +277,98 @@ self-configuration beyond code-change-requests, and 14 of 16 chaos-test
 scenarios. None of this is a correctness bug — each is BUILD_SPEC prose with
 no corresponding code, generally in later-phase or aspirational sections of
 the spec rather than in the Phase 0–4 spine the acceptance tests exercise.
+
+---
+
+## Follow-up (same day, same branch): what closed
+
+Everything above is left as originally written — a point-in-time snapshot.
+This section records what changed afterward, on the same branch, so the two
+stay distinguishable rather than silently merged into one "current" document.
+CLAUDE.md's "Known gaps" section carries the living, current summary; this
+is the changelog behind it.
+
+**Closed:**
+
+- **Console.** All 4 placeholder screens (§10, §18, §20) replaced with real
+  ones: Calendar, Hermes, Files, Knowledge. Today (§11) now shows approvals
+  and waiting items alongside tasks and calendar appointments. Needs
+  Attention (§12) categorizes into named buckets instead of 3 raw task
+  states, labelled as a best-effort heuristic rather than the spec's real
+  backend typing. World screen (§15) gained a temporal/current toggle,
+  honestly scoped to preferences — the only entity type with real
+  supersession data to toggle to. Memory screen (§17) exposes the spec's
+  named views (Preferences / Personal facts / Relationships / Procedures) as
+  filters over the underlying types. Activity screen (§21) now narrates
+  human-readable sentences with technical detail behind an expand action.
+  System screen (§77) gained a recent-failures panel (reading the durable
+  audit log) and restart suggestions (text only, never a button that
+  executes anything). Universal search (§19) widened from 3 to 10 of 12
+  categories — only events and actions/historical facts remain, since
+  neither has a domain model to search.
+- **MCP surface (§48, §50, §51, §36).** All 8 spec'd resources now exist
+  (5 added: household, approvals, entity/{id}, task/{id}, provider/{id}).
+  Every previously-HTTP-only read tool (`get_task`, `list_appointments`,
+  `get_appointment`, `get_bill`, `list_bills`) and every previously-missing
+  one (`list_waiting_items`, `find_provider`, `get_asset`/`list_assets`,
+  `search_knowledge`) is now MCP-exposed. The `Knowledge` world entity type
+  (§36) exists, backing `search_knowledge`; a `WorkflowTemplate` mechanism
+  also exists (`workflow-templates` HTTP routes, the Routines screen),
+  though not as a §36 world entity type — a different shape than the
+  original finding assumed, but the underlying gap (nowhere to save a
+  routine) is closed either way. `commit_payment` remains deliberately
+  MCP-unexposed (§51's note on payment tools stands).
+- **Memory (§46, §47).** `promote_memory` (Console/HTTP-only) turns a
+  confirmed `PREFERENCE_CANDIDATE` into a real `Preference` — the
+  confirm/promote pipeline §47 describes. The §46 trust-hierarchy finding
+  turned out to be a false negative on closer read, not a gap: `remember()`
+  correctly has no supersession check (a fresh memory is independent
+  evidence per §46's own text, not a competing claim), and `correct_memory`
+  — the actual competing-claim site — was already trust-checked via
+  `may_supersede`. `tests/unit/test_memory.py::TestMemoryTrustHierarchy` now
+  names this explicitly.
+- **Browser (§65–66) and Telephony (§68–69) adapters** are real, not stubs
+  — but each surfaced a distinct, honest reason it can't do everything the
+  spec envisions yet, discovered while building rather than assumed going
+  in. Browser: `browser/real.py` genuinely launches Chromium and manages
+  isolated per-context persistent profiles (proven against a real browser,
+  `tests/unit/test_browser.py`), but no site-specific automation exists for
+  any actual shopping site — nothing in this codebase has ever named a
+  retailer, and inventing scraping logic for one nobody chose, untested
+  against a live site, would be exactly the speculative build §105 warns
+  against. `search`/`build_cart`/`submit_order` report that gap specifically
+  through `_SITE_ADAPTERS`, an empty, documented extension point. Shopping
+  checkout (§70) inherits this — it is no longer blocked on a missing
+  adapter, but on the same missing site integration. Telephony:
+  `telephony/twilio.py` genuinely places/tracks/hangs up/sends DTMF on real
+  calls via Twilio's REST API (verified against Twilio's documented
+  response shapes with a mocked transport — no live account exists to test
+  against, unlike the browser adapter). `dial()` always refuses, though,
+  because building it surfaced a deeper, pre-existing gap: `CallObjective`
+  has never carried a destination phone number anywhere in this codebase —
+  not in the objective, not in `_prepare_provider_contact`, not in the
+  Protocol signature. That is a separate, cross-cutting domain-model change
+  this work was not scoped to make. Layered on top, no call could meet its
+  objective without the Voice Bridge (§32, still not implemented) to hold
+  the actual conversation.
+- **Chaos tests (§86).** All 16 scenarios now have real coverage —
+  `tests/chaos/` (13, fakes-only) and
+  `tests/e2e/test_chaos_duplicate_mcp_request.py` (scenario 6, needs a live
+  NornicDB). 3 (DeepSeek timeout, local ASR crash, local TTS crash) are
+  honest, documented skips: no client/runtime exists yet for the failure to
+  happen to. One test run found a genuine new gap: a repository write
+  failure between committing an action and recording its result escapes
+  `execute_action` uncaught, stranding the action in `EXECUTING` — the
+  outbox's actual invariant ("no duplicate external commitments") still
+  holds, since the spent approval blocks any retry, but the stranded-action
+  recovery itself is unfixed, a distributed-systems design question rather
+  than a mechanical bug.
+
+**Still open**, matching CLAUDE.md's "Known gaps" exactly and deliberately
+left that way — both need the user's design input, not unilateral building:
+the Voice Bridge (§32, and everything downstream of it: RTX scheduling §31,
+latency instrumentation §33, the §103 acceptance walkthrough, and telephony
+actually holding a conversation) and Hermes self-configuration content
+(§73–76: the `skill`/`cron_job`/`reminder`/`non_critical_prompt`/
+`routine_template` save/apply paths, `propose_self_change` exposure, and the
+eight named Hermes skills — zero instantiated).
