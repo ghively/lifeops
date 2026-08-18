@@ -91,31 +91,40 @@ class ElevenLabsTTSProvider:
 
     async def synthesize(self, text: str, options: SynthesisOptions) -> bytes:
         voice_id = self._voice_id_for(options)
-        response = await self._client.post(
-            f"/v1/text-to-speech/{voice_id}",
-            json=self._request_body(text, options),
-            params={"output_format": options.output_format or self._output_format},
-            headers=self._headers(),
-        )
+        try:
+            response = await self._client.post(
+                f"/v1/text-to-speech/{voice_id}",
+                json=self._request_body(text, options),
+                params={"output_format": options.output_format or self._output_format},
+                headers=self._headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise _transport_error(exc) from exc
         _raise_for_status(response)
         return response.content
 
     async def stream(self, text: str, options: SynthesisOptions) -> AsyncIterator[bytes]:
         voice_id = self._voice_id_for(options)
-        async with self._client.stream(
-            "POST",
-            f"/v1/text-to-speech/{voice_id}/stream",
-            json=self._request_body(text, options),
-            params={"output_format": options.output_format or self._output_format},
-            headers=self._headers(),
-        ) as response:
-            _raise_for_status(response)
-            async for chunk in response.aiter_bytes():
-                if chunk:
-                    yield chunk
+        try:
+            async with self._client.stream(
+                "POST",
+                f"/v1/text-to-speech/{voice_id}/stream",
+                json=self._request_body(text, options),
+                params={"output_format": options.output_format or self._output_format},
+                headers=self._headers(),
+            ) as response:
+                _raise_for_status(response)
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        yield chunk
+        except httpx.HTTPError as exc:
+            raise _transport_error(exc) from exc
 
     async def list_voices(self) -> list[Voice]:
-        response = await self._client.get("/v1/voices", headers=self._headers())
+        try:
+            response = await self._client.get("/v1/voices", headers=self._headers())
+        except httpx.HTTPError as exc:
+            raise _transport_error(exc) from exc
         _raise_for_status(response)
         data = response.json()
         return [
@@ -129,7 +138,10 @@ class ElevenLabsTTSProvider:
         ]
 
     async def list_models(self) -> list[TTSModel]:
-        response = await self._client.get("/v1/models", headers=self._headers())
+        try:
+            response = await self._client.get("/v1/models", headers=self._headers())
+        except httpx.HTTPError as exc:
+            raise _transport_error(exc) from exc
         _raise_for_status(response)
         data = response.json()
         return [
@@ -154,6 +166,17 @@ class ElevenLabsTTSProvider:
         if response.status_code == 401:
             return False, "ElevenLabs rejected the API key"
         return False, f"ElevenLabs returned HTTP {response.status_code}"
+
+
+def _transport_error(exc: httpx.HTTPError) -> ProviderError:
+    """Wrap a connect/timeout failure so the API layer's LifeOpsError
+    handling turns it into a structured error, not an unhandled 500 — the
+    CalDAV adapter already did this; only ElevenLabs let them escape. The
+    message never includes headers, so the API key cannot leak through it."""
+    return ProviderError(
+        f"ElevenLabs request failed: {exc.__class__.__name__}: {exc}",
+        provider="elevenlabs",
+    )
 
 
 def _raise_for_status(response: httpx.Response) -> None:
