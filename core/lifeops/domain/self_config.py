@@ -35,6 +35,34 @@ class SelfConfigTarget(StrEnum):
     Section 73's permitted list, verbatim. Anything not here is protected by
     default — an unknown target is not a reason to allow a change, it is a
     reason to refuse one.
+
+    Seven names, but not seven mechanisms — section 73 gives none of them a
+    schema, and building one apiece would be exactly the "infrastructure for
+    a hypothetical problem" section 105 warns against, on top of duplicating
+    machinery that already exists elsewhere:
+
+    * ``ROUTINE_TEMPLATE``, ``CRON_JOB``, and ``REMINDER`` are all a named,
+      reusable shape of work with an optional schedule — precisely what
+      ``domain.workflow_templates.WorkflowTemplate`` already is (a manual
+      routine, a scheduled routine, a scheduled one-off reminder). Building
+      three parallel entities that only differ by trigger cadence would also
+      be the second scheduler/workflow engine section 55 explicitly warns
+      against. ``LifeOpsCore.save_workflow_template`` is the one apply path
+      for all three, whatever the caller calls the thing it is saving.
+    * ``WORKFLOW_TEMPLATE`` is that same mechanism under its literal name.
+    * ``PREFERENCE`` already has a full, independent apply path —
+      ``LifeOpsCore.save_preference`` — predating section 73 entirely
+      (Phase 2). Nothing new is needed for it here.
+    * ``SKILL`` and ``NON_CRITICAL_PROMPT`` name content that lives in
+      Hermes's own runtime (a skill file Hermes's own skill-loading
+      mechanism reads; a prompt string Hermes's own runtime assembles) —
+      storing either in NornicDB would duplicate Hermes's storage and drift
+      from whatever Hermes actually loads, and CLAUDE.md's rule against
+      building a second agent runtime cuts against LifeOps owning it.
+      ``propose_self_change`` is the complete apply path for these two:
+      once it does not raise, Hermes applies the change through its own
+      mechanism; LifeOps's job is only to gate the decision, not to store
+      the artifact.
     """
 
     SKILL = "skill"
