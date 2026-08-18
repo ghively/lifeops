@@ -17,6 +17,7 @@ from lifeops.domain.world import (
     WorldGraph,
     WorldRelationship,
     assemble_world_graph,
+    diff_facts,
     entity_type_for_id,
     parse_entity_types,
     parse_relationship,
@@ -165,6 +166,30 @@ class TestFacts:
 
     def test_an_empty_bag_is_fine(self) -> None:
         assert validate_facts({}) == {}
+
+
+class TestDiffFacts:
+    """The per-fact history gate (section 16): only a value that actually
+    changed is worth a new version, the same rule save_preference applies."""
+
+    def test_a_new_key_is_a_change(self) -> None:
+        assert diff_facts({}, {"phone": "555-0100"}) == {"phone": "555-0100"}
+
+    def test_a_different_value_is_a_change(self) -> None:
+        assert diff_facts({"phone": "555-0100"}, {"phone": "555-9999"}) == {
+            "phone": "555-9999"
+        }
+
+    def test_an_identical_value_is_not_a_change(self) -> None:
+        assert diff_facts({"phone": "555-0100"}, {"phone": "555-0100"}) == {}
+
+    def test_only_changed_keys_are_returned(self) -> None:
+        current = {"phone": "555-0100", "trade": "electrician"}
+        incoming = {"phone": "555-9999", "trade": "electrician"}
+        assert diff_facts(current, incoming) == {"phone": "555-9999"}
+
+    def test_an_empty_incoming_bag_changes_nothing(self) -> None:
+        assert diff_facts({"phone": "555-0100"}, {}) == {}
 
 
 class TestGraphAssembly:

@@ -467,8 +467,10 @@ class TestEntityHistory:
         # Both the closed original and its replacement.
         assert len(body["memories"]) == 2
         assert any(m["valid_to"] is not None for m in body["memories"])
+        assert body["fact_history"] == []
         assert body["covers"] == [
-            "memories referencing this entity, including closed versions"
+            "every version of every fact this entity has carried",
+            "memories referencing this entity, including closed versions",
         ]
 
     async def test_unknown_history_is_404(self, env: Env) -> None:
@@ -522,6 +524,85 @@ class TestCreateEntity:
         event = await subscription.get()
         assert event["type"] == WORLD_CHANGED
         assert event["entity_id"] == "provider_abc_electric"
+
+
+class TestUpdateEntity:
+    """Per-fact history (section 16): PATCH revises current facts and every
+    change is recorded, the same "current state is a projection, history is
+    the source of truth" split preferences already have."""
+
+    async def test_revising_a_fact_updates_current_state(self, env: Env) -> None:
+        client, _, _ = env
+        provider = (
+            await _create(client, "provider", "ABC Electric", phone="555-0100")
+        ).json()["id"]
+
+        response = await client.patch(
+            f"{API}/world/entities/{provider}", json={"facts": {"phone": "555-9999"}}
+        )
+        assert response.status_code == 200
+        assert response.json()["facts"] == {"phone": "555-9999"}
+
+    async def test_the_old_value_is_recoverable_from_history(self, env: Env) -> None:
+        client, _, _ = env
+        provider = (
+            await _create(client, "provider", "ABC Electric", phone="555-0100")
+        ).json()["id"]
+        await client.patch(
+            f"{API}/world/entities/{provider}", json={"facts": {"phone": "555-9999"}}
+        )
+
+        body = (await client.get(f"{API}/world/entities/{provider}/history")).json()
+        history = [f for f in body["fact_history"] if f["key"] == "phone"]
+        assert len(history) == 2
+        current = next(f for f in history if f["valid_to"] is None)
+        closed = next(f for f in history if f["valid_to"] is not None)
+        assert current["value"] == "555-9999"
+        assert closed["value"] == "555-0100"
+        assert current["supersedes"] == closed["id"]
+
+    async def test_re_stating_the_same_value_is_a_no_op(self, env: Env) -> None:
+        client, _, _ = env
+        provider = (
+            await _create(client, "provider", "ABC Electric", phone="555-0100")
+        ).json()["id"]
+        await client.patch(
+            f"{API}/world/entities/{provider}", json={"facts": {"phone": "555-0100"}}
+        )
+
+        body = (await client.get(f"{API}/world/entities/{provider}/history")).json()
+        history = [f for f in body["fact_history"] if f["key"] == "phone"]
+        assert len(history) == 1
+
+    async def test_a_new_fact_key_is_seeded_with_its_own_history(self, env: Env) -> None:
+        client, _, _ = env
+        provider = (await _create(client, "provider", "ABC Electric")).json()["id"]
+        response = await client.patch(
+            f"{API}/world/entities/{provider}", json={"facts": {"trade": "electrician"}}
+        )
+        assert response.json()["facts"] == {"trade": "electrician"}
+
+        body = (await client.get(f"{API}/world/entities/{provider}/history")).json()
+        history = [f for f in body["fact_history"] if f["key"] == "trade"]
+        assert len(history) == 1
+        assert history[0]["supersedes"] is None
+
+    async def test_unrelated_facts_are_left_alone(self, env: Env) -> None:
+        client, _, _ = env
+        provider = (
+            await _create(client, "provider", "ABC Electric", phone="555-0100", trade="electrician")
+        ).json()["id"]
+        response = await client.patch(
+            f"{API}/world/entities/{provider}", json={"facts": {"phone": "555-9999"}}
+        )
+        assert response.json()["facts"] == {"phone": "555-9999", "trade": "electrician"}
+
+    async def test_unknown_entity_is_404(self, env: Env) -> None:
+        client, _, _ = env
+        response = await client.patch(
+            f"{API}/world/entities/provider_nope", json={"facts": {"phone": "555-0100"}}
+        )
+        assert response.status_code == 404
 
 
 class TestRelationships:
@@ -680,6 +761,28 @@ class TestCapabilities:
         )
         assert (await client.get(f"{API}/world/graph")).status_code == 200
         response = await _create(client, "provider", "ABC Electric")
+        assert response.status_code == 403
+        assert response.json()["code"] == "capability_denied"
+
+    async def test_update_facts_requires_write_world_not_just_read(
+        self, env: Env
+    ) -> None:
+        client, app, _ = env
+        provider = (
+            await _create(client, "provider", "ABC Electric", phone="555-0100")
+        ).json()["id"]
+        self._override(
+            app,
+            ClientIdentity(
+                client_id="reader",
+                role=ClientRole.ENGINEERING_ASSISTANT,
+                display_name="Reader",
+                capabilities=frozenset({Capability.READ_WORLD}),
+            ),
+        )
+        response = await client.patch(
+            f"{API}/world/entities/{provider}", json={"facts": {"phone": "555-9999"}}
+        )
         assert response.status_code == 403
         assert response.json()["code"] == "capability_denied"
 

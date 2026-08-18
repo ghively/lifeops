@@ -201,9 +201,39 @@ write time. Keys are sorted before serialisation so identical facts compare
 equal. The bag is capped (50 keys, 100-character keys, 500-character values)
 so an agent cannot turn one entity into an unbounded document store.
 
-Facts are current-only in Phase 3: there is no per-fact supersession chain.
-`get_entity_history` therefore reports the memories referencing an entity and
-states that scope in a `covers` field rather than implying more.
+`facts_json` on the entity node is the fast-path current-state projection;
+it is not the only record. Each fact's own version history lives alongside
+it as a separate node, on the same "current state is a projection, history
+is the source of truth" split preferences already use:
+
+```
+(:EntityFact {id, entity_id, key, value, valid_from, valid_to, supersedes,
+              created_by_client})
+(:EntityFact)-[:SUPERSEDES]->(:EntityFact)
+```
+
+"Current" means `valid_to IS NULL`, matched by `(entity_id, key)` properties
+exactly the way `:Preference` is matched by `(subject_id, key)` — no graph
+edge from the entity to its facts is needed, the same way none exists from
+a `:Person` to their `:Preference` nodes. `LifeOpsCore.update_entity` (via
+`update_facts`) revises current facts and records the new version in one
+transaction: the entity's own `facts_json`/`updated_at` change together with
+closing the superseded version and opening the new one, so the current state
+and the history can never disagree about what is true right now.
+`create_entity` seeds the first version of every starting fact the same way,
+so history is complete from creation, not just from the first edit onward.
+Re-submitting an identical value is a no-op, the same rule `save_preference`
+applies. `get_entity_history` reports every version of every fact
+(`fact_history`) alongside every version of every memory referencing the
+entity (`memories`), with `covers` stating that exact scope so neither is
+mistaken for the durable audit log (Phase 4, `AuditRecord`).
+
+`record_provider`/`record_asset` (the two MCP tools BUILD_SPEC section 51
+grants Hermes on `write_world`) use this to upsert: recording a name that
+already exists revises its facts (tracked) instead of erroring or
+duplicating it. `create_entity` — the Console's own path — stays strict, a
+409 on a duplicate name, since a human naming a duplicate is probably a
+mistake rather than new information about an existing one.
 
 Persons and preferences are part of the world graph but keep their richer
 models in `domain/people.py` and `domain/preferences.py`. The world repository
@@ -215,8 +245,9 @@ preference's **value** (`"After 10 AM"`), with its `key`, source, and confidence
 carried as facts so the inspector shows which preference it is. Only *current*
 preferences are nodes — a superseded one leaves the graph and takes its
 `PREFERS` edge with it, while both versions stay queryable through preference
-history. That is section 15's current view; the temporal toggle it also lists
-is not built yet.
+history. The Console's temporal/current toggle (section 15) swaps in that
+preference history, or — for every other entity type — the `EntityFact`
+history above.
 
 ---
 

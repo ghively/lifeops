@@ -159,6 +159,7 @@ from lifeops.domain.workflow_templates import (
 from lifeops.domain.world import (
     EntityDetail,
     EntityDraft,
+    EntityFact,
     EntityHistory,
     WorldEdge,
     WorldEntity,
@@ -167,6 +168,7 @@ from lifeops.domain.world import (
     WorldNode,
     WorldRelationship,
     assemble_world_graph,
+    diff_facts,
     is_world_entity_id,
     parse_entity_types,
     parse_relationship,
@@ -458,6 +460,12 @@ class WorldService:
             raise NotFoundError(f"no such entity: {entity_id}", entity_id=entity_id)
         return entity
 
+    async def fact_history(self, entity_id: str, *, key: str | None = None) -> list[EntityFact]:
+        return await self._world.fact_history(entity_id, key=key)
+
+    async def exists(self, entity_id: str) -> bool:
+        return await self._world.exists(entity_id)
+
     async def list_full(
         self, *, entity_types: list[WorldEntityType] | None = None, limit: int = 500
     ) -> list[WorldEntity]:
@@ -592,8 +600,75 @@ class WorldService:
             client_id=client_id,
         ):
             created = await self._world.create(entity)
+            if facts:
+                # The first version of every starting fact, so history is
+                # complete from creation — not just from the first edit
+                # onward. No superseding: there is nothing yet to replace.
+                now = created.updated_at
+                await self._world.seed_fact_versions(
+                    [
+                        EntityFact(
+                            id=EntityFact.make_id(),
+                            entity_id=created.id,
+                            key=key,
+                            value=value,
+                            valid_from=now,
+                            created_by_client=client_id,
+                        )
+                        for key, value in facts.items()
+                    ]
+                )
         self._notify(created.id)
         return created
+
+    async def update_facts(
+        self, entity_id: str, facts: dict[str, str], *, client_id: str
+    ) -> WorldEntity:
+        """Revise an entity's facts, recording per-fact history the same way
+        ``save_preference`` records preference history (section 16).
+
+        ``facts`` is a partial update: only the given keys are considered,
+        and only the ones whose value actually changed get a new version —
+        re-submitting an unchanged value is a no-op, not new history.
+        """
+        entity = await self.get(entity_id)
+        cleaned = validate_facts(facts)
+        changed = diff_facts(entity.facts, cleaned)
+        if not changed:
+            return entity
+
+        current_versions = await self._world.current_facts(entity_id)
+        now = now_iso(self._clock)
+        new_versions = [
+            EntityFact(
+                id=EntityFact.make_id(),
+                entity_id=entity_id,
+                key=key,
+                value=value,
+                valid_from=now,
+                supersedes=current_versions[key].id if key in current_versions else None,
+                created_by_client=client_id,
+            )
+            for key, value in changed.items()
+        ]
+        superseded_ids = [
+            current_versions[key].id for key in changed if key in current_versions
+        ]
+        updated = entity.model_copy(
+            update={"facts": {**entity.facts, **changed}, "updated_at": now}
+        )
+
+        with operation(
+            "world.update_facts",
+            entity_id=entity_id,
+            client_id=client_id,
+            changed_keys=sorted(changed),
+        ):
+            saved = await self._world.update_facts(
+                updated, new_versions=new_versions, superseded_ids=superseded_ids
+            )
+        self._notify(saved.id)
+        return saved
 
     async def link(
         self,
@@ -2275,28 +2350,33 @@ class LifeOpsCore:
     async def entity_history(
         self, client: ClientIdentity, *, entity_id: str
     ) -> EntityHistory:
-        """What the record can honestly say about how an entity changed.
-
-        World entity facts are current-only in Phase 3, so the history is the
-        full memory record referencing the entity — closed versions included.
-        ``covers`` travels with the answer so no consumer mistakes it for the
-        durable audit log (Phase 4, section 62).
+        """What the record can honestly say about how an entity changed
+        (section 16's HISTORY panel): every version of every fact the entity
+        has carried, plus every version of every memory referencing it.
+        ``covers`` travels with the answer so no consumer mistakes either for
+        the durable audit log (Phase 4, section 62) — that answers "which
+        client changed this," not "what did this entity's facts used to be."
         """
         self._require(client, Capability.READ_WORLD)
 
         with operation("world.entity_history", entity_id=entity_id, client_id=client.client_id):
             await self._world().get(entity_id)
 
-            covers = ["memories referencing this entity, including closed versions"]
+            fact_history = await self._world().fact_history(entity_id)
+            covers = ["every version of every fact this entity has carried"]
+
             memories: list[MemoryRecord] = []
             if Capability.READ_MEMORY in client.capabilities and self._memory_service:
                 memories = await self._memory().list_for_entity(
                     entity_id, current_only=False
                 )
+                covers.append("memories referencing this entity, including closed versions")
             else:
-                covers = ["nothing: this client cannot read memory"]
+                covers.append("nothing about memory: this client cannot read it")
 
-        return EntityHistory(entity_id=entity_id, memories=memories, covers=covers)
+        return EntityHistory(
+            entity_id=entity_id, fact_history=fact_history, memories=memories, covers=covers
+        )
 
     async def create_entity(
         self, client: ClientIdentity, draft: EntityDraft
@@ -2308,6 +2388,49 @@ class LifeOpsCore:
         """
         self._require(client, Capability.WRITE_WORLD)
         return await self._world().create(draft, client_id=client.client_id)
+
+    async def update_entity(
+        self, client: ClientIdentity, *, entity_id: str, facts: dict[str, str]
+    ) -> WorldEntity:
+        """Revise a household, provider, or asset's facts, with history
+        (section 16). The Console's own edit path, and what ``record_provider``
+        /``record_asset`` fall back to over MCP when the entity already
+        exists — see those methods for why a generic MCP tool does not exist
+        here (section 51's write_world surface is narrow and named on
+        purpose)."""
+        self._require(client, Capability.WRITE_WORLD)
+        return await self._world().update_facts(
+            entity_id, facts, client_id=client.client_id
+        )
+
+    async def record_or_update_entity(
+        self,
+        client: ClientIdentity,
+        *,
+        entity_type: WorldEntityType,
+        display_name: str,
+        facts: dict[str, str],
+    ) -> WorldEntity:
+        """What ``record_provider``/``record_asset`` actually do (section 51):
+        create the entity if this is the first time it has been named, or
+        merge in whatever facts changed if it already exists — tracked the
+        same way ``update_entity`` tracks any other revision.
+
+        Distinct from ``create_entity`` on purpose: a human naming a
+        duplicate provider in the Console is probably a mistake worth a 409;
+        an agent calling this because it just learned something about a
+        provider it has mentioned before is the ordinary case, not an error.
+        """
+        self._require(client, Capability.WRITE_WORLD)
+        entity_id = WorldEntity.make_id(entity_type, display_name.strip())
+        if await self._world().exists(entity_id):
+            return await self._world().update_facts(
+                entity_id, facts, client_id=client.client_id
+            )
+        return await self._world().create(
+            EntityDraft(entity_type=entity_type, display_name=display_name, facts=facts),
+            client_id=client.client_id,
+        )
 
     async def link_entities(
         self, client: ClientIdentity, *, source_id: str, target_id: str, rel_type: str

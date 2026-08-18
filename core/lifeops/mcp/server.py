@@ -440,9 +440,12 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             "Record a company or service the user deals with — an "
             "electrician, an insurer, a garage — so later work can attach to "
             "a canonical record instead of a name in a sentence.\n\n"
-            "Call get_provider first: if the provider already exists, use it "
-            "rather than recording a second one. This records a fact about "
-            "the world; it contacts nobody and books nothing."
+            "Safe to call again for a provider you have already recorded: "
+            "matching an existing name revises its facts (with history, "
+            "section 16) instead of erroring or duplicating it — e.g. "
+            "learning a new phone number just updates that one fact. This "
+            "records a fact about the world; it contacts nobody and books "
+            "nothing."
         ),
     )
     async def record_provider(
@@ -461,15 +464,13 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
-                from lifeops.domain.world import EntityDraft, WorldEntityType
+                from lifeops.domain.world import WorldEntityType
 
-                entity = await container.core.create_entity(
+                entity = await container.core.record_or_update_entity(
                     client,
-                    EntityDraft(
-                        entity_type=WorldEntityType.PROVIDER,
-                        display_name=display_name,
-                        facts=facts or {},
-                    ),
+                    entity_type=WorldEntityType.PROVIDER,
+                    display_name=display_name,
+                    facts=facts or {},
                 )
                 return {"ok": True, "provider": entity.model_dump(mode="json")}
             except (LifeOpsError, PydanticValidationError) as exc:
@@ -482,8 +483,11 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             "Record something the user owns that work happens to — a "
             "vehicle, an appliance, a room, a fixture.\n\n"
             "Call get_related_entities on the household first if you are "
-            "unsure whether it is already recorded; a duplicate asset splits "
-            "its history in two. This records a fact about the world; it "
+            "unsure whether it is already recorded. Safe to call again for "
+            "an asset you have already recorded: matching an existing name "
+            "revises its facts (with history, section 16) instead of "
+            "erroring or duplicating it — e.g. a new mileage reading just "
+            "updates that one fact. This records a fact about the world; it "
             "schedules and orders nothing."
         ),
     )
@@ -503,15 +507,13 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
-                from lifeops.domain.world import EntityDraft, WorldEntityType
+                from lifeops.domain.world import WorldEntityType
 
-                entity = await container.core.create_entity(
+                entity = await container.core.record_or_update_entity(
                     client,
-                    EntityDraft(
-                        entity_type=WorldEntityType.ASSET,
-                        display_name=display_name,
-                        facts=facts or {},
-                    ),
+                    entity_type=WorldEntityType.ASSET,
+                    display_name=display_name,
+                    facts=facts or {},
                 )
                 return {"ok": True, "asset": entity.model_dump(mode="json")}
             except (LifeOpsError, PydanticValidationError) as exc:
@@ -953,12 +955,13 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
         name="get_entity_history",
         title="Get entity history",
         description=(
-            "What changed about an entity over time: supersession chains and "
-            "related invalidations, newest first. Use it when the user asks "
-            "how something used to be — 'who was our mechanic before ABC?'.\n\n"
-            "History is best-effort until the Phase 4 audit log lands: it "
-            "reconstructs change from temporal links rather than a complete "
-            "event record."
+            "What changed about an entity over time: every version of every "
+            "fact it has carried (fact_history), newest first, plus every "
+            "version of every memory referencing it (memories). Use it when "
+            "the user asks how something used to be — 'who was our mechanic "
+            "before ABC?', 'what was the mileage last time?'.\n\n"
+            "This is not the durable audit log (no 'which client changed "
+            "this, when') — covers states exactly what the answer includes."
         ),
     )
     async def get_entity_history(
