@@ -24,6 +24,7 @@ from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
 from lifeops.domain.tasks import Task, TaskState
 from lifeops.domain.waiting import WaitingItem, WaitingStatus
+from lifeops.domain.workflow_templates import WorkflowTemplate
 from lifeops.domain.world import (
     WorldEdge,
     WorldEntity,
@@ -380,6 +381,27 @@ class BillRepository(Protocol):
         next payment through unapproved.
         """
         ...
+
+
+@runtime_checkable
+class WorkflowTemplateRepository(Protocol):
+    """Persistence for workflow templates and routines (sections 73, 100)."""
+
+    async def get(self, template_id: str) -> WorkflowTemplate | None: ...
+
+    async def list_templates(self, *, limit: int = 100) -> list[WorkflowTemplate]: ...
+
+    async def list_due(self, *, now: str, limit: int = 50) -> list[WorkflowTemplate]:
+        """Enabled scheduled routines whose next run has come.
+
+        Read by the due-work worker, which is why the shape matches the
+        waiting-item query rather than introducing a second scheduling idea.
+        """
+        ...
+
+    async def upsert(self, template: WorkflowTemplate) -> WorkflowTemplate: ...
+
+    async def delete(self, template_id: str) -> bool: ...
 
 
 @runtime_checkable

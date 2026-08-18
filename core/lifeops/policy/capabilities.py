@@ -28,6 +28,10 @@ from lifeops.errors import CapabilityDeniedError, SafeModeError
 class Capability(StrEnum):
     """A named thing a client may be permitted to do."""
 
+    #: Phase 11 (sections 73, 100). Its own capability rather than borrowing
+    #: MANAGE_CONFIGURATION: that is the Console's human-present grant, and
+    #: self-configuration is precisely the case where no human is present.
+    SELF_CONFIGURE = "self_configure"
     READ_WORLD = "read_world"
     WRITE_WORLD = "write_world"
     READ_PREFERENCES = "read_preferences"
@@ -144,6 +148,11 @@ HERMES = ClientIdentity(
         Capability.BOOK_APPOINTMENT,
         Capability.SEND_EXTERNAL_MESSAGE,
         Capability.SHOPPING_CHECKOUT,
+        # Section 100: Hermes manages its own skills, routines, and templates.
+        # The boundary is enforced in the domain rather than by withholding
+        # this — a protected change becomes a code change request, not a
+        # blanket refusal to let Hermes tune itself.
+        Capability.SELF_CONFIGURE,
     },
 )
 
@@ -205,6 +214,7 @@ CONSOLE = ClientIdentity(
         Capability.UPDATE_TASK,
         Capability.READ_MEMORY,
         Capability.WRITE_MEMORY,
+        Capability.SELF_CONFIGURE,
         Capability.MANAGE_CONFIGURATION,
         Capability.APPROVE_ACTION,
         # Phase 10, and deliberately Console-only. Section 72 requires that

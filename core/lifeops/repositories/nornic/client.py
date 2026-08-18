@@ -80,6 +80,11 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "FOR (p:Payee) REQUIRE p.id IS UNIQUE",
     "CREATE INDEX lifeops_bill_status IF NOT EXISTS FOR (b:Bill) ON (b.status)",
     "CREATE INDEX lifeops_bill_due IF NOT EXISTS FOR (b:Bill) ON (b.due_at)",
+    # Phase 11 (sections 73, 100).
+    "CREATE CONSTRAINT lifeops_workflow_template_id IF NOT EXISTS "
+    "FOR (t:WorkflowTemplate) REQUIRE t.id IS UNIQUE",
+    "CREATE INDEX lifeops_workflow_template_next_run IF NOT EXISTS "
+    "FOR (t:WorkflowTemplate) ON (t.next_run_at)",
     "CREATE INDEX lifeops_preference_subject_key IF NOT EXISTS "
     "FOR (p:Preference) ON (p.subject_id, p.key)",
     "CREATE INDEX lifeops_task_state IF NOT EXISTS FOR (t:Task) ON (t.state)",

@@ -22,6 +22,7 @@ from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
 from lifeops.domain.tasks import Task, TaskState
 from lifeops.domain.waiting import ACTIVE_STATUSES, WaitingItem, WaitingStatus
+from lifeops.domain.workflow_templates import WorkflowTemplate
 from lifeops.domain.world import (
     WORLD_RELATIONSHIP_TYPES,
     WorldEdge,
@@ -717,6 +718,34 @@ class FakeBillRepository:
         return copy.deepcopy(stored)
 
 
+class FakeWorkflowTemplateRepository:
+    def __init__(self) -> None:
+        self._templates: dict[str, WorkflowTemplate] = {}
+
+    async def get(self, template_id: str) -> WorkflowTemplate | None:
+        found = self._templates.get(template_id)
+        return copy.deepcopy(found) if found else None
+
+    async def list_templates(self, *, limit: int = 100) -> list[WorkflowTemplate]:
+        ordered = sorted(self._templates.values(), key=lambda t: t.name)
+        return [copy.deepcopy(t) for t in ordered[:limit]]
+
+    async def list_due(self, *, now: str, limit: int = 50) -> list[WorkflowTemplate]:
+        due = [
+            t for t in self._templates.values()
+            if t.enabled and t.next_run_at is not None and t.next_run_at <= now
+        ]
+        due.sort(key=lambda t: (t.next_run_at or "", t.id))
+        return [copy.deepcopy(t) for t in due[:limit]]
+
+    async def upsert(self, template: WorkflowTemplate) -> WorkflowTemplate:
+        self._templates[template.id] = copy.deepcopy(template)
+        return copy.deepcopy(template)
+
+    async def delete(self, template_id: str) -> bool:
+        return self._templates.pop(template_id, None) is not None
+
+
 __all__ = [
     "FakeActionRepository",
     "FakeApprovalRepository",
@@ -727,5 +756,6 @@ __all__ = [
     "FakePreferenceRepository",
     "FakeTaskRepository",
     "FakeWaitingRepository",
+    "FakeWorkflowTemplateRepository",
     "FakeWorldRepository",
 ]
