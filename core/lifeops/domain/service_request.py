@@ -283,13 +283,13 @@ _FACT_FIELDS: tuple[str, ...] = (
 
 
 def service_request_to_entity(request: ServiceRequest) -> WorldEntity:
-    """Project into the world graph. ``availability`` — a list — is joined
-    into one string because NornicDB property values cannot be maps *or*
-    lists of the kind pydantic would otherwise serialise; every other list-
-    shaped field in this codebase (``NOT_AUTHORISED_BY``, transition tables)
-    stays server-side for the same reason. A joined string round-trips
-    losslessly through ``entity_to_service_request`` because ``;`` never
-    appears in an availability slot's RFC 3339 text."""
+    """Project into the world graph for display (section 15).
+
+    Read-only: ``NornicServiceRequestRepository`` owns the record, and stores
+    ``availability`` as a native string array. This projection flattens it for
+    the graph's facts bag, which is ``dict[str, str]`` — the flattening is a
+    display concern here rather than the storage decision it used to be.
+    """
     facts = {
         field: str(getattr(request, field))
         for field in _FACT_FIELDS
