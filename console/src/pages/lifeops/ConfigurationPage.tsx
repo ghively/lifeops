@@ -87,6 +87,18 @@ function FieldInput({
 }) {
   const id = `${entry.definition.id}-${field.name}`
 
+  // Dynamic choices (voices, models, calendars): fetched live from the
+  // provider on demand, so a new ElevenLabs model shows up without a
+  // LifeOps release (BUILD_SPEC section 27). The server built this flow;
+  // the Console just never called it until now.
+  const [discovered, setDiscovered] = useState<
+    Array<{ value: string; label: string }> | null
+  >(null)
+  const discover = useMutation({
+    mutationFn: () => configApi.discover(entry.definition.id, field.name),
+    onSuccess: (result) => setDiscovered(result.options),
+  })
+
   if (field.kind === 'boolean') {
     return (
       <label className="flex items-center gap-2 text-sm" htmlFor={id}>
@@ -131,26 +143,59 @@ function FieldInput({
     )
   }
 
-  if (field.kind === 'select' && field.options.length > 0) {
+  if (field.kind === 'select' && (field.options.length > 0 || field.options_from)) {
+    const options = discovered ?? field.options
+    const selected = (value as string) ?? ''
     return (
       <div className="space-y-1">
         <label className="text-sm font-medium" htmlFor={id}>
           {field.label}
           {field.required && <span className="ml-1 text-red-500">*</span>}
         </label>
-        <select
-          id={id}
-          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-          value={(value as string) ?? ''}
-          onChange={(event) => onChange(event.target.value)}
-        >
-          <option value="">Not set</option>
-          {field.options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            id={id}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            value={selected}
+            onChange={(event) => onChange(event.target.value)}
+          >
+            <option value="">Not set</option>
+            {/* Keep a stored value visible even when it is not in the
+                current option list, so opening the form never blanks it. */}
+            {selected !== '' && !options.some((o) => o.value === selected) ? (
+              <option value={selected}>{selected}</option>
+            ) : null}
+            {options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {field.options_from ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={discover.isPending}
+              onClick={() => discover.mutate()}
+            >
+              {discover.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                'Refresh'
+              )}
+            </Button>
+          ) : null}
+        </div>
+        {discover.isError ? (
+          <p className="text-xs text-red-600">{errorMessage(discover.error)}</p>
+        ) : null}
+        {field.options_from && options.length === 0 && !discover.isError ? (
+          <p className="text-xs text-muted-foreground">
+            Choices come from the provider — configure and enable it, then
+            Refresh.
+          </p>
+        ) : null}
       </div>
     )
   }
@@ -331,6 +376,10 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
   const test = useMutation({
     mutationFn: () => configApi.testProvider(definition.id),
     onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'providers'] }),
+    // The Test button exists to surface failure; the request itself failing
+    // must not be the one silent case.
+    onError: () =>
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'providers'] }),
   })
 

@@ -410,6 +410,9 @@ export function RoutinesPage() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'workflow-templates'] })
     },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'workflow-templates'] })
+    },
   })
 
   if (templatesQuery.isError) {
@@ -460,7 +463,13 @@ export function RoutinesPage() {
               key={template.id}
               template={template}
               onRevise={() => setDialogTemplate(template)}
-              onDelete={() => remove.mutate(template.id)}
+              onDelete={() => {
+                // A routine is durable configuration; deleting it should
+                // take one deliberate confirmation, not one stray click.
+                if (window.confirm(`Delete the routine "${template.name}"?`)) {
+                  remove.mutate(template.id)
+                }
+              }}
               deleting={remove.isPending && remove.variables === template.id}
             />
           ))}

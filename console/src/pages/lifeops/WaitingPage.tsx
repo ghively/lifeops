@@ -163,11 +163,13 @@ export function WaitingPage() {
   const followUp = useMutation({
     mutationFn: (id: string) => waitingApi.followUp(id),
     onSuccess: invalidate,
+    onError: invalidate,
   })
 
   const resolve = useMutation({
     mutationFn: (id: string) => waitingApi.resolve(id),
     onSuccess: invalidate,
+    onError: invalidate,
   })
 
   if (waitingQuery.isError) {
@@ -194,6 +196,17 @@ export function WaitingPage() {
           Work blocked on another person, organisation, service, or future event.
         </p>
       </header>
+
+      {followUp.isError || resolve.isError ? (
+        <p
+          role="alert"
+          className="rounded-lg border border-red-300/60 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-300"
+        >
+          {followUp.isError
+            ? `The follow-up was not recorded: ${errorMessage(followUp.error)}`
+            : `The item was not resolved: ${errorMessage(resolve.error)}`}
+        </p>
+      ) : null}
 
       {waitingQuery.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
