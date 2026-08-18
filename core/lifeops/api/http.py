@@ -28,14 +28,18 @@ from lifeops.api.schemas import (
     ApprovalResponse,
     AuditListResponse,
     AuditRecordResponse,
+    BillListResponse,
+    BillResponse,
     CalendarEventListResponse,
     CalendarEventResponse,
     ConfirmServiceBookingRequest,
     ConsoleLogBatch,
     CorrectMemoryRequest,
     CreateAppointmentHoldRequest,
+    CreateBillRequest,
     CreateDocumentRequest,
     CreateEntityRequest,
+    CreatePayeeRequest,
     CreatePersonRequest,
     CreateServiceRequestRequest,
     CreateShoppingListRequest,
@@ -60,6 +64,8 @@ from lifeops.api.schemas import (
     MemoryListResponse,
     MemoryResponse,
     MeResponse,
+    PayeeListResponse,
+    PayeeResponse,
     PersonResponse,
     PreferenceListResponse,
     PreferenceResponse,
@@ -73,6 +79,7 @@ from lifeops.api.schemas import (
     ServiceRequestResponse,
     SetPasswordRequest,
     SetPasswordResponse,
+    SettleBillRequest,
     ShoppingListListResponse,
     ShoppingListResponse,
     ShoppingSearchResponse,
@@ -98,6 +105,7 @@ from lifeops.container import Container
 from lifeops.domain.actions import Action, ActionStatus
 from lifeops.domain.approvals import Approval
 from lifeops.domain.audit import AuditRecord
+from lifeops.domain.bills import Bill, BillDraft, BillStatus, Payee, PayeeDraft
 from lifeops.domain.calendar import (
     Appointment,
     AppointmentHoldDraft,
@@ -1428,6 +1436,97 @@ async def submit_grocery_order(
     ``/approvals/{id}/decide``, then run it via ``/actions/{id}/execute``."""
     action = await container.core.submit_grocery_order(client, list_id=list_id)
     return _action_out(action)
+
+
+# --- bills and payees (BUILD_SPEC sections 72, 99) ---------------------------
+#
+# Section 99: "Bills first. Payments last." These routes record what is owed.
+# Paying goes through the action outbox, so it inherits approval, idempotency,
+# verification, audit, and the emergency stop rather than re-deriving any.
+
+
+def _payee_out(payee: Payee) -> PayeeResponse:
+    return PayeeResponse(**payee.model_dump(), is_approved=payee.is_approved)
+
+
+def _bill_out(bill: Bill) -> BillResponse:
+    return BillResponse(**bill.model_dump(), is_payable=bill.is_payable)
+
+
+@router.get("/payees", response_model=PayeeListResponse, tags=["bills"])
+async def list_payees(container: ContainerDep, client: ClientDep) -> PayeeListResponse:
+    payees = [_payee_out(p) for p in await container.core.list_payees(client)]
+    return PayeeListResponse(payees=payees, total=len(payees))
+
+
+@router.post("/payees", status_code=201, tags=["bills"])
+async def record_payee(
+    payload: CreatePayeeRequest, container: ContainerDep, client: ClientDep
+) -> dict[str, Any]:
+    """Propose a payee. Section 72: a new payee always requires approval, so
+    this returns the action awaiting a decision, not a usable payee."""
+    action = await container.core.record_payee(client, PayeeDraft(**payload.model_dump()))
+    return {"action_id": action.id, "status": str(action.status)}
+
+
+@router.post("/payees/{payee_id}/approve", response_model=PayeeResponse, tags=["bills"])
+async def approve_payee(
+    payee_id: str, container: ContainerDep, client: ClientDep
+) -> PayeeResponse:
+    return _payee_out(await container.core.approve_payee(client, payee_id=payee_id))
+
+
+@router.get("/bills", response_model=BillListResponse, tags=["bills"])
+async def list_bills(
+    container: ContainerDep,
+    client: ClientDep,
+    statuses: Annotated[list[BillStatus] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> BillListResponse:
+    bills = [
+        _bill_out(b)
+        for b in await container.core.list_bills(client, statuses=statuses, limit=limit)
+    ]
+    return BillListResponse(bills=bills, total=len(bills))
+
+
+@router.get("/bills/{bill_id}", response_model=BillResponse, tags=["bills"])
+async def get_bill(
+    bill_id: str, container: ContainerDep, client: ClientDep
+) -> BillResponse:
+    return _bill_out(await container.core.get_bill(client, bill_id=bill_id))
+
+
+@router.post("/bills", response_model=BillResponse, status_code=201, tags=["bills"])
+async def record_bill(
+    payload: CreateBillRequest, container: ContainerDep, client: ClientDep
+) -> BillResponse:
+    """Record something owed. This tracks a debt; it pays nothing."""
+    bill = await container.core.record_bill(client, BillDraft(**payload.model_dump()))
+    return _bill_out(bill)
+
+
+@router.post("/bills/{bill_id}/payment", status_code=201, tags=["bills"])
+async def prepare_bill_payment(
+    bill_id: str, container: ContainerDep, client: ClientDep
+) -> dict[str, Any]:
+    """Prepare a payment. Always returns an action needing approval — R4 is
+    never policy-relaxable (section 56)."""
+    action = await container.core.prepare_bill_payment(client, bill_id=bill_id)
+    return {"action_id": action.id, "status": str(action.status)}
+
+
+@router.post("/bills/{bill_id}/settle", response_model=BillResponse, tags=["bills"])
+async def settle_bill(
+    bill_id: str,
+    payload: SettleBillRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> BillResponse:
+    bill = await container.core.settle_bill(
+        client, bill_id=bill_id, external_reference=payload.external_reference
+    )
+    return _bill_out(bill)
 
 
 # --- search (BUILD_SPEC section 19) ------------------------------------------
