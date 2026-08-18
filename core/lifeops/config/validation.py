@@ -12,6 +12,7 @@ Two jobs:
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from lifeops.config.provider_registry import FieldKind, ProviderDefinition
@@ -40,6 +41,10 @@ def _coerce(field_name: str, kind: FieldKind, value: Any) -> Any:
             number = float(value)
         except (TypeError, ValueError) as exc:
             raise ValidationError(f"{field_name} must be a number", field=field_name) from exc
+        # NaN passes every bounds comparison and inf passes half of them; a
+        # stored NaN timeout or port is never what anyone configured.
+        if not math.isfinite(number):
+            raise ValidationError(f"{field_name} must be a number", field=field_name)
         # Keep integers integral so a port does not round-trip as 993.0.
         return int(number) if number.is_integer() else number
 

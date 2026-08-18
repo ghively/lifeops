@@ -82,17 +82,35 @@ def trace_context(
         _session_id.reset(tokens[2])
 
 
+def _is_sensitive(key: str) -> bool:
+    # Suffix matching, not equality: "smtp_password" and "elevenlabs_api_key"
+    # are as sensitive as the bare names, and providers name their fields
+    # exactly that way.
+    lowered = key.lower()
+    return lowered in _REDACTED_KEYS or any(
+        lowered.endswith(f"_{name}") for name in _REDACTED_KEYS
+    )
+
+
 def redact(payload: dict[str, Any]) -> dict[str, Any]:
     """Strip sensitive values from a structured payload, recursively."""
     cleaned: dict[str, Any] = {}
     for key, value in payload.items():
-        if key.lower() in _REDACTED_KEYS:
+        if _is_sensitive(key):
             cleaned[key] = _REDACTED
-        elif isinstance(value, dict):
-            cleaned[key] = redact(value)
         else:
-            cleaned[key] = value
+            cleaned[key] = _redact_value(value)
     return cleaned
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return redact(value)
+    if isinstance(value, list):
+        # A list of dicts ({"attempts": [{"password": ...}]}) is as common a
+        # shape as a nested dict; not recursing here leaked exactly that.
+        return [_redact_value(item) for item in value]
+    return value
 
 
 # --- formatter --------------------------------------------------------------

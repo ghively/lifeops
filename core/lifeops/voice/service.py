@@ -50,6 +50,15 @@ ASRProviderFactory = Callable[[dict[str, Any], SecretStore], ASRProvider]
 ProviderFactory = TTSProviderFactory
 
 
+def _number(value: Any, *, default: float) -> float:
+    """A numeric setting, defaulting only when it is truly unset.
+
+    ``float(settings.get(x) or default)`` silently turned a stored,
+    schema-valid 0 back into the default.
+    """
+    return default if value is None else float(value)
+
+
 def _build_elevenlabs(settings: dict[str, Any], secrets: SecretStore) -> TTSProvider:
     api_key = secrets.get(secret_ref("elevenlabs", "api_key"))
     if not api_key:
@@ -61,9 +70,10 @@ def _build_elevenlabs(settings: dict[str, Any], secrets: SecretStore) -> TTSProv
         voice_id=settings.get("voice_id"),
         model_id=settings.get("model_id"),
         output_format=settings.get("output_format") or "mp3_44100_128",
-        stability=float(settings.get("stability") or 0.5),
-        similarity_boost=float(settings.get("similarity_boost") or 0.75),
-        speed=float(settings.get("speed") or 1.0),
+        # 'or' would turn a stored, schema-valid 0 back into the default.
+        stability=_number(settings.get("stability"), default=0.5),
+        similarity_boost=_number(settings.get("similarity_boost"), default=0.75),
+        speed=_number(settings.get("speed"), default=1.0),
     )
 
 
@@ -71,7 +81,7 @@ def _build_local_tts(settings: dict[str, Any], secrets: SecretStore) -> TTSProvi
     return LocalTTSProvider(
         model=settings.get("model"),
         device=settings.get("device") or "cuda:0",
-        speed=float(settings.get("speed") or 1.0),
+        speed=_number(settings.get("speed"), default=1.0),
     )
 
 

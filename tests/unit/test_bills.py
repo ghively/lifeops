@@ -71,7 +71,24 @@ class TestAmounts:
         assert validate_amount("89") == "89.00"
         assert validate_amount("89.10") == "89.10"
 
-    @pytest.mark.parametrize("bad", ["", "abc", "1.2.3", "-5.00", "89.1", "89.123"])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "",
+            "abc",
+            "1.2.3",
+            "-5.00",
+            "89.1",
+            "89.123",
+            # ".50" used to reach int("") and crash as a 500 instead of
+            # refusing as validation.
+            ".50",
+            # str.isdigit() admits other scripts' digits; a mixed-script
+            # fraction would hash differently from its ASCII spelling.
+            "5.٤٥",
+            "٤٥.00",
+        ],
+    )
     def test_ambiguous_or_negative_amounts_are_refused(self, bad: str) -> None:
         with pytest.raises(ValidationError):
             validate_amount(bad)
