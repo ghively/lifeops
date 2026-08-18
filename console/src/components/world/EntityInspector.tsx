@@ -17,11 +17,25 @@ import {
   LifeOpsError,
   TASK_STATE_LABELS,
   errorMessage,
+  preferencesApi,
   relationshipsFrom,
   worldApi,
   worldTypeLabel,
+  type EntityFactRecord,
   type WorldRelationshipView,
 } from '@/services/lifeops'
+
+/** Every version of every fact, grouped by key — newest first within each
+ * group, since the API already returns fact_history that way. */
+function groupFactsByKey(facts: EntityFactRecord[]): Map<string, EntityFactRecord[]> {
+  const grouped = new Map<string, EntityFactRecord[]>()
+  for (const fact of facts) {
+    const existing = grouped.get(fact.key)
+    if (existing) existing.push(fact)
+    else grouped.set(fact.key, [fact])
+  }
+  return grouped
+}
 
 function unlinkPayload(
   entityId: string,
@@ -59,11 +73,17 @@ function Empty({ children }: { children: string }) {
 
 export function EntityInspector({
   entityId,
+  viewMode = 'current',
   onClose,
   onNavigate,
   onGraphChanged,
 }: {
   entityId: string
+  /** Section 15's temporal/current toggle. A Preference swaps in its own
+   * value history (a distinct API, one record per version of the whole
+   * preference); every other entity type swaps in its per-fact history
+   * (section 16) instead. */
+  viewMode?: 'current' | 'history'
   onClose: () => void
   onNavigate: (id: string) => void
   onGraphChanged: () => void
@@ -78,6 +98,14 @@ export function EntityInspector({
   const historyQuery = useQuery({
     queryKey: ['lifeops', 'world', 'history', entityId],
     queryFn: () => worldApi.history(entityId),
+  })
+
+  const isPreference = detailQuery.data?.entity.entity_type === 'preference'
+  const preferenceKey = detailQuery.data?.entity.facts.key
+  const preferenceHistoryQuery = useQuery({
+    queryKey: ['lifeops', 'preferences', 'history', preferenceKey],
+    queryFn: () => preferencesApi.history(preferenceKey as string),
+    enabled: viewMode === 'history' && isPreference && Boolean(preferenceKey),
   })
 
   const unlink = useMutation({
@@ -146,20 +174,99 @@ export function EntityInspector({
         </Button>
       </header>
 
-      <Section title="Current facts">
-        {facts.length === 0 ? (
-          <Empty>No facts recorded.</Empty>
-        ) : (
-          <dl className="space-y-1">
-            {facts.map(([key, value]) => (
-              <div key={key} className="flex items-baseline justify-between gap-3 text-sm">
-                <dt className="shrink-0 text-muted-foreground">{key}</dt>
-                <dd className="truncate text-right">{value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-      </Section>
+      {viewMode === 'history' && isPreference ? (
+        <Section title="Preference history">
+          {preferenceHistoryQuery.isLoading ? (
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading history…
+            </p>
+          ) : preferenceHistoryQuery.isError ? (
+            <p className="text-xs text-red-600">
+              {errorMessage(preferenceHistoryQuery.error)}
+            </p>
+          ) : (preferenceHistoryQuery.data?.history ?? []).length === 0 ? (
+            <Empty>No recorded history.</Empty>
+          ) : (
+            <ol className="space-y-1.5">
+              {(preferenceHistoryQuery.data?.history ?? []).map((version) => (
+                <li key={version.id} className="text-xs">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <History className="h-3 w-3" />
+                    since {version.valid_from}
+                    {version.valid_to !== null && ` · until ${version.valid_to}`}
+                  </span>
+                  <span
+                    className={
+                      version.valid_to !== null
+                        ? 'text-sm text-muted-foreground line-through'
+                        : 'text-sm font-medium'
+                    }
+                  >
+                    {version.value}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </Section>
+      ) : viewMode === 'history' ? (
+        <Section title="Fact history">
+          {historyQuery.isLoading ? (
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading history…
+            </p>
+          ) : historyQuery.isError ? (
+            <p className="text-xs text-red-600">{errorMessage(historyQuery.error)}</p>
+          ) : (historyQuery.data?.fact_history ?? []).length === 0 ? (
+            <Empty>No recorded changes to this entity's facts yet.</Empty>
+          ) : (
+            <div className="space-y-3">
+              {[...groupFactsByKey(historyQuery.data?.fact_history ?? [])].map(
+                ([key, versions]) => (
+                  <div key={key}>
+                    <p className="text-xs font-medium text-muted-foreground">{key}</p>
+                    <ol className="space-y-1.5">
+                      {versions.map((version) => (
+                        <li key={version.id} className="text-xs">
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            <History className="h-3 w-3" />
+                            since {version.valid_from}
+                            {version.valid_to !== null && ` · until ${version.valid_to}`}
+                          </span>
+                          <span
+                            className={
+                              version.valid_to !== null
+                                ? 'text-sm text-muted-foreground line-through'
+                                : 'text-sm font-medium'
+                            }
+                          >
+                            {version.value}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                ),
+              )}
+            </div>
+          )}
+        </Section>
+      ) : (
+        <Section title="Current facts">
+          {facts.length === 0 ? (
+            <Empty>No facts recorded.</Empty>
+          ) : (
+            <dl className="space-y-1">
+              {facts.map(([key, value]) => (
+                <div key={key} className="flex items-baseline justify-between gap-3 text-sm">
+                  <dt className="shrink-0 text-muted-foreground">{key}</dt>
+                  <dd className="truncate text-right">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </Section>
+      )}
 
       <Section title="Relationships">
         {relationships.length === 0 ? (

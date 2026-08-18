@@ -146,3 +146,13 @@ PREFIX_SERVICE_REQUEST = "servicerequest"
 
 def new_service_request_id() -> str:
     return new_ulid_id(PREFIX_SERVICE_REQUEST)
+
+
+# BUILD_SPEC section 36's Knowledge entity type: reference content the user
+# authored or a Document distilled, as distinct from Memory (personal facts
+# LifeOps observed) and Document (a pointer to something ingested).
+PREFIX_KNOWLEDGE = "knowledge"
+
+
+def new_knowledge_id() -> str:
+    return new_ulid_id(PREFIX_KNOWLEDGE)

@@ -29,6 +29,7 @@ from lifeops.domain.workflow_templates import WorkflowTemplate
 from lifeops.domain.world import (
     WORLD_MANAGED_ENTITY_TYPES,
     WORLD_RELATIONSHIP_TYPES,
+    EntityFact,
     WorldEdge,
     WorldEntity,
     WorldEntityType,
@@ -251,6 +252,25 @@ class FakeMemoryRepository:
         matches.sort(key=lambda m: (m.created_at, m.id), reverse=True)
         return [copy.deepcopy(m) for m in matches[:limit]]
 
+    async def list_invalidated(
+        self,
+        subject_id: str | None = None,
+        *,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """The Memory screen's "invalidated/superseded history" view
+        (section 17) — closed records only, newest-closed first."""
+        matches = [
+            m
+            for m in self._memories.values()
+            if m.valid_to is not None
+            and (subject_id is None or m.subject_id == subject_id)
+            and (memory_types is None or m.type in memory_types)
+        ]
+        matches.sort(key=lambda m: (m.valid_to or "", m.id), reverse=True)
+        return [copy.deepcopy(m) for m in matches[:limit]]
+
     async def search(
         self,
         query: str,
@@ -352,6 +372,7 @@ class FakeWorldRepository:
         # this one — the same arrangement NornicDB has, where one
         # ``:Preference`` node is read by two repositories.
         self._preferences = preferences
+        self._facts: dict[str, EntityFact] = {}
 
     @staticmethod
     def _preference_entity(preference: Preference) -> WorldEntity:
@@ -500,6 +521,50 @@ class FakeWorldRepository:
             return False
         self._edges.discard(key)
         return True
+
+    # --- per-fact history (section 16) --------------------------------------
+
+    async def current_facts(self, entity_id: str) -> dict[str, EntityFact]:
+        return {
+            fact.key: copy.deepcopy(fact)
+            for fact in self._facts.values()
+            if fact.entity_id == entity_id and fact.valid_to is None
+        }
+
+    async def fact_history(
+        self, entity_id: str, *, key: str | None = None
+    ) -> list[EntityFact]:
+        matches = [
+            fact
+            for fact in self._facts.values()
+            if fact.entity_id == entity_id and (key is None or fact.key == key)
+        ]
+        matches.sort(key=lambda f: (f.valid_from, f.id), reverse=True)
+        return [copy.deepcopy(f) for f in matches]
+
+    async def seed_fact_versions(self, versions: list[EntityFact]) -> None:
+        for version in versions:
+            self._facts[version.id] = copy.deepcopy(version)
+
+    async def update_facts(
+        self,
+        entity: WorldEntity,
+        *,
+        new_versions: list[EntityFact],
+        superseded_ids: list[str],
+    ) -> WorldEntity:
+        if entity.entity_type not in WORLD_MANAGED_ENTITY_TYPES:
+            raise ValueError(
+                f"{entity.entity_type} is not written by the world repository"
+            )
+        for old_id in superseded_ids:
+            stored = self._facts.get(old_id)
+            if stored is not None:
+                stored.valid_to = entity.updated_at
+        for version in new_versions:
+            self._facts[version.id] = copy.deepcopy(version)
+        self._entities[entity.id] = copy.deepcopy(entity)
+        return copy.deepcopy(entity)
 
 
 class FakeWaitingRepository:

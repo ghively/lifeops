@@ -14,8 +14,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SystemPage } from '../SystemPage'
 import {
+  auditApi,
   configApi,
   systemApi,
+  type AuditRecord,
   type SystemStatus,
 } from '@/services/lifeops'
 
@@ -32,8 +34,33 @@ vi.mock('@/services/lifeops', async () => {
     configApi: {
       updateSystem: vi.fn(),
     },
+    auditApi: {
+      read: vi.fn(),
+    },
   }
 })
+
+function makeAuditRecord(overrides: Partial<AuditRecord> = {}): AuditRecord {
+  return {
+    id: 'audit_01',
+    requester: null,
+    user: null,
+    client: 'hermes-personal',
+    session: null,
+    intent: 'book_appointment',
+    tool: 'calendar',
+    risk: 'R3',
+    approval: null,
+    action: 'action_01',
+    target: null,
+    result: 'failed',
+    verification: null,
+    timestamp: '2026-08-16T10:30:00Z',
+    trace_id: null,
+    details: {},
+    ...overrides,
+  }
+}
 
 const CONSOLE_CLIENT = {
   client_id: 'lifeops-console',
@@ -106,6 +133,7 @@ function renderPage() {
 
 const mockedSystem = vi.mocked(systemApi)
 const mockedConfig = vi.mocked(configApi)
+const mockedAudit = vi.mocked(auditApi)
 
 beforeEach(() => {
   mockedSystem.status.mockResolvedValue(makeStatus())
@@ -113,6 +141,7 @@ beforeEach(() => {
     status: 'ok',
     components: { lifeops_core: { healthy: true, detail: 'running' } },
   })
+  mockedAudit.read.mockResolvedValue({ records: [], total: 0 })
 })
 
 afterEach(() => {
@@ -199,5 +228,52 @@ describe('LifeOps System', () => {
     mockedSystem.status.mockRejectedValue(new Error('Network Error'))
     renderPage()
     expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument()
+  })
+
+  it('shows recent failures from the durable audit log', async () => {
+    mockedAudit.read.mockResolvedValue({
+      records: [
+        makeAuditRecord({ intent: 'book_appointment', result: 'failed' }),
+        makeAuditRecord({ id: 'audit_02', intent: 'record_bill', result: 'ok' }),
+      ],
+      total: 2,
+    })
+    renderPage()
+
+    expect(await screen.findByText('Recent failures')).toBeInTheDocument()
+    expect(screen.getByText('book_appointment')).toBeInTheDocument()
+    // A record that succeeded is not shown as a failure.
+    expect(screen.queryByText('record_bill')).not.toBeInTheDocument()
+  })
+
+  it('has an honest empty state for recent failures', async () => {
+    renderPage()
+    expect(await screen.findByText('No recent failures.')).toBeInTheDocument()
+  })
+
+  it('suggests a restart command for an unhealthy component with a real path', async () => {
+    mockedSystem.status.mockResolvedValue(
+      makeStatus({
+        components: {
+          lifeops_core: { healthy: true, detail: 'running' },
+          nornicdb: { healthy: false, detail: 'unreachable' },
+          secret_store: { healthy: false, detail: 'not configured' },
+          safe_mode: false,
+        },
+      }),
+    )
+    renderPage()
+
+    expect(
+      await screen.findByText(/scripts\/nornicdb\.sh start/),
+    ).toBeInTheDocument()
+    // secret_store has no sensible restart command — none is fabricated.
+    expect(screen.getByText('Secret store')).toBeInTheDocument()
+  })
+
+  it('offers no restart command for a healthy component', async () => {
+    renderPage()
+    await screen.findByText('NornicDB')
+    expect(screen.queryByText(/nornicdb\.sh start/)).not.toBeInTheDocument()
   })
 })

@@ -3,9 +3,9 @@
 
 Only one provider id exists in the registry (``browser``), so there is no
 backend selector the way ``calendar`` has caldav/google — just "enabled" or
-not. ``RealBrowserWorker`` is the only adapter, and it reports its own honest
-"not installed" health (section 88: never fake success) until a real browser
-runtime is wired in.
+not. ``RealBrowserWorker`` is the only adapter; it genuinely launches
+Chromium and reports real health (section 88: never fake success, in either
+direction — a real capability must not be reported as absent either).
 """
 
 from __future__ import annotations

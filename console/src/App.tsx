@@ -4,8 +4,8 @@
  * The Knowledge-OS frontend, rewired onto LifeOps Core. Phase 1 routes:
  * Today, Needs Attention, Waiting, Tasks, Search, Configuration, System, and
  * Activity (BUILD_SPEC section 90); Phase 2 adds Memory and Phase 3 the World
- * graph. The remaining navigation entries route to a placeholder naming their
- * phase.
+ * graph. Every section 10 nav entry now has a real screen behind it —
+ * PENDING_ROUTES stays in place as the seam for the next one that doesn't.
  *
  * Authentication: if LifeOps Core has Console auth enabled it answers 401 to
  * unauthenticated requests; the axios interceptor (services/lifeops.ts) then
@@ -26,8 +26,12 @@ import { ActionsPage } from './pages/lifeops/ActionsPage'
 import { ActivityPage } from './pages/lifeops/ActivityPage'
 import { ApprovalsPage } from './pages/lifeops/ApprovalsPage'
 import { BillsPage } from './pages/lifeops/BillsPage'
+import { CalendarPage } from './pages/lifeops/CalendarPage'
 import { ComingInPhasePage } from './pages/lifeops/ComingInPhasePage'
 import { ConfigurationPage } from './pages/lifeops/ConfigurationPage'
+import { FilesPage } from './pages/lifeops/FilesPage'
+import { HermesPage } from './pages/lifeops/HermesPage'
+import { KnowledgePage } from './pages/lifeops/KnowledgePage'
 import { LoginPage } from './pages/lifeops/LoginPage'
 import { MemoryPage } from './pages/lifeops/MemoryPage'
 import { NeedsAttentionPage } from './pages/lifeops/NeedsAttentionPage'
@@ -66,34 +70,7 @@ const PENDING_ROUTES: Array<{
   title: string
   phase: number
   description: string
-}> = [
-  {
-    path: '/calendar',
-    title: 'Calendar',
-    phase: 7,
-    description:
-      'Availability, holds, and events. The calendar APIs shipped with phase 7; this screen has not been built yet.',
-  },
-  {
-    path: '/knowledge',
-    title: 'Knowledge',
-    phase: 1,
-    description: 'Reference material: policies, handbooks, contracts, and procedures.',
-  },
-  {
-    path: '/files',
-    title: 'Files',
-    phase: 1,
-    description: 'Documents indexed into the LifeOps knowledge corpus.',
-  },
-  {
-    path: '/hermes',
-    title: 'Hermes',
-    phase: 1,
-    description:
-      'Live status of the assistant: model, MCP connection, memory provider, and voice.',
-  },
-]
+}> = []
 
 /**
  * Find out whether this server wants a password. A 401 means login; success
@@ -148,12 +125,16 @@ function App() {
                   <Route path="/tasks" element={<LifeOpsTasksPage />} />
                   <Route path="/bills" element={<BillsPage />} />
                   <Route path="/routines" element={<RoutinesPage />} />
+                  <Route path="/calendar" element={<CalendarPage />} />
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/memory" element={<MemoryPage />} />
                   <Route path="/world" element={<WorldPage />} />
                   <Route path="/configuration" element={<ConfigurationPage />} />
                   <Route path="/system" element={<SystemPage />} />
                   <Route path="/activity" element={<ActivityPage />} />
+                  <Route path="/hermes" element={<HermesPage />} />
+                  <Route path="/knowledge" element={<KnowledgePage />} />
+                  <Route path="/files" element={<FilesPage />} />
 
                   {PENDING_ROUTES.map((route) => (
                     <Route

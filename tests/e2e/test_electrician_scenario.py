@@ -115,7 +115,15 @@ async def scenario(nornic_client: NornicClient, test_label: str, tmp_path: Path)
     fake_telephony = FakeTelephonyProvider(
         availability=[f"Thursday {test_label} 1:00-3:00 PM"], diagnostic_fee="$89"
     )
-    config.update_provider("telephony", {"enabled": True})
+    config.update_provider(
+        "telephony",
+        {
+            "enabled": True,
+            "account_sid": "AC" + "0" * 32,
+            "auth_token": "test-auth-token",
+            "from_number": "+15551234567",
+        },
+    )
     telephony = TelephonyProviderService(
         config=config,
         secret_store=InMemorySecretStore(),

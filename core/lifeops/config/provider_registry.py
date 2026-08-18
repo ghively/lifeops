@@ -231,10 +231,24 @@ LOCAL_TTS = ProviderDefinition(
             "model",
             "Model",
             required=True,
-            options_from="models",
-            description="BUILD_SPEC section 30 candidates: Qwen3-TTS, Chatterbox "
-            "Turbo, Kokoro. No adapter is wired to one yet, so this list is "
-            "empty until a runtime is installed and integrated.",
+            options=[{"value": "kokoro", "label": "Kokoro (82M, PyTorch)"}],
+            description="BUILD_SPEC section 30 also lists Qwen3-TTS and Chatterbox "
+            "Turbo as candidates; only Kokoro has a real adapter wired up so far "
+            "(voice.local.LocalTTSProvider) — the others stay unlisted rather than "
+            "offered and silently unimplemented.",
+        ),
+        SelectField(
+            "voice",
+            "Voice",
+            default="af_heart",
+            options=[
+                {"value": "af_heart", "label": "af_heart (US English, female)"},
+                {"value": "af_bella", "label": "af_bella (US English, female)"},
+                {"value": "am_michael", "label": "am_michael (US English, male)"},
+                {"value": "bf_emma", "label": "bf_emma (British English, female)"},
+            ],
+            description="A curated subset of Kokoro's voice packs, not the full "
+            "catalog — Kokoro's own VOICES.md is the complete list.",
         ),
         SelectField("device", "Device", default="cuda:0", options=_DEVICE_OPTIONS),
         NumberField("speed", "Speed", default=1.0, minimum=0.5, maximum=2.0, step=0.05),
@@ -254,7 +268,16 @@ LOCAL_ASR = ProviderDefinition(
             "model",
             "Model",
             required=True,
-            options_from="models",
+            options=[
+                {"value": "large-v3-turbo", "label": "large-v3-turbo (fast, most accurate)"},
+                {
+                    "value": "distil-large-v3",
+                    "label": "distil-large-v3 (fastest, slightly less accurate)",
+                },
+                {"value": "large-v3", "label": "large-v3 (most accurate, slower)"},
+                {"value": "medium", "label": "medium (lower VRAM)"},
+                {"value": "small", "label": "small (CPU-friendly)"},
+            ],
             description="BUILD_SPEC section 30 candidates: faster-whisper "
             "large-v3-turbo, faster-whisper distil-large-v3.",
         ),
@@ -347,16 +370,22 @@ TELEPHONY = ProviderDefinition(
     id="telephony",
     category=ProviderCategory.TELEPHONY,
     display_name="Telephony",
-    summary="Place and receive calls with a constrained objective.",
+    summary="Place calls with a constrained objective, over Twilio's REST API.",
     available_in_phase=8,
     fields=[
         _ENABLED,
-        TextField("sip_uri", "SIP URI"),
-        TextField("username", "Username"),
-        SecretField("password", "Password"),
-        TextField("caller_id", "Caller ID"),
+        TextField("account_sid", "Account SID", required=True, placeholder="AC..."),
+        SecretField("auth_token", "Auth token", required=True),
+        TextField(
+            "from_number",
+            "Caller ID (E.164)",
+            required=True,
+            placeholder="+15551234567",
+            description="A phone number or Verified Caller ID on the Twilio account.",
+        ),
     ],
     capabilities=["dial", "hangup", "send_dtmf", "get_status", "health_check"],
+    docs_url="https://www.twilio.com/docs/voice/api/call-resource",
 )
 
 

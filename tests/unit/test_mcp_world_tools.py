@@ -309,10 +309,12 @@ class TestGetEntityHistory:
         ]
         assert closed["valid_to"] == "2026-02-01T00:00:00Z"
         assert closed["invalidation_reason"] == "switched providers"
-        # The history declares its own scope until the Phase 4 audit log lands.
+        # The history declares its own scope: it is not the Phase 4 audit log.
         assert payload["covers"] == [
-            "memories referencing this entity, including closed versions"
+            "every version of every fact this entity has carried",
+            "memories referencing this entity, including closed versions",
         ]
+        assert payload["fact_history"] == []
 
     async def test_unknown_entity_is_not_found_as_data(
         self, server: MCPServer
@@ -341,7 +343,10 @@ class TestGetEntityHistory:
 
         assert payload["ok"] is True
         assert payload["memories"] == []
-        assert payload["covers"] == ["nothing: this client cannot read memory"]
+        assert payload["covers"] == [
+            "every version of every fact this entity has carried",
+            "nothing about memory: this client cannot read it",
+        ]
 
 
 class TestCapabilityDenial:

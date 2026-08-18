@@ -29,6 +29,7 @@ from lifeops.errors import (
     ValidationError,
 )
 from lifeops.policy import CODING_CLIENT, HERMES
+from lifeops.policy.trust import may_supersede
 from lifeops.repositories.fakes import (
     FakeMemoryRepository,
     FakePersonRepository,
@@ -386,6 +387,88 @@ class TestTemporalCorrection:
         assert again.id == saved.id
 
 
+class TestMemoryTrustHierarchy:
+    """BUILD_SPEC section 46, exercised through the memory subsystem.
+
+    ``correct_memory`` is the one memory write that asserts a *competing*
+    claim about an existing record, so it is the one place trust applies —
+    proven with ``may_supersede`` imported and named explicitly here, so a
+    future audit that greps for the mechanism finds this file rather than
+    concluding (as one did) that only preferences enforce it.
+
+    ``remember()`` deliberately has no equivalent check: a fresh memory
+    carries no key linking it to "the same fact" the way a preference's key
+    does, and section 46's own text — "external content creates evidence, it
+    does not create user authority" — describes exactly that: a low-trust
+    observation is allowed to sit alongside a high-trust one as independent
+    evidence, because nothing about creating it *overwrites* anything. Only
+    an explicit supersession act (correcting a named memory, or promoting a
+    candidate through ``save_preference``) asserts a competing claim, and
+    both of those are trust-checked.
+    """
+
+    async def test_a_stronger_source_may_correct_a_weaker_one(
+        self, core: LifeOpsCore
+    ) -> None:
+        assert may_supersede(PreferenceSource.USER_EXPLICIT, PreferenceSource.WEBSITE)
+        guessed = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="probably prefers tea", source_type=PreferenceSource.WEBSITE
+            ),
+        )
+        corrected = await core.correct_memory(
+            HERMES,
+            memory_id=guessed.id,
+            new_content="prefers tea",
+            source_type=PreferenceSource.USER_EXPLICIT,
+        )
+        assert corrected.source_type is PreferenceSource.USER_EXPLICIT
+
+    async def test_equal_authority_may_correct(self, core: LifeOpsCore) -> None:
+        # The user restating a fact is a legitimate update, not a downgrade.
+        assert may_supersede(PreferenceSource.USER_EXPLICIT, PreferenceSource.USER_EXPLICIT)
+        stated = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="User's birthday is March 3",
+                source_type=PreferenceSource.USER_EXPLICIT,
+            ),
+        )
+        corrected = await core.correct_memory(
+            HERMES,
+            memory_id=stated.id,
+            new_content="User's birthday is March 5",
+            source_type=PreferenceSource.USER_EXPLICIT,
+        )
+        assert corrected.content == "User's birthday is March 5"
+
+    async def test_a_weaker_source_may_still_create_independent_evidence(
+        self, core: LifeOpsCore
+    ) -> None:
+        """Section 46: evidence, not authority. A low-trust remember() next
+        to a high-trust one is not a rejected supersession — it never claimed
+        to supersede anything; both simply coexist as separate records."""
+        await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="User's dentist is Dr. Patel",
+                source_type=PreferenceSource.USER_EXPLICIT,
+            ),
+        )
+        website_claim = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="Some review site says the dentist is Dr. Nguyen",
+                source_type=PreferenceSource.WEBSITE,
+            ),
+        )
+        assert website_claim.is_current
+        current = {m.content for m in await core.recall(HERMES, query="dentist")}
+        assert "User's dentist is Dr. Patel" in current
+        assert "Some review site says the dentist is Dr. Nguyen" in current
+
+
 class TestInvalidate:
     async def test_invalidate_closes_the_window_and_hides_from_recall(
         self, core: LifeOpsCore
@@ -404,6 +487,126 @@ class TestInvalidate:
     async def test_invalidate_unknown_memory_raises(self, core: LifeOpsCore) -> None:
         with pytest.raises(NotFoundError):
             await core.invalidate_memory(HERMES, memory_id="memory_absent")
+
+
+class TestListInvalidated:
+    """Section 17's "invalidated/superseded history" view — closed records
+    only, distinct from a single memory's own history chain."""
+
+    async def test_lists_only_closed_records(self, core: LifeOpsCore) -> None:
+        current = await core.remember(HERMES, MemoryDraft(content="has a dog named Rex"))
+        closed = await core.remember(HERMES, MemoryDraft(content="had a cat named Tom"))
+        await core.invalidate_memory(HERMES, memory_id=closed.id, reason="cat passed away")
+
+        invalidated = await core.list_invalidated_memories(HERMES)
+        assert [m.id for m in invalidated] == [closed.id]
+        assert current.id not in [m.id for m in invalidated]
+
+    async def test_empty_when_nothing_is_closed(self, core: LifeOpsCore) -> None:
+        await core.remember(HERMES, MemoryDraft(content="has a dog named Rex"))
+        assert await core.list_invalidated_memories(HERMES) == []
+
+    async def test_requires_read_memory(self, core: LifeOpsCore) -> None:
+        from lifeops.policy import ClientIdentity, ClientRole
+
+        no_memory_client = ClientIdentity(
+            client_id="no-memory",
+            role=ClientRole.WORKER,
+            display_name="Worker",
+            capabilities=frozenset(),
+        )
+        with pytest.raises(CapabilityDeniedError):
+            await core.list_invalidated_memories(no_memory_client)
+
+
+class TestPromotion:
+    """Section 47's confirm/promote step: a candidate becomes a real
+    preference, and the candidate that produced it closes out."""
+
+    async def test_promoting_a_candidate_creates_a_preference_and_closes_it(
+        self, core: LifeOpsCore
+    ) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="nothing before ten",
+                type=MemoryType.PREFERENCE_CANDIDATE,
+            ),
+        )
+
+        preference = await core.promote_memory(
+            HERMES, memory_id=candidate.id, key="scheduling.earliest_appointment_time"
+        )
+        assert preference.key == "scheduling.earliest_appointment_time"
+        assert preference.value == "nothing before ten"
+        assert preference.source_type is PreferenceSource.USER_EXPLICIT
+        assert preference.subject_id == candidate.subject_id
+
+        current = await core.get_preferences(HERMES)
+        assert any(p.key == preference.key for p in current)
+
+        closed = await core.get_memory(HERMES, memory_id=candidate.id)
+        assert not closed.is_current
+        assert "promoted" in (closed.invalidation_reason or "")
+
+    async def test_an_explicit_value_overrides_the_memorys_own_content(
+        self, core: LifeOpsCore
+    ) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="maybe likes mornings?",
+                type=MemoryType.PREFERENCE_CANDIDATE,
+            ),
+        )
+        preference = await core.promote_memory(
+            HERMES, memory_id=candidate.id, key="scheduling.time_of_day", value="mornings"
+        )
+        assert preference.value == "mornings"
+
+    async def test_a_non_candidate_memory_cannot_be_promoted(
+        self, core: LifeOpsCore
+    ) -> None:
+        semantic = await core.remember(
+            HERMES, MemoryDraft(content="drives a blue car", type=MemoryType.SEMANTIC)
+        )
+        with pytest.raises(ValidationError):
+            await core.promote_memory(HERMES, memory_id=semantic.id, key="car.color")
+
+    async def test_an_already_promoted_candidate_cannot_be_promoted_again(
+        self, core: LifeOpsCore
+    ) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(content="nothing before ten", type=MemoryType.PREFERENCE_CANDIDATE),
+        )
+        await core.promote_memory(
+            HERMES, memory_id=candidate.id, key="scheduling.earliest_appointment_time"
+        )
+        with pytest.raises(ConflictError):
+            await core.promote_memory(
+                HERMES, memory_id=candidate.id, key="scheduling.earliest_appointment_time"
+            )
+
+    async def test_an_empty_key_is_rejected(self, core: LifeOpsCore) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(content="nothing before ten", type=MemoryType.PREFERENCE_CANDIDATE),
+        )
+        with pytest.raises(ValidationError):
+            await core.promote_memory(HERMES, memory_id=candidate.id, key="   ")
+
+    async def test_promotion_requires_both_write_memory_and_write_preference(
+        self, core: LifeOpsCore
+    ) -> None:
+        candidate = await core.remember(
+            HERMES,
+            MemoryDraft(content="nothing before ten", type=MemoryType.PREFERENCE_CANDIDATE),
+        )
+        with pytest.raises(CapabilityDeniedError):
+            await core.promote_memory(
+                CODING_CLIENT, memory_id=candidate.id, key="scheduling.earliest_appointment_time"
+            )
 
 
 class TestMemorySafety:

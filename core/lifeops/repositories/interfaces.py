@@ -29,6 +29,7 @@ from lifeops.domain.tasks import Task, TaskState
 from lifeops.domain.waiting import WaitingItem, WaitingStatus
 from lifeops.domain.workflow_templates import WorkflowTemplate
 from lifeops.domain.world import (
+    EntityFact,
     WorldEdge,
     WorldEntity,
     WorldEntityType,
@@ -150,6 +151,17 @@ class MemoryRepository(Protocol):
         """Ranked text search over current memories (section 47 recall)."""
         ...
 
+    async def list_invalidated(
+        self,
+        subject_id: str | None = None,
+        *,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """Closed records only (section 17's "invalidated/superseded
+        history" view), newest-closed first."""
+        ...
+
     async def list_history(self, memory_id: str) -> list[MemoryRecord]:
         """Every version in the record's SUPERSEDES chain, newest first."""
         ...
@@ -248,6 +260,46 @@ class WorldRepository(Protocol):
         self, source_id: str, target_id: str, rel_type: WorldRelationship
     ) -> bool:
         """Remove the edge. Returns False when no such edge existed."""
+        ...
+
+    # --- per-fact history (section 16) --------------------------------------
+
+    async def current_facts(self, entity_id: str) -> dict[str, EntityFact]:
+        """The current (``valid_to IS NULL``) version of each fact this
+        entity carries, keyed by fact key — what a caller needs to know
+        which existing version a new value supersedes."""
+        ...
+
+    async def fact_history(
+        self, entity_id: str, *, key: str | None = None
+    ) -> list[EntityFact]:
+        """Every version of every fact this entity has carried, newest
+        first — superseded and current alike. ``key`` narrows to one fact's
+        own history."""
+        ...
+
+    async def seed_fact_versions(self, versions: list[EntityFact]) -> None:
+        """Write the first version of one or more brand-new facts.
+
+        Nothing to supersede and nothing on the entity node to touch —
+        ``create()`` already wrote ``facts`` — so this is simpler than
+        ``update_facts`` below, not a special case of it.
+        """
+        ...
+
+    async def update_facts(
+        self,
+        entity: WorldEntity,
+        *,
+        new_versions: list[EntityFact],
+        superseded_ids: list[str],
+    ) -> WorldEntity:
+        """Revise an entity's current facts and record the version history
+        in one transaction: the entity's own ``facts``/``updated_at`` change
+        together with closing each superseded version and creating each new
+        one — committing only part would leave the entity's current state
+        and its history disagreeing about what is true right now.
+        """
         ...
 
 

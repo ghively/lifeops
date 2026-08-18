@@ -119,6 +119,9 @@ reports honestly that the adapter is not implemented rather than returning a
 fake success — a Test button that lies is worse than one that says "not yet",
 and that behaviour is itself asserted.
 
-**Chaos and failure injection.** BUILD_SPEC section 86 lists the scenarios.
-Most concern external actions and duplicate commitments, neither of which exists
-until Phase 7.
+**Chaos and failure injection.** BUILD_SPEC section 86 lists 16 scenarios; all
+16 are now covered — `tests/chaos/` (13, fakes-only, part of `make test-fast`)
+and `tests/e2e/test_chaos_duplicate_mcp_request.py` (the one that needs a live
+NornicDB and a real MCP subprocess). Three (DeepSeek timeout, local ASR crash,
+local TTS crash) are honest, documented skips: no adapter or runtime exists
+yet for the failure to happen to.

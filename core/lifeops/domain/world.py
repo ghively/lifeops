@@ -35,14 +35,23 @@ from lifeops.ids import (
     PREFIX_DOCUMENT,
     PREFIX_EVENT,
     PREFIX_HOUSEHOLD,
+    PREFIX_KNOWLEDGE,
     PREFIX_PERSON,
     PREFIX_PREFERENCE,
     PREFIX_PROVIDER,
     PREFIX_SERVICE_REQUEST,
     PREFIX_SHOPPING_LIST,
     is_valid_id,
+    new_ulid_id,
     slug_id,
 )
+
+#: Not centrally registered in lifeops.ids, the same way
+#: domain/self_config.py's PREFIX_CHANGE_REQUEST is local to that module —
+#: an EntityFact is never addressed on its own by a caller, only read back
+#: as part of an entity's history, so it needs no place in the shared
+#: prefix->type lookup ``is_world_entity_id`` uses.
+PREFIX_ENTITY_FACT = "fact"
 
 
 class WorldEntityType(StrEnum):
@@ -60,9 +69,13 @@ class WorldEntityType(StrEnum):
     approval-gated booking (section 67, section 101's electrician scenario).
     Phase 9 (section 98) adds ``SHOPPING_LIST``: a cart being assembled,
     checked out, and verified through the same outbox two actions drive
-    (``build_grocery_cart``, ``submit_grocery_order``). The remaining section
-    36 types are owned by phases that have not landed; each arrives with the
-    phase that creates it.
+    (``build_grocery_cart``, ``submit_grocery_order``). ``KNOWLEDGE`` closes
+    section 18's gap: reference content the user authored or a Document
+    distilled — insurance policies, warranties, checklists, procedures —
+    kept distinct from Memory (personal facts LifeOps observed about the
+    user's life) and Document (a pointer to something ingested, not
+    self-contained text). The remaining section 36 types are owned by phases
+    that have not landed; each arrives with the phase that creates it.
     """
 
     PERSON = "person"
@@ -75,6 +88,7 @@ class WorldEntityType(StrEnum):
     DOCUMENT = "document"
     SERVICE_REQUEST = "service_request"
     SHOPPING_LIST = "shopping_list"
+    KNOWLEDGE = "knowledge"
 
 
 #: The types ``create_entity`` accepts from a bare ``EntityDraft`` — the
@@ -104,13 +118,17 @@ CREATABLE_ENTITY_TYPES: frozenset[WorldEntityType] = frozenset(
 #: links it to a task, never through the bare ``EntityDraft`` creation path.
 #: ShoppingList joins it too (section 98): it is opened by
 #: ``create_shopping_list``, which stamps the DRAFT status, never through
-#: ``EntityDraft``.
+#: ``EntityDraft``. Knowledge joins the same non-generic path: it is written
+#: by ``record_knowledge``, the same pattern as Document, and for the same
+#: reason — a facts bag with free-text content deserves its own draft
+#: shape, not the generic entity path's bare key/value validation.
 WORLD_MANAGED_ENTITY_TYPES: frozenset[WorldEntityType] = CREATABLE_ENTITY_TYPES | {
     WorldEntityType.APPOINTMENT,
     WorldEntityType.EVENT,
     WorldEntityType.DOCUMENT,
     WorldEntityType.SERVICE_REQUEST,
     WorldEntityType.SHOPPING_LIST,
+    WorldEntityType.KNOWLEDGE,
 }
 
 
@@ -165,6 +183,7 @@ _PREFIX_FOR_TYPE: dict[WorldEntityType, str] = {
     WorldEntityType.DOCUMENT: PREFIX_DOCUMENT,
     WorldEntityType.SERVICE_REQUEST: PREFIX_SERVICE_REQUEST,
     WorldEntityType.SHOPPING_LIST: PREFIX_SHOPPING_LIST,
+    WorldEntityType.KNOWLEDGE: PREFIX_KNOWLEDGE,
 }
 
 _TYPE_FOR_PREFIX: dict[str, WorldEntityType] = {
@@ -179,10 +198,13 @@ _MAX_FACT_VALUE = 500
 class WorldEntity(BaseModel):
     """One node in the user's world.
 
-    ``facts`` is a flat bag of current key facts (``{"insurance": "Progressive",
-    "mileage": "114203"}``). It holds *current* state only — temporal fact
-    history is a later phase, which is why ``entity_history`` documents exactly
-    what it can and cannot report.
+    ``facts`` is a flat bag of *current* key facts (``{"insurance":
+    "Progressive", "mileage": "114203"}``) — the fast path every graph read,
+    search, and the Entity Inspector's CURRENT section uses. It is not the
+    only record: each fact's own version history lives in ``EntityFact``
+    below, written alongside every change, the same "current state is a
+    projection, history is the source of truth" split preferences already
+    use.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -223,6 +245,37 @@ class EntityDraft(BaseModel):
                 "supersedes rather than overwrites"
             )
         return value
+
+
+class EntityFact(BaseModel):
+    """One version of one fact on a world entity (section 16's per-entity
+    HISTORY: "Mileage 114,203" today, "Mileage 108,900" a version ago).
+
+    Mirrors ``Preference``'s temporal shape exactly, scoped to
+    ``(entity_id, key)`` instead of ``(subject_id, key)`` — a fact changing
+    on the Land Rover is the same kind of event as a preference changing for
+    a person, just attached to a different kind of subject.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    entity_id: str
+    key: str
+    value: str
+    valid_from: str
+    # None means "still true". Every current-state query filters on this.
+    valid_to: str | None = None
+    supersedes: str | None = None
+    created_by_client: str | None = None
+
+    @property
+    def is_current(self) -> bool:
+        return self.valid_to is None
+
+    @staticmethod
+    def make_id() -> str:
+        return new_ulid_id(PREFIX_ENTITY_FACT)
 
 
 class WorldNode(BaseModel):
@@ -281,20 +334,23 @@ class EntityDetail(BaseModel):
 
 
 class EntityHistory(BaseModel):
-    """What "history of this entity" means in Phase 3.
+    """What "history of this entity" means.
 
-    World entity facts are current-only in this phase, so there is no fact
-    supersession chain to report. What the audit trail *can* answer today is
-    which memories about the entity were recorded, corrected, or invalidated —
-    ``memories`` therefore contains every version of every memory referencing
-    the entity, including closed validity windows, newest first. ``covers``
-    states that scope explicitly so no consumer mistakes this for a complete
-    audit log (the durable audit log is Phase 4, section 62).
+    Two independent trails: ``fact_history`` is every version of every fact
+    this entity has carried, newest first, superseded or current alike — the
+    same shape ``Preference``'s history already has, per-key rather than
+    per-entity, so "what was the mileage a version ago" is a real answer, not
+    an inference from the audit log. ``memories`` is every version of every
+    memory referencing the entity, including closed validity windows. Neither
+    is the durable audit log (Phase 4, section 62) — ``covers`` states the
+    actual scope explicitly so no consumer mistakes this for a complete
+    "who changed what, when" record.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     entity_id: str
+    fact_history: list[EntityFact] = Field(default_factory=list)
     memories: list[MemoryRecord] = Field(default_factory=list)
     covers: list[str] = Field(default_factory=list)
 
@@ -397,6 +453,17 @@ def validate_facts(facts: dict[str, str]) -> dict[str, str]:
             f"an entity may carry at most {_MAX_FACTS} facts", field="facts"
         )
     return cleaned
+
+
+def diff_facts(current: dict[str, str], incoming: dict[str, str]) -> dict[str, str]:
+    """Which incoming facts actually change something.
+
+    Re-stating an identical value is a no-op rather than a new version, the
+    same rule ``save_preference`` applies — an agent re-confirming a mileage
+    reading it already recorded must not pile up history that says nothing
+    changed.
+    """
+    return {key: value for key, value in incoming.items() if current.get(key) != value}
 
 
 def assemble_world_graph(

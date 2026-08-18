@@ -20,6 +20,7 @@ dependencies = [
     "mcp>=1.2",
     "python-ulid>=2.2",
     "httpx>=0.27",
+    "playwright>=1.40",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,30 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.5",
     "mypy>=1.10",
+]
+# BUILD_SPEC section 28/30's local voice path (LocalASRProvider,
+# LocalTTSProvider — core/lifeops/voice/local.py). Not installed by default:
+# AGENTS.md requires a written dependency justification, and this one is a
+# multi-gigabyte GPU-oriented stack that most deployments never touch.
+#   Problem:              ElevenLabs-only voice means no working offline/
+#                          local-privacy voice path, and BUILD_SPEC section
+#                          29's Hybrid/Local modes have nothing to select.
+#   Existing capability:  none — no local ASR/TTS runtime is importable
+#                          without these packages.
+#   Why it is required:   faster-whisper and kokoro are the concrete,
+#                          real Python packages behind BUILD_SPEC section
+#                          30's named candidates (faster-whisper large-v3-
+#                          turbo/distil-large-v3; Kokoro as the TTS
+#                          fallback/reference candidate).
+#   Operational cost:     GPU-class disk/VRAM footprint, model weights
+#                          downloaded from Hugging Face on first load.
+#   Removal plan:         delete this extra and core/lifeops/voice/local.py's
+#                          lazy imports; nothing else in the codebase imports
+#                          faster_whisper or kokoro.
+voice-local = [
+    "faster-whisper>=1.0",
+    "kokoro>=0.9.4",
+    "soundfile>=0.12",
 ]
 
 [project.scripts]

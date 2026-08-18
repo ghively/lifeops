@@ -130,6 +130,16 @@ class TestForbiddenEffects:
             )
         )
 
+    @pytest.mark.parametrize("target", list(SelfConfigTarget))
+    def test_every_section_73_target_permits_an_ordinary_name(
+        self, target: SelfConfigTarget
+    ) -> None:
+        """All seven of section 73's targets reach the same gate — pinned so
+        a future addition to the enum is not silently ungated. Which
+        mechanism applies the change once this passes differs per target
+        (see SelfConfigTarget's docstring); this only tests the gate itself."""
+        check_permitted(SelfConfigProposal(target=target, name="an ordinary name"))
+
 
 class TestTemplates:
     async def test_hermes_may_manage_its_own_templates(self, core: LifeOpsCore) -> None:

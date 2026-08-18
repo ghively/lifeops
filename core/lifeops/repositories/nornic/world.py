@@ -29,6 +29,7 @@ from typing import Any
 from lifeops.domain.world import (
     WORLD_MANAGED_ENTITY_TYPES,
     WORLD_RELATIONSHIP_TYPES,
+    EntityFact,
     WorldEdge,
     WorldEntity,
     WorldEntityType,
@@ -62,6 +63,11 @@ _LABEL_FOR_TYPE: dict[WorldEntityType, str] = {
     # written through ``WORLD_MANAGED_ENTITY_TYPES`` rather than the
     # generic-create path too.
     WorldEntityType.SHOPPING_LIST: "ShoppingList",
+    # Knowledge (section 18) is written through ``record_knowledge``, the
+    # same non-generic path Document uses, for the same reason: free-text
+    # content deserves its own draft shape rather than the generic entity
+    # path's bare key/value validation.
+    WorldEntityType.KNOWLEDGE: "Knowledge",
 }
 
 # Labels come from this module's own constant map keyed on the ID prefix —
@@ -144,6 +150,59 @@ def _row_to_edge(row: dict[str, Any]) -> WorldEdge:
 def _type_params(rel_types: list[WorldRelationship] | None) -> list[str]:
     chosen = rel_types if rel_types is not None else list(WORLD_RELATIONSHIP_TYPES)
     return [str(r) for r in chosen]
+
+
+#: EntityFact is a plain versioned record, not a shaped entity — no label
+#: lookup, no facts_json, matched by (entity_id, key) properties exactly the
+#: way Preference is matched by (subject_id, key).
+_FACT_RETURN = """
+    f.id AS id,
+    f.entity_id AS entity_id,
+    f.key AS key,
+    f.value AS value,
+    f.valid_from AS valid_from,
+    f.valid_to AS valid_to,
+    f.supersedes AS supersedes,
+    f.created_by_client AS created_by_client
+"""
+
+
+def _row_to_fact(row: dict[str, Any]) -> EntityFact:
+    return EntityFact(
+        id=row["id"],
+        entity_id=row["entity_id"],
+        key=row["key"],
+        value=row["value"],
+        valid_from=row["valid_from"],
+        valid_to=row.get("valid_to"),
+        supersedes=row.get("supersedes"),
+        created_by_client=row.get("created_by_client"),
+    )
+
+
+def _fact_write_params(fact: EntityFact) -> dict[str, Any]:
+    return {
+        "id": fact.id,
+        "entity_id": fact.entity_id,
+        "key": fact.key,
+        "value": fact.value,
+        "valid_from": fact.valid_from,
+        "valid_to": fact.valid_to,
+        "supersedes": fact.supersedes,
+        "created_by_client": fact.created_by_client,
+    }
+
+
+_CREATE_FACT = """
+    MERGE (f:EntityFact {id: $id})
+    SET f.entity_id = $entity_id,
+        f.key = $key,
+        f.value = $value,
+        f.valid_from = $valid_from,
+        f.valid_to = $valid_to,
+        f.supersedes = $supersedes,
+        f.created_by_client = $created_by_client
+"""
 
 
 class NornicWorldRepository:
@@ -338,3 +397,93 @@ class NornicWorldRepository:
             target_id=target_id,
         )
         return bool(rows and rows[0]["removed"])
+
+    # --- per-fact history (section 16) --------------------------------------
+
+    async def current_facts(self, entity_id: str) -> dict[str, EntityFact]:
+        rows = await self._client.read(
+            f"""
+            MATCH (f:EntityFact)
+            WHERE f.entity_id = $entity_id AND f.valid_to IS NULL
+            RETURN {_FACT_RETURN}
+            """,
+            entity_id=entity_id,
+        )
+        facts = [_row_to_fact(r) for r in rows]
+        return {fact.key: fact for fact in facts}
+
+    async def fact_history(
+        self, entity_id: str, *, key: str | None = None
+    ) -> list[EntityFact]:
+        where = "f.entity_id = $entity_id"
+        params: dict[str, Any] = {"entity_id": entity_id}
+        if key is not None:
+            where += " AND f.key = $key"
+            params["key"] = key
+        rows = await self._client.read(
+            f"""
+            MATCH (f:EntityFact)
+            WHERE {where}
+            RETURN {_FACT_RETURN}
+            ORDER BY f.valid_from DESC, f.id DESC
+            """,
+            **params,
+        )
+        return [_row_to_fact(r) for r in rows]
+
+    async def seed_fact_versions(self, versions: list[EntityFact]) -> None:
+        if not versions:
+            return
+        await self._client.write_many(
+            [(_CREATE_FACT, _fact_write_params(v)) for v in versions]
+        )
+
+    async def update_facts(
+        self,
+        entity: WorldEntity,
+        *,
+        new_versions: list[EntityFact],
+        superseded_ids: list[str],
+    ) -> WorldEntity:
+        if entity.entity_type not in WORLD_MANAGED_ENTITY_TYPES:
+            raise ValueError(
+                f"{entity.entity_type} is not written by the world repository"
+            )
+        label = _LABEL_FOR_TYPE[entity.entity_type]
+        statements: list[tuple[str, dict[str, Any]]] = [
+            (
+                f"""
+                MATCH (n:{label} {{id: $id}})
+                SET n.facts_json = $facts_json,
+                    n.updated_at = $updated_at
+                """,
+                {
+                    "id": entity.id,
+                    "facts_json": json.dumps(entity.facts, sort_keys=True),
+                    "updated_at": entity.updated_at,
+                },
+            )
+        ]
+        for old_id in superseded_ids:
+            statements.append(
+                (
+                    "MATCH (old:EntityFact {id: $old_id}) SET old.valid_to = $valid_to",
+                    {"old_id": old_id, "valid_to": entity.updated_at},
+                )
+            )
+        for version in new_versions:
+            statements.append((_CREATE_FACT, _fact_write_params(version)))
+            if version.supersedes:
+                statements.append(
+                    (
+                        """
+                        MATCH (new:EntityFact {id: $new_id})
+                        MATCH (old:EntityFact {id: $old_id})
+                        MERGE (new)-[:SUPERSEDES]->(old)
+                        """,
+                        {"new_id": version.id, "old_id": version.supersedes},
+                    )
+                )
+        await self._client.write_many(statements)
+        stored = await self.get(entity.id)
+        return stored or entity
