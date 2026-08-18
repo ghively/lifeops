@@ -372,6 +372,11 @@ as real. No payment-provider adapter exists at all — deliberate, not a stub
 - Hermes itself has not been attached on this machine — it is not installed
   here. See [HERMES_INTEGRATION.md](HERMES_INTEGRATION.md).
 
+A consolidated, standalone accounting of every item above — grouped by
+whether it's blocked by this environment, deferred by BUILD_SPEC itself, out
+of this repository's scope by design, or waiting on the user — lives in
+[docs/REMAINING_WORK.md](docs/REMAINING_WORK.md).
+
 ---
 
 ## Documentation
@@ -379,4 +384,5 @@ as real. No payment-provider adapter exists at all — deliberate, not a stub
 [README](README.md) · [BUILD_SPEC](BUILD_SPEC.md) · [ARCHITECTURE](ARCHITECTURE.md) ·
 [DATA_MODEL](DATA_MODEL.md) · [MCP_API](MCP_API.md) · [SECURITY](SECURITY.md) ·
 [OPERATIONS](OPERATIONS.md) · [TESTING](TESTING.md) · [CONFIGURATION](CONFIGURATION.md) ·
-[HERMES_INTEGRATION](HERMES_INTEGRATION.md) · [AGENTS](AGENTS.md)
+[HERMES_INTEGRATION](HERMES_INTEGRATION.md) · [AGENTS](AGENTS.md) ·
+[REMAINING_WORK](docs/REMAINING_WORK.md)
