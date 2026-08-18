@@ -3404,6 +3404,7 @@ class LifeOpsCore:
             steps=validate_steps(draft.steps),
             trigger=draft.trigger,
             next_run_at=draft.next_run_at,
+            enabled=draft.enabled,
             created_at=existing.created_at if existing else now,
             updated_at=now,
             created_by_client=client.client_id,

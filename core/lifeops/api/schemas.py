@@ -565,6 +565,9 @@ class SaveWorkflowTemplateRequest(BaseModel):
     steps: list[WorkflowStepSchema] = Field(default_factory=list)
     trigger: TriggerKind = TriggerKind.MANUAL
     next_run_at: str | None = None
+    #: Lets a routine be paused. Omitting it defaulted every save to enabled,
+    #: so revising a paused routine switched it back on.
+    enabled: bool = True
 
 
 # --- configuration -----------------------------------------------------------

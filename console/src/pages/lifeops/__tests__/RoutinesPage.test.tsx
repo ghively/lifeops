@@ -90,6 +90,27 @@ describe('Routines', () => {
     expect(await screen.findByText('Disabled')).toBeInTheDocument()
   })
 
+  it('carries a paused routine through a revision', async () => {
+    // The server rebuilds the template from this payload, so omitting
+    // `enabled` would switch a paused routine back on — and the user who
+    // paused it would not be told.
+    mockedTemplates.list.mockResolvedValue({
+      templates: [makeTemplate({ name: 'Weekly review', enabled: false })],
+      total: 1,
+    })
+    mockedTemplates.save.mockResolvedValue(makeTemplate({ enabled: false }))
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: /revise/i }))
+    await userEvent.click(screen.getByRole('button', { name: /save revision/i }))
+
+    await waitFor(() => {
+      expect(mockedTemplates.save).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: false }),
+      )
+    })
+  })
+
   it('creates a routine with a step', async () => {
     mockedTemplates.save.mockResolvedValue(makeTemplate({ name: 'Nightly backup check' }))
     renderPage()
@@ -104,6 +125,7 @@ describe('Routines', () => {
 
     await waitFor(() =>
       expect(mockedTemplates.save).toHaveBeenCalledWith({
+        enabled: true,
         name: 'Nightly backup check',
         description: undefined,
         steps: [{ order: 0, description: 'Check backup log', action_type: null }],
