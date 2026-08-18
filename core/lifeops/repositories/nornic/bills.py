@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from lifeops.domain.bills import Bill, BillStatus, Payee
+from lifeops.errors import NotFoundError
 from lifeops.repositories.nornic.client import NornicClient
 
 _BILL_RETURN = """
@@ -132,8 +133,13 @@ class NornicBillRepository:
         return [_row_to_bill(r) for r in rows]
 
     async def create(self, bill: Bill) -> Bill:
-        # The bill and its OWED_TO edge go in one transaction: a bill whose
-        # payee edge failed to write would be owed to nobody.
+        # The bill and its OWED_TO edge go in one transaction. The Payee node
+        # was written earlier by auto-commit ``write`` (``upsert_payee``), and
+        # auto-commit-to-transaction visibility races on NornicDB — so the
+        # MATCH below can miss a freshly created payee and the MERGE silently
+        # no-ops. That is survivable only because ``b.payee_id`` is the source
+        # of truth (``list_for_payee`` reads the property, never the edge);
+        # the edge is display-only and a dropped one degrades, not corrupts.
         await self._client.write_many(
             [
                 (
@@ -169,15 +175,22 @@ class NornicBillRepository:
         return stored or bill
 
     async def update(self, bill: Bill) -> Bill:
+        existing = await self.get(bill.id)
+        if existing is None:
+            raise NotFoundError(f"bill {bill.id} does not exist", bill_id=bill.id)
         await self._client.write(
             """
             MATCH (b:Bill {id: $id})
-            SET b.status = $status,
+            SET b.payee_id = $payee_id,
+                b.description = $description,
                 b.amount = $amount,
+                b.currency = $currency,
                 b.due_at = $due_at,
+                b.status = $status,
                 b.action_id = $action_id,
                 b.paid_at = $paid_at,
                 b.external_reference = $external_reference,
+                b.source_document_id = $source_document_id,
                 b.updated_at = $updated_at
             """,
             **_bill_params(bill),
@@ -214,8 +227,11 @@ class NornicBillRepository:
         if existing is not None:
             merged.created_at = existing.created_at or merged.created_at
             # Approval is a fact about a payee, not a field a later write may
-            # reset. Only ever carried forward, never cleared here.
-            if existing.is_approved:
+            # reset. Carried forward when the incoming record is unapproved;
+            # an incoming approval is a human's newer decision and wins, so
+            # ``approved_by`` keeps agreeing with the audit line that named
+            # the approving client.
+            if existing.is_approved and not merged.is_approved:
                 merged.approved_at = existing.approved_at
                 merged.approved_by = existing.approved_by
 

@@ -10,6 +10,7 @@ LifeOps deployment — nothing here survives a process restart.
 
 from __future__ import annotations
 
+import builtins
 import copy
 from collections.abc import Sequence
 
@@ -26,6 +27,7 @@ from lifeops.domain.tasks import Task, TaskState
 from lifeops.domain.waiting import ACTIVE_STATUSES, WaitingItem, WaitingStatus
 from lifeops.domain.workflow_templates import WorkflowTemplate
 from lifeops.domain.world import (
+    WORLD_MANAGED_ENTITY_TYPES,
     WORLD_RELATIONSHIP_TYPES,
     WorldEdge,
     WorldEntity,
@@ -195,7 +197,7 @@ class FakeTaskRepository:
         matches.sort(key=lambda t: (t.created_at, t.id), reverse=True)
         return [copy.deepcopy(t) for t in matches[:limit]]
 
-    async def list_related_to_entity(self, entity_id: str) -> list[Task]:
+    async def list_related_to_entity(self, entity_id: str) -> builtins.list[Task]:
         matches = [
             t for t in self._tasks.values() if entity_id in t.related_entity_ids
         ]
@@ -398,6 +400,12 @@ class FakeWorldRepository:
         return await self.get(entity_id) is not None
 
     async def create(self, entity: WorldEntity) -> WorldEntity:
+        # The same guard the NornicDB repository enforces (domain/world.py
+        # keeps the set in one place so both backends refuse identically).
+        if entity.entity_type not in WORLD_MANAGED_ENTITY_TYPES:
+            raise ValueError(
+                f"{entity.entity_type} is not created by the world repository"
+            )
         self._entities[entity.id] = copy.deepcopy(entity)
         return copy.deepcopy(entity)
 
@@ -711,11 +719,13 @@ class FakeBillRepository:
     async def upsert_payee(self, payee: Payee) -> Payee:
         existing = self._payees.get(payee.id)
         stored = copy.deepcopy(payee)
-        if existing is not None and existing.is_approved and not stored.is_approved:
-            # Section 72: approval is a fact about a payee, not a field a
-            # later write may quietly reset.
-            stored.approved_at = existing.approved_at
-            stored.approved_by = existing.approved_by
+        if existing is not None:
+            stored.created_at = existing.created_at or stored.created_at
+            if existing.is_approved and not stored.is_approved:
+                # Section 72: approval is a fact about a payee, not a field a
+                # later write may quietly reset.
+                stored.approved_at = existing.approved_at
+                stored.approved_by = existing.approved_by
         self._payees[payee.id] = stored
         return copy.deepcopy(stored)
 
