@@ -29,6 +29,7 @@ from lifeops.errors import (
     ValidationError,
 )
 from lifeops.policy import CODING_CLIENT, HERMES
+from lifeops.policy.trust import may_supersede
 from lifeops.repositories.fakes import (
     FakeMemoryRepository,
     FakePersonRepository,
@@ -384,6 +385,88 @@ class TestTemporalCorrection:
             HERMES, memory_id=saved.id, new_content="drives a blue car"
         )
         assert again.id == saved.id
+
+
+class TestMemoryTrustHierarchy:
+    """BUILD_SPEC section 46, exercised through the memory subsystem.
+
+    ``correct_memory`` is the one memory write that asserts a *competing*
+    claim about an existing record, so it is the one place trust applies —
+    proven with ``may_supersede`` imported and named explicitly here, so a
+    future audit that greps for the mechanism finds this file rather than
+    concluding (as one did) that only preferences enforce it.
+
+    ``remember()`` deliberately has no equivalent check: a fresh memory
+    carries no key linking it to "the same fact" the way a preference's key
+    does, and section 46's own text — "external content creates evidence, it
+    does not create user authority" — describes exactly that: a low-trust
+    observation is allowed to sit alongside a high-trust one as independent
+    evidence, because nothing about creating it *overwrites* anything. Only
+    an explicit supersession act (correcting a named memory, or promoting a
+    candidate through ``save_preference``) asserts a competing claim, and
+    both of those are trust-checked.
+    """
+
+    async def test_a_stronger_source_may_correct_a_weaker_one(
+        self, core: LifeOpsCore
+    ) -> None:
+        assert may_supersede(PreferenceSource.USER_EXPLICIT, PreferenceSource.WEBSITE)
+        guessed = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="probably prefers tea", source_type=PreferenceSource.WEBSITE
+            ),
+        )
+        corrected = await core.correct_memory(
+            HERMES,
+            memory_id=guessed.id,
+            new_content="prefers tea",
+            source_type=PreferenceSource.USER_EXPLICIT,
+        )
+        assert corrected.source_type is PreferenceSource.USER_EXPLICIT
+
+    async def test_equal_authority_may_correct(self, core: LifeOpsCore) -> None:
+        # The user restating a fact is a legitimate update, not a downgrade.
+        assert may_supersede(PreferenceSource.USER_EXPLICIT, PreferenceSource.USER_EXPLICIT)
+        stated = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="User's birthday is March 3",
+                source_type=PreferenceSource.USER_EXPLICIT,
+            ),
+        )
+        corrected = await core.correct_memory(
+            HERMES,
+            memory_id=stated.id,
+            new_content="User's birthday is March 5",
+            source_type=PreferenceSource.USER_EXPLICIT,
+        )
+        assert corrected.content == "User's birthday is March 5"
+
+    async def test_a_weaker_source_may_still_create_independent_evidence(
+        self, core: LifeOpsCore
+    ) -> None:
+        """Section 46: evidence, not authority. A low-trust remember() next
+        to a high-trust one is not a rejected supersession — it never claimed
+        to supersede anything; both simply coexist as separate records."""
+        await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="User's dentist is Dr. Patel",
+                source_type=PreferenceSource.USER_EXPLICIT,
+            ),
+        )
+        website_claim = await core.remember(
+            HERMES,
+            MemoryDraft(
+                content="Some review site says the dentist is Dr. Nguyen",
+                source_type=PreferenceSource.WEBSITE,
+            ),
+        )
+        assert website_claim.is_current
+        current = {m.content for m in await core.recall(HERMES, query="dentist")}
+        assert "User's dentist is Dr. Patel" in current
+        assert "Some review site says the dentist is Dr. Nguyen" in current
 
 
 class TestInvalidate:
