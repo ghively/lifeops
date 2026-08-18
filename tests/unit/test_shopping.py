@@ -430,3 +430,48 @@ class TestBuildCartPayload:
         payload = build_cart_payload(shopping_list)
         assert payload["shopping_list_id"] == shopping_list.id
         assert payload["items"][0]["name"] == "Milk"
+
+
+class TestSubmittingIsRecoverable:
+    """A declined or failed checkout must not wedge the list: SUBMITTING has
+    an exit back to CART_BUILT, so the groceries can still be bought."""
+
+    async def _submitting(self, core: LifeOpsCore):
+        shopping_list = await _open_list(core)
+        cart_action = await core.build_grocery_cart(HERMES, list_id=shopping_list.id)
+        await core.verify_action_externally(HERMES, action_id=cart_action.id)
+        built = await core.get_shopping_list(HERMES, list_id=shopping_list.id)
+        action = await core.submit_grocery_order(HERMES, list_id=built.id)
+        return built, action
+
+    async def test_a_declined_checkout_returns_the_list_to_cart_built(
+        self, core: LifeOpsCore
+    ) -> None:
+        built, action = await self._submitting(core)
+        pending = await core.list_pending_approvals(CONSOLE)
+        await core.decide_approval(CONSOLE, approval_id=pending[0].id, approved=False)
+
+        recovered = await core.get_shopping_list(HERMES, list_id=built.id)
+        assert recovered.status is ShoppingListStatus.CART_BUILT
+        # And the checkout can genuinely be retried, producing a fresh
+        # decidable card rather than dedup-pinning to the cancelled action.
+        retry = await core.submit_grocery_order(HERMES, list_id=built.id)
+        assert retry.id != action.id
+        assert retry.status is ActionStatus.NEEDS_APPROVAL
+
+    async def test_a_failed_checkout_execution_returns_the_list_to_cart_built(
+        self, core: LifeOpsCore, fake_browser: FakeBrowser
+    ) -> None:
+        built, action = await self._submitting(core)
+        pending = await core.list_pending_approvals(CONSOLE)
+        await core.decide_approval(CONSOLE, approval_id=pending[0].id, approved=True)
+
+        # The store loses the cart between approval and execution — the
+        # provider raises, and the failure must land in the outbox rather
+        # than escape (the old narrow catch let repository errors through).
+        fake_browser._carts.clear()
+        result = await core.execute_action(HERMES, action_id=action.id)
+        assert result.status is ActionStatus.FAILED
+
+        recovered = await core.get_shopping_list(HERMES, list_id=built.id)
+        assert recovered.status is ShoppingListStatus.CART_BUILT

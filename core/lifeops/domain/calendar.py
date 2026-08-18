@@ -219,10 +219,16 @@ def confirm_booking(
 ) -> Appointment:
     """Move HELD -> BOOKED. The only function that may (section 63's warning).
 
-    Raises rather than silently booking over a stale or wrong-state hold: an
-    already-booked or cancelled appointment cannot be re-confirmed, and an
-    expired hold must go through a fresh hold rather than be booked on a slot
-    the provider may have already released.
+    Raises rather than silently booking over a wrong-state hold: an
+    already-booked or cancelled appointment cannot be re-confirmed.
+
+    Hold expiry is deliberately *not* re-checked here. Expiry gates
+    execution (``execute_booking`` refuses an expired hold before calling
+    the provider); by the time this runs, external verification has proved
+    the event exists on the provider's calendar. An action executed at
+    T+25m on a 30-minute hold and verified at T+35m used to raise here and
+    strand the appointment HELD forever while a real event sat on the
+    calendar — refusing to record a verified fact helps nobody.
     """
     if appointment.status is not AppointmentStatus.HELD:
         raise ValidationError(
@@ -230,13 +236,6 @@ def confirm_booking(
             "a booking may only be confirmed from a live hold",
             appointment_id=appointment.id,
             status=str(appointment.status),
-        )
-    if hold_is_expired(appointment, now=now):
-        raise ValidationError(
-            f"the hold for appointment {appointment.id} expired at "
-            f"{appointment.hold_expires_at}; place a new hold before booking",
-            appointment_id=appointment.id,
-            hold_expires_at=appointment.hold_expires_at,
         )
     updated = appointment.model_copy(deep=True)
     updated.status = AppointmentStatus.BOOKED
