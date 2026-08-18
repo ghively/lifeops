@@ -111,7 +111,22 @@ class StubContainer:
         self.config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
 
     def enable_telephony(self) -> None:
-        self.config.update_provider("telephony", {"enabled": True})
+        # account_sid/from_number/auth_token are now required fields
+        # (Twilio's shape) — this stub still never reaches the real Twilio
+        # adapter (factories={"telephony": ...} injects the fake above), but
+        # status.missing_required checks these the same way calendar's
+        # "backend" does, so they need to be present for the fake to be
+        # selected at all. update_provider routes auth_token (a SecretField)
+        # into the secret store automatically.
+        self.config.update_provider(
+            "telephony",
+            {
+                "enabled": True,
+                "account_sid": "AC" + "0" * 32,
+                "auth_token": "test-auth-token",
+                "from_number": "+15551234567",
+            },
+        )
 
     async def startup(self) -> None:
         person = Person(

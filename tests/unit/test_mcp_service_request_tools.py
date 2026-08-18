@@ -98,7 +98,15 @@ def config_service(tmp_path: Path) -> ConfigurationService:
 def telephony_service(
     config_service: ConfigurationService, fake_telephony: FakeTelephonyProvider
 ) -> TelephonyProviderService:
-    config_service.update_provider("telephony", {"enabled": True})
+    config_service.update_provider(
+        "telephony",
+        {
+            "enabled": True,
+            "account_sid": "AC" + "0" * 32,
+            "auth_token": "test-auth-token",
+            "from_number": "+15551234567",
+        },
+    )
     return TelephonyProviderService(
         config=config_service,
         secret_store=InMemorySecretStore(),
