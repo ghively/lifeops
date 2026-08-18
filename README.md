@@ -2,8 +2,10 @@
 
 A personal operating system built around the Hermes assistant.
 
-**Status: Phase 7 complete.** The spine is proven end to end; the Console,
-memory, world, durable-work, voice, and calendar/email layers are built on it. See [Phase status](#phase-status).
+**Status: all eleven phases complete.** Both BUILD_SPEC acceptance scenarios
+pass — the Electrician scenario (section 101) end to end, and the Shared-Agent
+scenario (section 102), which proves state belongs to LifeOps rather than to
+any one agent. See [Phase status](#phase-status).
 
 ```
 Hermes            the assistant — conversation, planning, tools, skills
@@ -81,10 +83,10 @@ changes/requests/ code change requests raised by Hermes (Phase 11)
 | 5 | Configuration and the ElevenLabs voice path | **Complete** |
 | 6 | Local RTX voice | **Complete** |
 | 7 | Calendar and email | **Complete** |
-| 8 | Provider workflows and telephony | Not started |
-| 9 | Browser and shopping | Not started |
-| 10 | Bills and financial actions | Not started |
-| 11 | Hermes self-configuration | Not started |
+| 8 | Provider workflows and telephony | **Complete** |
+| 9 | Browser and shopping | **Complete** |
+| 10 | Bills and financial actions | **Complete** |
+| 11 | Hermes self-configuration | **Complete** |
 
 ### What Phase 0 delivers
 

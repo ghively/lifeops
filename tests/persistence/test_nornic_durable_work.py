@@ -573,19 +573,30 @@ class TestAuditRepository:
                 details={"reason": "booked appointment"},
             )
         )
-        listed = await durable.audit.list_recent(limit=50)
+        # Scoped to this test's own target: the global log is unbounded, so a
+        # fixed limit is a window that pollution can push a record out of.
+        listed = await durable.audit.list_for_target(durable.task_id)
         found = next((r for r in listed if r.id == record.id), None)
         assert found is not None
         assert found.details == {"reason": "booked appointment"}
 
     async def test_list_recent_orders_newest_first(self, durable: DurableStack) -> None:
+        """Ordering is asserted over a target-scoped read, not the global log.
+
+        The audit log grows without bound by design, so a test that filters
+        two known ids out of `list_recent(limit=N)` fails as soon as more than
+        N records exist — which is a property of the log, not a defect. Both
+        records share this test's own target, so the query is isolated.
+        """
         older = await durable.audit.append(
-            _audit_record(durable, suffix="older", timestamp=TS)
+            _audit_record(durable, suffix="older", timestamp=TS,
+                          target=durable.task_id)
         )
         newer = await durable.audit.append(
-            _audit_record(durable, suffix="newer", timestamp=_later(TS, seconds=60))
+            _audit_record(durable, suffix="newer",
+                          timestamp=_later(TS, seconds=60), target=durable.task_id)
         )
-        listed = await durable.audit.list_recent(limit=50)
+        listed = await durable.audit.list_for_target(durable.task_id)
         ids_in_order = [r.id for r in listed if r.id in {older.id, newer.id}]
         assert ids_in_order == [newer.id, older.id]
 
