@@ -80,6 +80,8 @@ from lifeops.api.schemas import (
     RequestServiceBookingRequest,
     SavePreferenceRequest,
     SaveWorkflowTemplateRequest,
+    SelfChangeCheckRequest,
+    SelfChangeCheckResponse,
     SendEmailRequest,
     ServiceRequestListResponse,
     ServiceRequestResponse,
@@ -126,6 +128,7 @@ from lifeops.domain.knowledge import Knowledge, KnowledgeDraft
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.people import Person, PersonDraft
 from lifeops.domain.preferences import Preference, PreferenceDraft
+from lifeops.domain.self_config import SelfConfigProposal
 from lifeops.domain.service_request import ServiceRequest, ServiceRequestDraft
 from lifeops.domain.shopping import (
     ShoppingItem,
@@ -1712,6 +1715,20 @@ async def delete_workflow_template(
     template_id: str, container: ContainerDep, client: ClientDep
 ) -> None:
     await container.core.delete_workflow_template(client, template_id=template_id)
+
+
+@router.post(
+    "/self-config/check", response_model=SelfChangeCheckResponse, tags=["routines"]
+)
+async def check_self_change(
+    payload: SelfChangeCheckRequest, container: ContainerDep, client: ClientDep
+) -> SelfChangeCheckResponse:
+    """Whether a proposed self-change (section 73) is one Hermes may apply
+    itself. Raises (rather than returning permitted=false) when it is not,
+    the same as every other capability/validation failure this API surfaces
+    — a 4xx with a stable error code, not a 200 carrying a refusal."""
+    await container.core.propose_self_change(client, SelfConfigProposal(**payload.model_dump()))
+    return SelfChangeCheckResponse(permitted=True)
 
 
 # --- search (BUILD_SPEC section 19) ------------------------------------------

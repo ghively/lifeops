@@ -12,6 +12,7 @@ from lifeops.domain.approvals import ApprovalStatus
 from lifeops.domain.calendar import DEFAULT_HOLD_MINUTES, AppointmentStatus
 from lifeops.domain.memory import MemorySource, MemoryType
 from lifeops.domain.preferences import PreferenceSource
+from lifeops.domain.self_config import SelfConfigTarget
 from lifeops.domain.service_request import ServiceRequestStatus
 from lifeops.domain.shopping import ShoppingListStatus
 from lifeops.domain.tasks import TaskPriority, TaskState, VerificationState
@@ -579,6 +580,24 @@ class SaveWorkflowTemplateRequest(BaseModel):
     #: Lets a routine be paused. Omitting it defaulted every save to enabled,
     #: so revising a paused routine switched it back on.
     enabled: bool = True
+
+
+class SelfChangeCheckRequest(BaseModel):
+    """Whether a proposed self-change (section 73) is one Hermes may apply
+    itself, without actually applying anything."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: SelfConfigTarget
+    name: str = Field(min_length=1, max_length=200)
+    effects: list[str] = Field(default_factory=list)
+    rationale: str | None = None
+
+
+class SelfChangeCheckResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    permitted: bool = True
 
 
 # --- configuration -----------------------------------------------------------
