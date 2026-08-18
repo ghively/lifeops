@@ -96,6 +96,7 @@ def _build_local_tts(settings: dict[str, Any], secrets: SecretStore) -> TTSProvi
         model=settings.get("model"),
         device=settings.get("device") or "cuda:0",
         speed=_number(settings.get("speed"), default=1.0),
+        voice=settings.get("voice"),
     )
 
 
