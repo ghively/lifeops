@@ -293,6 +293,7 @@ CALENDAR = ProviderDefinition(
         SelectField(
             "backend",
             "Backend",
+            required=True,
             options=[
                 {"value": "caldav", "label": "CalDAV"},
                 {"value": "google", "label": "Google Calendar"},
@@ -314,11 +315,11 @@ EMAIL = ProviderDefinition(
     available_in_phase=7,
     fields=[
         _ENABLED,
-        TextField("imap_host", "IMAP host"),
+        TextField("imap_host", "IMAP host", required=True),
         NumberField("imap_port", "IMAP port", default=993),
-        TextField("smtp_host", "SMTP host"),
+        TextField("smtp_host", "SMTP host", required=True),
         NumberField("smtp_port", "SMTP port", default=587),
-        TextField("username", "Username"),
+        TextField("username", "Username", required=True),
         SecretField("password", "Password or app token"),
         TextField("from_address", "From address"),
     ],

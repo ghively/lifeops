@@ -43,13 +43,20 @@ class TestFreshDeployment:
             assert statuses[provider_id].state is ProviderState.NOT_CONFIGURED
             assert statuses[provider_id].missing_required
 
-    def test_optional_providers_read_as_disabled(
+    def test_optional_providers_read_their_true_state(
         self, config_service: ConfigurationService
     ) -> None:
-        # "I have not turned this on" — a distinct message to a human, and the
-        # states BUILD_SPEC section 104 lists for these.
+        # Section 104's expected list shows Calendar/Email as "Disabled", but
+        # this suite already reads Telegram as NOT_CONFIGURED (above) on the
+        # grounds that a missing required field is the more informative truth
+        # — and calendar/email declare required fields for the same reason:
+        # without them, {"enabled": true} with nothing configured reached
+        # state CONFIGURED while the factory refused every call.
         statuses = {s.id: s for s in config_service.list_status()}
-        for provider_id in ("calendar", "email", "browser", "telephony"):
+        for provider_id in ("calendar", "email"):
+            assert statuses[provider_id].state is ProviderState.NOT_CONFIGURED
+            assert statuses[provider_id].missing_required
+        for provider_id in ("browser", "telephony"):
             assert statuses[provider_id].state is ProviderState.DISABLED
 
     def test_the_required_phase_zero_providers_are_registered(self) -> None:

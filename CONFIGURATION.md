@@ -78,8 +78,8 @@ provider that cannot work should not merely read as "off".
 DeepSeek        Not configured
 ElevenLabs      Not configured
 Telegram        Not configured
-Calendar        Disabled
-Email           Disabled
+Calendar        Not configured
+Email           Not configured
 Browser         Disabled
 Telephony       Disabled
 Local ASR/TTS   Not configured

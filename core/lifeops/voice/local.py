@@ -23,11 +23,11 @@ possibly use whatever the user picks.
 
 from __future__ import annotations
 
-import importlib.util
 from collections.abc import AsyncIterator
 
 from lifeops.domain.voice import SynthesisOptions, TranscriptionResult, TTSModel, Voice
 from lifeops.errors import ProviderError
+from lifeops.runtime import detect_runtime
 
 # BUILD_SPEC section 30's ASR candidates. faster-whisper is a real, commonly
 # installed package (module name faster_whisper) so detecting it is useful;
@@ -40,18 +40,6 @@ ASR_RUNTIME_CANDIDATES: tuple[str, ...] = ("faster_whisper",)
 # "unknown". Left empty until a real adapter targets one specifically.
 TTS_RUNTIME_CANDIDATES: tuple[str, ...] = ()
 
-
-def _detect_runtime(candidates: tuple[str, ...]) -> str | None:
-    """The first candidate module that is actually importable, if any."""
-    for name in candidates:
-        try:
-            if importlib.util.find_spec(name) is not None:
-                return name
-        except (ImportError, ValueError):
-            # find_spec can raise for a malformed or partially-shadowed
-            # module name; treat that the same as "not present".
-            continue
-    return None
 
 
 class LocalASRProvider:
@@ -83,7 +71,7 @@ class LocalASRProvider:
         )
 
     async def health(self) -> tuple[bool, str]:
-        runtime = _detect_runtime(self._RUNTIME_CANDIDATES)
+        runtime = detect_runtime(self._RUNTIME_CANDIDATES)
         if runtime is None:
             return False, self._runtime_missing_message()
         if not self._model:
@@ -137,7 +125,7 @@ class LocalTTSProvider:
         return self._loaded
 
     async def health(self) -> tuple[bool, str]:
-        runtime = _detect_runtime(self._RUNTIME_CANDIDATES)
+        runtime = detect_runtime(self._RUNTIME_CANDIDATES)
         if runtime is None:
             return False, (
                 "no local TTS runtime is wired up yet — BUILD_SPEC section 30 lists "

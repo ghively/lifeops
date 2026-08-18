@@ -84,7 +84,11 @@ class FakeTelephonyProvider:
         return result
 
     async def hangup(self, external_reference: str) -> None:
-        self._results.pop(external_reference, None)
+        # Deliberately keeps the result record: the protocol promises
+        # get_status is an independent confirmation of what a *past* call
+        # did, and a fake that forgets the call on hangup diverges from any
+        # real provider's call log.
+        return None
 
     async def send_dtmf(self, external_reference: str, digits: str) -> None:
         return None
