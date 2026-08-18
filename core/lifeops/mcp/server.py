@@ -34,6 +34,14 @@ reads over tasks, waiting items, assets, appointments, and bills that already
 had a write path or a resource but no matching tool. Section 51's
 ``prepare_payment``/``commit_payment`` are deliberately absent — payment stays
 Console-only (see CLAUDE.md's "money moves only where a human is present").
+A later pass adds section 73's self-configuration surface: ``propose_self_change``
+(the permission gate every self-change goes through) and
+``save_workflow_template``/``list_workflow_templates``/``due_routines``/
+``delete_workflow_template`` (the one real apply path behind four of section
+73's seven target names — see ``domain/self_config.py``'s
+``SelfConfigTarget`` docstring for which). Before this, both only had a
+Console-only HTTP path; Hermes had no way to actually manage its own
+routines, cron jobs, or reminders, only to have them managed for it.
 
 Client identity
 ---------------
@@ -65,10 +73,12 @@ from lifeops.domain.calendar import AppointmentHoldDraft, AppointmentStatus
 from lifeops.domain.email import EmailSendDraft
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
+from lifeops.domain.self_config import SelfConfigProposal, SelfConfigTarget
 from lifeops.domain.service_request import ServiceRequestDraft
 from lifeops.domain.shopping import ShoppingItem, ShoppingListDraft, SubstitutionDraft
 from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState, TaskUpdate
 from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingDraft, WaitingStatus
+from lifeops.domain.workflow_templates import TriggerKind, WorkflowStep, WorkflowTemplateDraft
 from lifeops.domain.world import WorldEntityType
 from lifeops.errors import LifeOpsError, NotFoundError
 from lifeops.ids import PREFIX_ASSET, PREFIX_PROVIDER
@@ -1874,6 +1884,190 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     suggested_acceptance_tests=suggested_acceptance_tests,
                 )
                 return {"ok": True, "change_request": request.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="propose_self_change",
+        title="Check a self-configuration change",
+        description=(
+            "Check whether a change you want to make to yourself is one you "
+            "may apply directly (BUILD_SPEC section 73). Call this BEFORE "
+            "writing a new skill, editing a non-critical prompt, or using "
+            "save_workflow_template for a routine/cron job/reminder — it "
+            "raises when the name or declared effects reach protected "
+            "machinery (authorization, approval validation, payment code, "
+            "secrets, MCP auth, security, CI) or a forbidden effect "
+            "(granting/revoking a capability, touching a secret, disabling "
+            "safe mode or the emergency stop, changing approval rules). If "
+            "this call fails, do not apply the change yourself — use "
+            "request_code_change instead. This tool only checks; it never "
+            "writes anything, whether it passes or fails."
+        ),
+    )
+    async def propose_self_change(
+        target: Annotated[
+            SelfConfigTarget,
+            Field(
+                description=(
+                    "What kind of change this is. 'routine_template', "
+                    "'cron_job', and 'reminder' are the same underlying "
+                    "object — use save_workflow_template to actually apply "
+                    "one once this check passes. 'skill' and "
+                    "'non_critical_prompt' are applied through your own "
+                    "mechanisms once this check passes; LifeOps only gates "
+                    "them, it does not store them."
+                )
+            ),
+        ],
+        name: Annotated[str, Field(description="What you are naming/calling the change.")],
+        effects: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "What the change actually causes, if anything beyond its "
+                    "stated purpose — e.g. grant_capability, read_secret. "
+                    "Leave empty for an ordinary change."
+                )
+            ),
+        ] = None,
+        rationale: Annotated[str | None, Field(description="Why you want to make it.")] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                await container.core.propose_self_change(
+                    client,
+                    SelfConfigProposal(
+                        target=target, name=name, effects=effects or [], rationale=rationale
+                    ),
+                )
+                return {"ok": True, "permitted": True}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="save_workflow_template",
+        title="Save a routine, cron job, reminder, or workflow template",
+        description=(
+            "Create or revise a named, reusable shape of work you may manage "
+            "yourself (BUILD_SPEC section 73) — a routine template, a cron "
+            "job, a reminder, and a workflow template are all the same "
+            "object here, named however fits what you're building. Saving a "
+            "name that already exists revises that template rather than "
+            "creating a duplicate. Set trigger to 'schedule' with "
+            "next_run_at for a cron job or a scheduled reminder; leave it "
+            "'manual' for a routine you run on request. This does not "
+            "execute anything by itself — a scheduled template becomes due, "
+            "and something else (the due-work worker, or you checking "
+            "due_routines) still has to act on it. Call propose_self_change "
+            "first if you are unsure the name is permitted; this refuses the "
+            "same way, but that tool is the one meant for checking without "
+            "committing to the save."
+        ),
+    )
+    async def save_workflow_template(
+        name: Annotated[
+            str, Field(description="The template's name. Reuse an existing name to revise it.")
+        ],
+        description: Annotated[str | None, Field(description="What this is for.")] = None,
+        steps: Annotated[
+            list[str] | None,
+            Field(description="Ordered step descriptions, plain text, in the order they run."),
+        ] = None,
+        trigger: Annotated[
+            TriggerKind,
+            Field(
+                description="'manual' (run on request), 'schedule' (needs next_run_at), or 'event'."
+            ),
+        ] = TriggerKind.MANUAL,
+        next_run_at: Annotated[
+            str | None,
+            Field(description="RFC 3339 timestamp. Required when trigger is 'schedule'."),
+        ] = None,
+        enabled: Annotated[bool, Field(description="False pauses it without deleting it.")] = True,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                template = await container.core.save_workflow_template(
+                    client,
+                    WorkflowTemplateDraft(
+                        name=name,
+                        description=description,
+                        steps=[
+                            WorkflowStep(order=index, description=step_description)
+                            for index, step_description in enumerate(steps or [])
+                        ],
+                        trigger=trigger,
+                        next_run_at=next_run_at,
+                        enabled=enabled,
+                    ),
+                )
+                return {"ok": True, "template": template.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_workflow_templates",
+        title="List your routines, cron jobs, reminders, and workflow templates",
+        description="Every template saved via save_workflow_template, whatever it was called.",
+    )
+    async def list_workflow_templates(
+        limit: Annotated[int, Field(ge=1, le=500, description="Maximum results.")] = 100,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                templates = await container.core.list_workflow_templates(client, limit=limit)
+                return {
+                    "ok": True,
+                    "templates": [t.model_dump(mode="json") for t in templates],
+                    "total": len(templates),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="due_routines",
+        title="Templates whose scheduled time has come",
+        description=(
+            "Scheduled templates (trigger='schedule') whose next_run_at has "
+            "passed. This only reports what is due — it does not run "
+            "anything or clear the due state itself."
+        ),
+    )
+    async def due_routines(
+        limit: Annotated[int, Field(ge=1, le=500, description="Maximum results.")] = 50,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                templates = await container.core.due_routines(client, limit=limit)
+                return {
+                    "ok": True,
+                    "templates": [t.model_dump(mode="json") for t in templates],
+                    "total": len(templates),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="delete_workflow_template",
+        title="Delete a routine, cron job, reminder, or workflow template",
+        description=(
+            "Removes it permanently. Prefer "
+            "save_workflow_template(name=..., enabled=False) to pause one "
+            "you might want back."
+        ),
+    )
+    async def delete_workflow_template(
+        template_id: Annotated[
+            str, Field(description="From save_workflow_template or list_workflow_templates.")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                removed = await container.core.delete_workflow_template(
+                    client, template_id=template_id
+                )
+                return {"ok": True, "deleted": removed}
             except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
