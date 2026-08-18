@@ -34,7 +34,9 @@ argument — the only wiring difference from a real deployment.
 
 Payment (BUILD_SPEC section 99, phase 10) does not appear anywhere in this
 scenario: the fee collected in step 7 is recorded as a fact, never paid, and
-``Capability.FINANCIAL_PAYMENT`` is asserted to be granted to no client.
+no payment action appears in the audit trail, and the client that runs the
+scenario (Hermes) is asserted not to hold ``Capability.FINANCIAL_PAYMENT`` —
+which Phase 10 granted to the Console alone.
 
 This runs against a real NornicDB (skipped when unreachable) rather than the
 subprocess MCP harness ``test_phase4_durable_work.py`` uses: the MCP
@@ -378,10 +380,20 @@ class TestElectricianScenario:
         call_intents = {r.intent for r in recent if r.action == call_action.id}
         assert "prepare_action" in call_intents
 
-        # Section 97's hard rule and section 99: payment never appears in
-        # this scenario, and no client is authorised to spend it.
+        # Section 97's hard rule: no phone-based payment authorization. Phase
+        # 10 granted FINANCIAL_PAYMENT to the Console alone, so the assertion
+        # is that nothing in *this* scenario touched payment and that the
+        # client which ran it cannot pay — not that the capability is unheld
+        # anywhere, which stopped being true when bills landed.
+        assert Capability.FINANCIAL_PAYMENT not in HERMES.capabilities
         for client in all_clients():
-            assert Capability.FINANCIAL_PAYMENT not in client.capabilities
+            if client.has(Capability.SEND_EXTERNAL_MESSAGE):
+                assert Capability.FINANCIAL_PAYMENT not in client.capabilities or (
+                    client.client_id == CONSOLE.client_id
+                ), client.client_id
+
+        payment_types = {"prepare_payment", "commit_payment", "add_payee"}
+        assert not payment_types & {str(r.tool) for r in recent if r.tool}
 
 
 class TestWaitingWhenNecessary:
