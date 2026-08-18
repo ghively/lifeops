@@ -29,6 +29,11 @@ and ``request_quote`` contact a provider with a constrained objective that can
 never authorise a charge or repair work (section 97's hard rule,
 domain/telephony.py), and ``book_service_request`` only *prepares* a booking —
 it still needs a human's approval before anything is booked (sections 57-58).
+This pass rounds out section 50's expanded read tools: single-item and list
+reads over tasks, waiting items, assets, appointments, and bills that already
+had a write path or a resource but no matching tool. Section 51's
+``prepare_payment``/``commit_payment`` are deliberately absent — payment stays
+Console-only (see CLAUDE.md's "money moves only where a human is present").
 
 Client identity
 ---------------
@@ -56,16 +61,17 @@ from pydantic import Field
 from pydantic import ValidationError as PydanticValidationError
 
 from lifeops.container import Container
-from lifeops.domain.calendar import AppointmentHoldDraft
+from lifeops.domain.calendar import AppointmentHoldDraft, AppointmentStatus
 from lifeops.domain.email import EmailSendDraft
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
 from lifeops.domain.service_request import ServiceRequestDraft
 from lifeops.domain.shopping import ShoppingItem, ShoppingListDraft, SubstitutionDraft
 from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState, TaskUpdate
-from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingDraft
+from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingDraft, WaitingStatus
+from lifeops.domain.world import WorldEntityType
 from lifeops.errors import LifeOpsError, NotFoundError
-from lifeops.ids import PREFIX_PROVIDER
+from lifeops.ids import PREFIX_ASSET, PREFIX_PROVIDER
 from lifeops.mcp.resources import register_resources
 from lifeops.observability.logging import configure_logging, trace_context
 from lifeops.policy import ClientIdentity, UnknownClientPolicy, resolve_client
@@ -957,6 +963,268 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                 # `covers` travels with the answer so the model does not read
                 # an empty history as "nothing ever happened".
                 return {"ok": True, **history.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    # --- expanded read tools (BUILD_SPEC section 50) -------------------------
+    #
+    # The rest of section 50's list: single-item reads and searches over
+    # domains that already have a write path (tasks, waiting items, assets)
+    # or a richer read (appointments, bills). Nothing here has a capability
+    # beyond what the equivalent Console read already requires — a client
+    # that may not read tasks may not read one task by id either.
+
+    @server.tool(
+        name="get_task",
+        title="Get task",
+        description="One task by id, in the same shape list_tasks returns.",
+    )
+    async def get_task(
+        task_id: Annotated[str, Field(description="Task id, e.g. task_01j5x...")],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.get_task(client, task_id=task_id)
+                return {
+                    "ok": True,
+                    "task": {
+                        "id": found.id,
+                        "title": found.title,
+                        "state": str(found.state),
+                        "priority": str(found.priority),
+                        "due_at": found.due_at,
+                        "created_at": found.created_at,
+                        "needs_attention": found.needs_attention,
+                    },
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_waiting_items",
+        title="List waiting items",
+        description=(
+            "Tasks blocked on someone else, with the waiting context: what "
+            "was last attempted, what is being waited on, and since when. "
+            "Use this rather than filtering list_tasks yourself when the "
+            "user asks what's outstanding."
+        ),
+    )
+    async def list_waiting_items(
+        status: Annotated[
+            list[WaitingStatus] | None,
+            Field(description="Filter to these statuses. Omit for all."),
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=200, description="Maximum results.")] = 50,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                items = await container.core.list_waiting(
+                    client, statuses=status, limit=limit
+                )
+                return {
+                    "ok": True,
+                    "waiting_items": [
+                        {
+                            "id": item.id,
+                            "task_id": item.task_id,
+                            "subject": item.subject,
+                            "waiting_on_entity_id": item.waiting_on_entity_id,
+                            "waiting_since": item.waiting_since,
+                            "expected_by": item.expected_by,
+                            "followup_count": item.followup_count,
+                            "status": str(item.status),
+                        }
+                        for item in items
+                    ],
+                    "total": len(items),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="find_provider",
+        title="Find provider",
+        description=(
+            "Search providers by name — a company or service the user deals "
+            "with. Always returns the list of matches, unlike get_provider, "
+            "which collapses a single exact match to its full detail. Use "
+            "this to browse candidates; use get_provider once you know which "
+            "one you mean."
+        ),
+    )
+    async def find_provider(
+        query: Annotated[
+            str, Field(description="Name or partial name to search for, e.g. 'electric'.")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                graph = await container.core.world_graph(
+                    client, query=query, entity_types=[str(WorldEntityType.PROVIDER)]
+                )
+                return {
+                    "ok": True,
+                    "providers": [node.model_dump(mode="json") for node in graph.nodes],
+                    "total": len(graph.nodes),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_asset",
+        title="Get asset",
+        description=(
+            "Find an asset entity in the user's world — a car, an appliance, "
+            "a piece of property — and its current facts. Accepts a "
+            "canonical id (asset_...) or a name."
+        ),
+    )
+    async def get_asset(
+        name_or_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "Canonical asset id, e.g. asset_land_rover, or a name to "
+                    "search for."
+                )
+            ),
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                if name_or_id.startswith(f"{PREFIX_ASSET}_"):
+                    detail = await container.core.get_entity_detail(
+                        client, entity_id=name_or_id
+                    )
+                    return {"ok": True, "asset": detail.model_dump(mode="json")}
+
+                graph = await container.core.world_graph(
+                    client, query=name_or_id, entity_types=[str(WorldEntityType.ASSET)]
+                )
+                if not graph.nodes:
+                    raise NotFoundError(
+                        f"no asset matching {name_or_id!r}", query=name_or_id
+                    )
+                if len(graph.nodes) == 1:
+                    detail = await container.core.get_entity_detail(
+                        client, entity_id=graph.nodes[0].id
+                    )
+                    return {"ok": True, "asset": detail.model_dump(mode="json")}
+                return {
+                    "ok": True,
+                    "assets": [node.model_dump(mode="json") for node in graph.nodes],
+                    "total": len(graph.nodes),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_assets",
+        title="List assets",
+        description="Every asset in the user's world — cars, appliances, property.",
+    )
+    async def list_assets(
+        limit: Annotated[int, Field(ge=1, le=200, description="Maximum results.")] = 100,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                graph = await container.core.world_graph(
+                    client, entity_types=[str(WorldEntityType.ASSET)], limit=limit
+                )
+                return {
+                    "ok": True,
+                    "assets": [node.model_dump(mode="json") for node in graph.nodes],
+                    "total": len(graph.nodes),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_appointment",
+        title="Get appointment",
+        description="One calendar appointment by id.",
+    )
+    async def get_appointment(
+        appointment_id: Annotated[str, Field(description="Appointment id.")],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.get_appointment(
+                    client, appointment_id=appointment_id
+                )
+                return {"ok": True, "appointment": found.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_appointments",
+        title="List appointments",
+        description=(
+            "Calendar appointments LifeOps has held or booked, optionally "
+            "filtered by status or the task they belong to."
+        ),
+    )
+    async def list_appointments(
+        status: Annotated[
+            str | None, Field(description="Filter to this appointment status. Omit for all.")
+        ] = None,
+        task_id: Annotated[
+            str | None, Field(description="Filter to appointments for this task.")
+        ] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                parsed_status = AppointmentStatus(status) if status else None
+            except ValueError:
+                return _fail(NotFoundError(f"unknown appointment status: {status!r}"))
+            try:
+                found = await container.core.list_appointments(
+                    client, status=parsed_status, task_id=task_id
+                )
+                return {
+                    "ok": True,
+                    "appointments": [a.model_dump(mode="json") for a in found],
+                    "total": len(found),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_bill",
+        title="Get bill",
+        description="One bill by id — what is owed, to whom, and its status.",
+    )
+    async def get_bill(
+        bill_id: Annotated[str, Field(description="Bill id.")],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.get_bill(client, bill_id=bill_id)
+                return {"ok": True, "bill": found.model_dump(mode="json")}
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_bills",
+        title="List bills",
+        description=(
+            "What is owed. Readable by any client that may read tasks — "
+            "knowing a bill is due is not the same as being able to pay it; "
+            "there is no MCP tool that pays one (BUILD_SPEC section 72)."
+        ),
+    )
+    async def list_bills(
+        limit: Annotated[int, Field(ge=1, le=200, description="Maximum results.")] = 100,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                found = await container.core.list_bills(client, limit=limit)
+                return {
+                    "ok": True,
+                    "bills": [b.model_dump(mode="json") for b in found],
+                    "total": len(found),
+                }
             except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 
