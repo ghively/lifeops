@@ -21,8 +21,21 @@ import {
   relationshipsFrom,
   worldApi,
   worldTypeLabel,
+  type EntityFactRecord,
   type WorldRelationshipView,
 } from '@/services/lifeops'
+
+/** Every version of every fact, grouped by key — newest first within each
+ * group, since the API already returns fact_history that way. */
+function groupFactsByKey(facts: EntityFactRecord[]): Map<string, EntityFactRecord[]> {
+  const grouped = new Map<string, EntityFactRecord[]>()
+  for (const fact of facts) {
+    const existing = grouped.get(fact.key)
+    if (existing) existing.push(fact)
+    else grouped.set(fact.key, [fact])
+  }
+  return grouped
+}
 
 function unlinkPayload(
   entityId: string,
@@ -66,8 +79,10 @@ export function EntityInspector({
   onGraphChanged,
 }: {
   entityId: string
-  /** Section 15's temporal/current toggle. Only a Preference entity has
-   * anything to show in 'history' mode — see the note below Current facts. */
+  /** Section 15's temporal/current toggle. A Preference swaps in its own
+   * value history (a distinct API, one record per version of the whole
+   * preference); every other entity type swaps in its per-fact history
+   * (section 16) instead. */
   viewMode?: 'current' | 'history'
   onClose: () => void
   onNavigate: (id: string) => void
@@ -194,6 +209,48 @@ export function EntityInspector({
             </ol>
           )}
         </Section>
+      ) : viewMode === 'history' ? (
+        <Section title="Fact history">
+          {historyQuery.isLoading ? (
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading history…
+            </p>
+          ) : historyQuery.isError ? (
+            <p className="text-xs text-red-600">{errorMessage(historyQuery.error)}</p>
+          ) : (historyQuery.data?.fact_history ?? []).length === 0 ? (
+            <Empty>No recorded changes to this entity's facts yet.</Empty>
+          ) : (
+            <div className="space-y-3">
+              {[...groupFactsByKey(historyQuery.data?.fact_history ?? [])].map(
+                ([key, versions]) => (
+                  <div key={key}>
+                    <p className="text-xs font-medium text-muted-foreground">{key}</p>
+                    <ol className="space-y-1.5">
+                      {versions.map((version) => (
+                        <li key={version.id} className="text-xs">
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            <History className="h-3 w-3" />
+                            since {version.valid_from}
+                            {version.valid_to !== null && ` · until ${version.valid_to}`}
+                          </span>
+                          <span
+                            className={
+                              version.valid_to !== null
+                                ? 'text-sm text-muted-foreground line-through'
+                                : 'text-sm font-medium'
+                            }
+                          >
+                            {version.value}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                ),
+              )}
+            </div>
+          )}
+        </Section>
       ) : (
         <Section title="Current facts">
           {facts.length === 0 ? (
@@ -207,12 +264,6 @@ export function EntityInspector({
                 </div>
               ))}
             </dl>
-          )}
-          {viewMode === 'history' && (
-            <p className="text-[11px] italic text-muted-foreground">
-              This entity type carries only current facts (BUILD_SPEC section
-              40) — there is no per-fact history to show yet.
-            </p>
           )}
         </Section>
       )}
