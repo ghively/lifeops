@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 from lifeops.domain.actions import Action, ActionStatus
 from lifeops.domain.approvals import Approval
 from lifeops.domain.audit import AuditRecord
+from lifeops.domain.bills import Bill, BillStatus, Payee
 from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
@@ -342,6 +343,42 @@ class AuditRepository(Protocol):
     ) -> list[AuditRecord]:
         """Every recorded action against one entity — "why did Hermes do that?"
         asked of a specific thing."""
+        ...
+
+
+@runtime_checkable
+class BillRepository(Protocol):
+    """Persistence for bills and payees (BUILD_SPEC sections 72, 99).
+
+    Payees live here rather than in their own repository because a payee has
+    no meaning apart from what it is owed — and section 99's "bills first"
+    means the two arrive together or not at all.
+    """
+
+    async def get(self, bill_id: str) -> Bill | None: ...
+
+    async def list_bills(
+        self, *, statuses: list[BillStatus] | None = None, limit: int = 100
+    ) -> list[Bill]: ...
+
+    async def list_for_payee(self, payee_id: str) -> list[Bill]: ...
+
+    async def create(self, bill: Bill) -> Bill: ...
+
+    async def update(self, bill: Bill) -> Bill: ...
+
+    async def get_payee(self, payee_id: str) -> Payee | None: ...
+
+    async def list_payees(self) -> list[Payee]: ...
+
+    async def upsert_payee(self, payee: Payee) -> Payee:
+        """Create or update a payee.
+
+        Approval state travels on the record, so re-upserting an approved
+        payee must not silently clear it — section 72 requires a human to have
+        approved a payee before it is paid, and losing that fact would let the
+        next payment through unapproved.
+        """
         ...
 
 

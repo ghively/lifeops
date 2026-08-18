@@ -50,15 +50,28 @@ class TestClientResolution:
 
 
 class TestManifest:
-    def test_no_client_holds_a_capability_its_phase_has_not_reached(self) -> None:
-        # FINANCIAL_PAYMENT belongs to phase 10, which has not landed — a
-        # grant here would be authority with no workflow behind it.
-        # BOOK_APPOINTMENT, SEND_EXTERNAL_MESSAGE, and SHOPPING_CHECKOUT were
-        # in the same position before their phases; phase 7 (section 96)
-        # grants the first two and phase 9 (section 98) grants the third, and
-        # only to Hermes and the Console (below).
+    def test_only_the_console_may_move_money(self) -> None:
+        # Phase 10 (sections 72, 99) grants FINANCIAL_PAYMENT, and grants it
+        # to exactly one client. Section 72 requires that credentials are
+        # never exposed to Hermes and that every payment and every new payee
+        # is approved by a human; the narrowest way to guarantee both is for
+        # the capability to exist only where a human is present.
+        #
+        # Hermes can read what is owed and tell the user a bill is due. It
+        # holds no path from a model's reasoning to money moving.
+        assert CONSOLE.has(Capability.FINANCIAL_PAYMENT)
         for client in all_clients():
+            if client.client_id == CONSOLE.client_id:
+                continue
             assert not client.has(Capability.FINANCIAL_PAYMENT), client.client_id
+
+    def test_the_payment_capability_is_not_a_way_around_approval(self) -> None:
+        # Holding FINANCIAL_PAYMENT lets the Console *prepare* a payment. It
+        # still cannot commit one without an approval, and APPROVE_ACTION is
+        # Console-only precisely so no agent approves its own.
+        for client in all_clients():
+            if client.has(Capability.APPROVE_ACTION):
+                assert client.client_id == CONSOLE.client_id
 
     def test_only_hermes_and_the_console_may_book_or_message_externally(self) -> None:
         # Section 96: Hermes is the client that reads a calendar and drafts an
