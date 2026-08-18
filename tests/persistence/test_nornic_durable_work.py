@@ -179,6 +179,32 @@ def _audit_record(stack: DurableStack, *, suffix: str, **overrides: object) -> A
     return AuditRecord(**defaults)
 
 
+async def _ordered_audit_ids(
+    stack: DurableStack, *, expected: set[str], attempts: int = 10
+) -> list[str]:
+    """Audit ids for this test's target, newest first, once both are visible.
+
+    A write on NornicDB is not always visible to the very next read (CLAUDE.md
+    records the auto-commit-to-transaction case). Alone this test never saw
+    it; inside a full suite run, under load, it read back one record of two
+    and the ordering assertion failed on a list that was merely incomplete.
+
+    Polling for the expected set makes the test assert *ordering*, which is
+    what it is for, rather than incidentally asserting write latency. It still
+    fails if a record never arrives — it gives up after ``attempts``.
+    """
+    import asyncio
+
+    ids: list[str] = []
+    for attempt in range(attempts):
+        listed = await stack.audit.list_for_target(stack.task_id)
+        ids = [record.id for record in listed if record.id in expected]
+        if set(ids) == expected:
+            return ids
+        await asyncio.sleep(0.1 * (attempt + 1))
+    return ids
+
+
 class TestWaitingRepository:
     async def test_create_and_get(self, durable: DurableStack) -> None:
         item = await durable.waiting.create(_waiting_item(durable, suffix="one"))
@@ -596,8 +622,9 @@ class TestAuditRepository:
             _audit_record(durable, suffix="newer",
                           timestamp=_later(TS, seconds=60), target=durable.task_id)
         )
-        listed = await durable.audit.list_for_target(durable.task_id)
-        ids_in_order = [r.id for r in listed if r.id in {older.id, newer.id}]
+        ids_in_order = await _ordered_audit_ids(
+            durable, expected={older.id, newer.id}
+        )
         assert ids_in_order == [newer.id, older.id]
 
     async def test_list_for_target(self, durable: DurableStack) -> None:
