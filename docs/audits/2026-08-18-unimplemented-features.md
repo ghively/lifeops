@@ -364,11 +364,63 @@ is the changelog behind it.
   recovery itself is unfixed, a distributed-systems design question rather
   than a mechanical bug.
 
-**Still open**, matching CLAUDE.md's "Known gaps" exactly and deliberately
-left that way — both need the user's design input, not unilateral building:
-the Voice Bridge (§32, and everything downstream of it: RTX scheduling §31,
-latency instrumentation §33, the §103 acceptance walkthrough, and telephony
-actually holding a conversation) and Hermes self-configuration content
-(§73–76: the `skill`/`cron_job`/`reminder`/`non_critical_prompt`/
-`routine_template` save/apply paths, `propose_self_change` exposure, and the
-eight named Hermes skills — zero instantiated).
+## Follow-up (second session, same branch): what closed next
+
+A design check-in with the user resolved both items the previous section
+left open, on the terms it named: not unilateral building, but the user's
+own input on hardware and priorities.
+
+- **Hermes skills (§75–76).** All eight BUILD_SPEC-named skills now exist as
+  real `SKILL.md` content under `hermes/skills/lifeops/` — personal-core,
+  daily-brief, weekly-review, waiting-for-manager, provider-manager,
+  appointment-manager, calendar-manager, email-triage. Each combines Nous
+  Research Hermes Agent's required frontmatter (`name`/`description`/
+  `version`/`author`/`license`/`metadata.hermes.*` — verified live against
+  Hermes Agent's own current docs, not assumed from training) with
+  BUILD_SPEC section 76's ten mandatory H1 headings as body content, so one
+  file satisfies both systems at once. Every skill is written against the
+  real MCP tool surface and the real capability boundary discovered while
+  drafting it: Hermes never holds `APPROVE_ACTION` or `FINANCIAL_PAYMENT`, a
+  phone call's objective structurally cannot authorize a charge or repair
+  work (confirmed against `build_call_objective`), booking/sending only
+  prepares an action pending approval and independent verification, and a
+  waiting-item follow-up is the next real contact action rather than a
+  separate MCP tool — because no such tool exists (only
+  `create_waiting_item`/`list_waiting_items` are MCP-exposed). This closes
+  the skill-*content* half of section 73–76's gap. The self-configuration
+  *save/apply path* — `skill`/`cron_job`/`reminder`/`non_critical_prompt`/
+  `routine_template` as live targets, `propose_self_change` exposed over
+  MCP/HTTP — is unchanged and still unwired; these skill files are authored
+  content for Hermes to load directly, not something LifeOps Core persists
+  or serves.
+- **Local voice adapters (§28, §30).** `LocalASRProvider` (faster-whisper)
+  and `LocalTTSProvider` (Kokoro) in `core/lifeops/voice/local.py` do real
+  work once their runtime is installed, rather than raising unconditionally
+  regardless of whether one is: real transcription, real synthesis with
+  genuinely incremental streaming (Kokoro's blocking per-segment generator
+  bridged onto the event loop from a worker thread), a real Load/Unload
+  lifecycle, and an in-process cache so `VoiceService` rebuilding a provider
+  fresh on every call doesn't reload multi-gigabyte weights each time.
+  Neither package is installed by default — both live behind
+  `pyproject.toml`'s new `voice-local` extra, with AGENTS.md's dependency
+  justification written there. This sandbox has no GPU and neither package
+  installed, so `health()` still, correctly, reports "not installed" here;
+  `tests/unit/test_voice.py` now also covers the "installed" code paths
+  against `sys.modules`-injected fakes, but neither adapter has run against
+  real hardware. This closes the provider-layer half of what BUILD_SPEC
+  section 32 diagrams; the Voice Bridge orchestrator itself was found, on
+  closer reading of that same diagram, to sit in the Hermes runtime rather
+  than LifeOps Core — see below.
+
+**Still open**, matching CLAUDE.md's "Known gaps": the Voice Bridge
+orchestrator itself (§32's diagram places it between audio and "the same
+Hermes runtime," not LifeOps Core — building duplex-audio orchestration here
+would cross the "no second agent/agent runtime" boundary, so this stays
+Hermes-side and out of this repository's scope) and everything downstream of
+it that only the Bridge would drive: RTX scheduling (§31), latency
+instrumentation (§33), the §103 acceptance walkthrough, and telephony
+actually holding a conversation. Also still open: Hermes self-configuration's
+save/apply *mechanism* (§73–76, as distinguished above — the skill *content*
+gap is closed) and Qwen3-TTS/Chatterbox Turbo adapters (§30's other two TTS
+candidates — the user asked to try all of them eventually; Kokoro was first,
+not exclusive).

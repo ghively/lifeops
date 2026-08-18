@@ -251,15 +251,39 @@ stub (see "Money moves only where a human is present" above).
   every other entity type stays current-only either way.
 - **Voice.** The Voice Bridge does not exist as a runtime path — no duplex
   audio streaming code anywhere, not even scaffolding, which is a stronger
-  gap than "no websocket scaffolding, no codec" suggests. The RTX
-  resource-priority scheduler (section 31) and the latency instrumentation
-  (section 33) are pure spec text with no corresponding code. The local
-  ASR/TTS adapters raise unconditionally even when the underlying runtime
-  is installed — a step short of section 88's "fake behind it" bar, unlike
-  ElevenLabs's fake, which behaves. This is the one gap left that was
-  explicitly deferred to a design check-in rather than closed, since it
-  needs the user's input on hardware/latency tradeoffs, not unilateral
-  building.
+  gap than "no websocket scaffolding, no codec" suggests. Per BUILD_SPEC
+  section 32's own diagram, the Voice Bridge sits between audio and "the
+  same Hermes runtime," not LifeOps Core — combined with this file's rule
+  against building a second agent or agent runtime, that orchestration
+  likely belongs in Hermes itself, not this repository; a design check-in
+  with the user surfaced this rather than building it unilaterally in the
+  wrong place. The RTX resource-priority scheduler (section 31) and the
+  latency instrumentation (section 33) are pure spec text with no
+  corresponding code, and stay that way until the Voice Bridge that would
+  use them exists somewhere.
+
+  What *is* LifeOps Core's job — the swappable ASR/TTS provider layer
+  (section 28) — is no longer a stub. `LocalASRProvider` (faster-whisper)
+  and `LocalTTSProvider` (Kokoro, section 30's fallback/reference candidate)
+  in `core/lifeops/voice/local.py` do real work once their runtime is
+  installed: real transcription, real synthesis (including genuinely
+  incremental streaming for TTS, bridging Kokoro's blocking per-segment
+  generator onto the event loop from a worker thread), a real Load/Unload
+  lifecycle, and an in-process model/pipeline cache so `VoiceService`
+  rebuilding a provider fresh on every call doesn't reload multi-gigabyte
+  weights each time. Neither package is installed by default — both live in
+  `pyproject.toml`'s `voice-local` extra, with AGENTS.md's dependency
+  justification written there, since this remains a GPU-class footprint most
+  deployments never touch. This sandbox has no GPU and neither package
+  installed, so `health()` correctly reports "not installed" here exactly as
+  before; `tests/unit/test_voice.py` covers that real, honest path directly
+  and covers the "installed" code paths against `sys.modules`-injected
+  fakes standing in for the real libraries, the same way `ElevenLabsTTSProvider`
+  is tested against `httpx.MockTransport` instead of the live API — neither
+  adapter has been run against real hardware. Qwen3-TTS and Chatterbox Turbo
+  (section 30's other TTS candidates) still have no adapter; the user asked
+  to try all the candidates eventually, and Kokoro was the first, not the
+  only intended one.
 - **MCP surface.** Closed except for one deliberate absence: all 8 spec'd
   resources exist (`lifeops://me`, `today`, `waiting`, `household`,
   `approvals`, `entity/{id}`, `task/{id}`, `provider/{id}`), and every
