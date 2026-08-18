@@ -6,8 +6,8 @@
  * Events and actions/historical facts are still missing — the footer says
  * so rather than implying everything was searched.
  *
- * Tasks link to the Tasks screen. The rest render as plain rows: providers,
- * assets, appointments, memory, documents, knowledge, and bills have no
+ * Tasks, documents, and knowledge link to their own screens. The rest render
+ * as plain rows: providers, assets, appointments, memory, and bills have no
  * dedicated Console screen to link to yet.
  */
 
@@ -251,9 +251,10 @@ export function SearchPage() {
               </h2>
               <div className="space-y-2">
                 {results.documents.map((document) => (
-                  <div
+                  <Link
                     key={document.id}
-                    className="rounded-lg border border-border/60 px-4 py-3"
+                    to="/files"
+                    className="block rounded-lg border border-border/60 px-4 py-3 transition-colors hover:bg-muted/50"
                   >
                     <p className="font-medium">{document.title}</p>
                     {document.summary && (
@@ -261,7 +262,7 @@ export function SearchPage() {
                         {document.summary}
                       </p>
                     )}
-                  </div>
+                  </Link>
                 ))}
               </div>
             </section>
@@ -274,9 +275,10 @@ export function SearchPage() {
               </h2>
               <div className="space-y-2">
                 {results.knowledge.map((item) => (
-                  <div
+                  <Link
                     key={item.id}
-                    className="rounded-lg border border-border/60 px-4 py-3"
+                    to="/knowledge"
+                    className="block rounded-lg border border-border/60 px-4 py-3 transition-colors hover:bg-muted/50"
                   >
                     <p className="font-medium">{item.title}</p>
                     {item.content && (
@@ -284,7 +286,7 @@ export function SearchPage() {
                         {item.content}
                       </p>
                     )}
-                  </div>
+                  </Link>
                 ))}
               </div>
             </section>
