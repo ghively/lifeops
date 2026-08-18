@@ -182,6 +182,14 @@ defeated section 72's gate. `coalesce` in a WHERE clause is fine — every other
 use in `repositories/nornic/` is a read and evaluates correctly. Do the merge
 in Python instead.
 
+**Write visibility is not immediate under load.** The quirk below is not only
+a transaction-boundary problem: in a full suite run, a read issued straight
+after two appends returned one of them. A test that asserts *ordering* should
+poll until the records it expects are present, so it is not incidentally
+asserting write latency — see `_ordered_audit_ids` in
+`tests/persistence/test_nornic_durable_work.py`. Anything that must observe
+its own write immediately needs the same treatment.
+
 **A node written by auto-commit `write()` may not be visible to a `MATCH`
 inside an immediately following `write_many()` transaction.** Transaction-to-
 transaction is fine; auto-commit-to-transaction races. Found in Phase 4. Where
@@ -204,14 +212,18 @@ regression here — the fakes will stay green.
 
 Recorded in [SECURITY.md](SECURITY.md), not hidden:
 
-- No durable audit log yet. Phase 4. Until then `get_entity_history` reports
-  only what it can defend and says so in its `covers` field.
 - World entity facts are current-only: there is no per-fact supersession
-  chain yet, unlike preferences and memories.
+  chain, unlike preferences and memories. `get_entity_history` therefore
+  reports the memories referencing an entity and says so in its `covers`
+  field rather than implying more. (The durable audit log itself exists —
+  Phase 4, section 62 — and answers "which client changed this?".)
 - The World screen shows the *current* view. Section 15 also lists a
   temporal/current toggle; that is not built.
-- No provider adapters. `test` and `discover` report honestly that they are not
-  implemented rather than faking success.
+- **No provider has been verified against a real account.** Every third-party
+  adapter — ElevenLabs, local ASR/TTS, calendar, email, telephony, browser,
+  payment — ships built and disabled with a fake behind it, per BUILD_SPEC
+  section 88. Enabling each in the Console is where real integration bugs will
+  surface, and none of that has happened yet.
 - Hermes itself has not been attached on this machine — it is not installed
   here. See [HERMES_INTEGRATION.md](HERMES_INTEGRATION.md).
 
