@@ -17,7 +17,9 @@ import { MemoryPage } from '../MemoryPage'
 import {
   LifeOpsError,
   memoryApi,
+  preferencesApi,
   type MemoryRecord,
+  type Preference,
 } from '@/services/lifeops'
 
 vi.mock('@/services/lifeops', async () => {
@@ -34,6 +36,13 @@ vi.mock('@/services/lifeops', async () => {
       remember: vi.fn(),
       invalidate: vi.fn(),
       correct: vi.fn(),
+      promote: vi.fn(),
+    },
+    preferencesApi: {
+      list: vi.fn(),
+      history: vi.fn(),
+      save: vi.fn(),
+      invalidate: vi.fn(),
     },
   }
 })
@@ -74,6 +83,29 @@ function renderPage() {
 }
 
 const mockedMemory = vi.mocked(memoryApi)
+const mockedPreferences = vi.mocked(preferencesApi)
+
+function makePreference(overrides: Partial<Preference> = {}): Preference {
+  return {
+    id: 'pref_01',
+    subject_id: 'person_gene',
+    key: 'coffee.roast',
+    value: 'light roast',
+    source_type: 'user_explicit',
+    source_id: null,
+    confidence: 1,
+    importance: 0.5,
+    observed_at: '2026-08-16T10:00:00Z',
+    created_at: '2026-08-16T10:00:00Z',
+    valid_from: '2026-08-16T10:00:00Z',
+    valid_to: null,
+    supersedes: null,
+    created_by_client: 'hermes-personal',
+    notes: null,
+    is_current: true,
+    ...overrides,
+  }
+}
 
 beforeEach(() => {
   mockedMemory.list.mockResolvedValue({
@@ -85,6 +117,11 @@ beforeEach(() => {
     memory_id: 'mem_01abc',
     history: [makeMemory()],
     total: 1,
+  })
+  mockedPreferences.list.mockResolvedValue({
+    preferences: [],
+    subject_id: 'person_gene',
+    total: 0,
   })
 })
 
@@ -98,8 +135,7 @@ describe('Memory screen', () => {
     expect(
       await screen.findByText('Favourite coffee is a flat white'),
     ).toBeInTheDocument()
-    // The label appears on both the filter chip and the card's provenance row.
-    expect(screen.getAllByText('Fact').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('Fact')).toBeInTheDocument()
     expect(screen.getAllByText('Conversation').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText('confidence 0.90')).toBeInTheDocument()
   })
@@ -108,7 +144,7 @@ describe('Memory screen', () => {
     renderPage()
     await screen.findByText('Favourite coffee is a flat white')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Episodic' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Episodic memories' }))
 
     await waitFor(() =>
       expect(mockedMemory.list).toHaveBeenCalledWith(
@@ -243,7 +279,9 @@ describe('Memory screen', () => {
     await userEvent.click(
       await screen.findByText('Favourite coffee is a flat white'),
     )
-    await userEvent.click(screen.getByRole('button', { name: /invalidate/i }))
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Invalidate', exact: true }),
+    )
 
     // The submit stays disabled until a reason exists — a reasonless
     // invalidation would destroy the audit trail (section 45).
@@ -281,5 +319,138 @@ describe('Memory screen', () => {
     mockedMemory.list.mockRejectedValue(new Error('Network Error'))
     renderPage()
     expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument()
+  })
+
+  it('only offers promotion for a preference_candidate', async () => {
+    renderPage()
+    await userEvent.click(
+      await screen.findByText('Favourite coffee is a flat white'),
+    )
+    expect(
+      screen.queryByRole('button', { name: /promote to preference/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('promotes a candidate to a real preference with a human-supplied key', async () => {
+    const candidate = makeMemory({
+      id: 'mem_05cand',
+      type: 'preference_candidate',
+      content: 'nothing before ten',
+    })
+    mockedMemory.list.mockResolvedValue({ memories: [candidate], total: 1 })
+    mockedMemory.history.mockResolvedValue({
+      memory_id: 'mem_05cand',
+      history: [candidate],
+      total: 1,
+    })
+    mockedMemory.promote.mockResolvedValue({
+      id: 'pref_01',
+      key: 'scheduling.earliest_appointment_time',
+      value: 'nothing before ten',
+      subject_id: 'person_gene',
+      source_type: 'user_explicit',
+      confidence: 1,
+      importance: 0.5,
+      valid_from: '2026-08-16T10:00:00Z',
+      created_at: '2026-08-16T10:00:00Z',
+    } as never)
+    mockedMemory.get.mockResolvedValue(
+      makeMemory({
+        ...candidate,
+        valid_to: '2026-08-16T11:00:00Z',
+        invalidation_reason: 'promoted to preference scheduling.earliest_appointment_time',
+      }),
+    )
+
+    renderPage()
+    await userEvent.click(await screen.findByText('nothing before ten'))
+    await userEvent.click(
+      screen.getByRole('button', { name: /promote to preference/i }),
+    )
+
+    const submit = screen.getByRole('button', { name: 'Promote', exact: true })
+    expect(submit).toBeDisabled()
+
+    await userEvent.type(
+      screen.getByLabelText('Preference key'),
+      'scheduling.earliest_appointment_time',
+    )
+    await userEvent.click(submit)
+
+    await waitFor(() =>
+      expect(mockedMemory.promote).toHaveBeenCalledWith(
+        'mem_05cand',
+        'scheduling.earliest_appointment_time',
+        'nothing before ten',
+      ),
+    )
+  })
+})
+
+describe('the section 17 named views', () => {
+  it('switches to real preferences, not memories, in the Preferences view', async () => {
+    mockedPreferences.list.mockResolvedValue({
+      preferences: [makePreference()],
+      subject_id: 'person_gene',
+      total: 1,
+    })
+    renderPage()
+    await screen.findByText('Favourite coffee is a flat white')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Preferences' }))
+
+    expect(await screen.findByText('coffee.roast')).toBeInTheDocument()
+    expect(screen.getByText('light roast')).toBeInTheDocument()
+    expect(
+      screen.queryByText('Favourite coffee is a flat white'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('corrects a preference by superseding it, not editing in place', async () => {
+    mockedPreferences.list.mockResolvedValue({
+      preferences: [makePreference()],
+      subject_id: 'person_gene',
+      total: 1,
+    })
+    mockedPreferences.save.mockResolvedValue(
+      makePreference({ id: 'pref_02', value: 'dark roast' }),
+    )
+    renderPage()
+    await userEvent.click(screen.getByRole('button', { name: 'Preferences' }))
+    await userEvent.click(await screen.findByText('coffee.roast'))
+    await userEvent.click(screen.getByRole('button', { name: /correct.*supersede/i }))
+
+    const input = screen.getByLabelText('Corrected preference value')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'dark roast')
+    await userEvent.click(screen.getByRole('button', { name: 'Save', exact: true }))
+
+    await waitFor(() =>
+      expect(mockedPreferences.save).toHaveBeenCalledWith({
+        key: 'coffee.roast',
+        value: 'dark roast',
+      }),
+    )
+  })
+
+  it('asks the server for closed-only records in the Invalidated view', async () => {
+    renderPage()
+    await screen.findByText('Favourite coffee is a flat white')
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Invalidated/superseded history' }),
+    )
+
+    await waitFor(() =>
+      expect(mockedMemory.list).toHaveBeenCalledWith(
+        expect.objectContaining({ invalidated_only: true }),
+      ),
+    )
+  })
+
+  it('disables search while the Preferences view is active', async () => {
+    renderPage()
+    await userEvent.click(screen.getByRole('button', { name: 'Preferences' }))
+    expect(screen.getByLabelText('Search memories')).toBeDisabled()
   })
 })

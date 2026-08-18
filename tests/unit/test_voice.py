@@ -13,7 +13,11 @@ tests below assert on that honest report directly.
 
 from __future__ import annotations
 
+import importlib.machinery
 import json
+import sys
+import types
+from typing import Any
 
 import httpx
 import pytest
@@ -433,6 +437,237 @@ class TestLocalTTSProvider:
         provider = LocalTTSProvider()
         assert await provider.list_voices() == []
         assert await provider.list_models() == []
+
+
+def _fake_module(name: str) -> types.ModuleType:
+    """A ``sys.modules``-ready fake with a real ``__spec__`` set — without
+    one, ``importlib.util.find_spec`` raises ``ValueError`` on a bare
+    ``types.ModuleType`` and ``detect_runtime`` would (correctly, but not
+    for the reason these tests want) report it as not installed."""
+    module = types.ModuleType(name)
+    module.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
+    return module
+
+
+def _install_fake_faster_whisper(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, str | None]]:
+    """Fakes the faster_whisper package via sys.modules so
+    LocalASRProvider's real code path — not just its "not installed"
+    honesty check — gets exercised without the actual multi-gigabyte
+    package or a GPU. Returns the (audio, language) args each fake
+    ``transcribe`` call was made with."""
+    calls: list[tuple[Any, str | None]] = []
+
+    class _FakeSegment:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _FakeInfo:
+        def __init__(self, language: str) -> None:
+            self.language = language
+
+    class _FakeWhisperModel:
+        def __init__(self, model_size_or_path: str, device: str = "auto", **_: Any) -> None:
+            self.model_size_or_path = model_size_or_path
+            self.device = device
+
+        def transcribe(self, audio: Any, language: str | None = None, **_: Any) -> Any:
+            calls.append((audio, language))
+            return [_FakeSegment("hello "), _FakeSegment("world")], _FakeInfo(language or "en")
+
+    fake_module = _fake_module("faster_whisper")
+    fake_module.WhisperModel = _FakeWhisperModel  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+
+    import lifeops.voice.local as local_module
+
+    local_module._ASR_MODEL_CACHE.clear()
+    return calls
+
+
+class _FakeKokoroPipeline:
+    """Records each call's (text, voice, speed) and yields two short,
+    deterministic "audio" chunks (plain lists, not real numpy arrays — the
+    fake numpy/soundfile modules below only need to handle what this
+    produces)."""
+
+    instances: list[_FakeKokoroPipeline] = []
+
+    def __init__(self, lang_code: str, device: str | None = None, **_: Any) -> None:
+        self.lang_code = lang_code
+        self.device = device
+        self.calls: list[tuple[str, str | None, float]] = []
+        _FakeKokoroPipeline.instances.append(self)
+
+    def __call__(self, text: str, voice: str | None = None, speed: float = 1.0) -> Any:
+        self.calls.append((text, voice, speed))
+        yield ("gs1", "ps1", [0.0, 0.0, 0.0, 0.0])
+        yield ("gs2", "ps2", [1.0, 1.0, 1.0, 1.0])
+
+
+def _install_fake_kokoro(monkeypatch: pytest.MonkeyPatch) -> list[_FakeKokoroPipeline]:
+    """Fakes kokoro (``KPipeline``) plus its numpy/soundfile dependencies via
+    sys.modules, for the same reason as ``_install_fake_faster_whisper``.
+    Returns the list of constructed fake pipelines so a test can inspect
+    what they were called with."""
+    _FakeKokoroPipeline.instances = []
+
+    fake_kokoro = _fake_module("kokoro")
+    fake_kokoro.KPipeline = _FakeKokoroPipeline  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "kokoro", fake_kokoro)
+
+    fake_numpy = _fake_module("numpy")
+    fake_numpy.concatenate = lambda arrays: [v for arr in arrays for v in arr]  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "numpy", fake_numpy)
+
+    def _fake_write(buffer: Any, data: Any, samplerate: int, format: str = "WAV") -> None:
+        buffer.write(f"WAV:{len(data)}:{samplerate}".encode())
+
+    fake_soundfile = _fake_module("soundfile")
+    fake_soundfile.write = _fake_write  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "soundfile", fake_soundfile)
+
+    import lifeops.voice.local as local_module
+
+    local_module._TTS_PIPELINE_CACHE.clear()
+    return _FakeKokoroPipeline.instances
+
+
+class TestLocalASRProviderWithRuntimeInstalled:
+    """The other TestLocalASRProvider class covers this sandbox's real,
+    honest "faster-whisper is not installed" path. These simulate it being
+    installed, so the real transcribe/load/health code exists and is
+    actually exercised, not just written and trusted."""
+
+    async def test_health_reports_ready_once_a_model_is_selected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_faster_whisper(monkeypatch)
+        healthy, message = await LocalASRProvider(model="large-v3-turbo").health()
+        assert healthy is True
+        assert "large-v3-turbo" in message
+
+    async def test_health_still_flags_a_missing_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_faster_whisper(monkeypatch)
+        healthy, message = await LocalASRProvider().health()
+        assert healthy is False
+        assert "no model is selected" in message
+
+    async def test_transcribe_calls_the_model_and_maps_segments_to_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _install_fake_faster_whisper(monkeypatch)
+        provider = LocalASRProvider(model="large-v3-turbo", language="en")
+        result = await provider.transcribe(b"raw-audio-bytes")
+        assert result.text == "hello world"
+        assert result.language == "en"
+        assert calls[0][1] == "en"
+
+    async def test_load_populates_the_cache_and_unload_clears_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_faster_whisper(monkeypatch)
+        import lifeops.voice.local as local_module
+
+        provider = LocalASRProvider(model="large-v3-turbo", device="cuda:0")
+        loaded, _ = await provider.load()
+        assert loaded is True
+        assert provider.is_loaded is True
+        assert ("large-v3-turbo", "cuda:0") in local_module._ASR_MODEL_CACHE
+
+        unloaded, _ = await provider.unload()
+        assert unloaded is True
+        assert provider.is_loaded is False
+        assert ("large-v3-turbo", "cuda:0") not in local_module._ASR_MODEL_CACHE
+
+    async def test_repeated_construction_reuses_the_cached_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_faster_whisper(monkeypatch)
+        import lifeops.voice.local as local_module
+
+        await LocalASRProvider(model="large-v3-turbo", device="cuda:0").transcribe(b"a")
+        cached = local_module._ASR_MODEL_CACHE[("large-v3-turbo", "cuda:0")]
+        await LocalASRProvider(model="large-v3-turbo", device="cuda:0").transcribe(b"b")
+        assert local_module._ASR_MODEL_CACHE[("large-v3-turbo", "cuda:0")] is cached
+
+    async def test_stream_collects_the_whole_utterance_into_one_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_faster_whisper(monkeypatch)
+        provider = LocalASRProvider(model="large-v3-turbo")
+
+        async def chunks() -> Any:
+            yield b"chunk-one-"
+            yield b"chunk-two"
+
+        results = [r async for r in provider.stream(chunks())]
+        assert len(results) == 1
+        assert results[0].text == "hello world"
+
+
+class TestLocalTTSProviderWithRuntimeInstalled:
+    """Kokoro-installed counterpart to TestLocalTTSProvider, same rationale
+    as TestLocalASRProviderWithRuntimeInstalled above."""
+
+    async def test_health_reports_ready_once_a_model_is_selected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_kokoro(monkeypatch)
+        healthy, _ = await LocalTTSProvider(model="kokoro").health()
+        assert healthy is True
+
+    async def test_synthesize_concatenates_segments_into_one_wav(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_kokoro(monkeypatch)
+        provider = LocalTTSProvider(model="kokoro", voice="af_heart")
+        audio = await provider.synthesize("hello there", SynthesisOptions())
+        assert audio == b"WAV:8:24000"  # two 4-sample fake chunks, concatenated
+
+    async def test_synthesize_prefers_the_per_call_voice_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        instances = _install_fake_kokoro(monkeypatch)
+        provider = LocalTTSProvider(model="kokoro", voice="af_heart")
+        await provider.synthesize("hi", SynthesisOptions(voice_id="am_michael"))
+        assert instances[0].calls[-1] == ("hi", "am_michael", 1.0)
+
+    async def test_stream_yields_one_chunk_per_kokoro_segment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_kokoro(monkeypatch)
+        provider = LocalTTSProvider(model="kokoro")
+        chunks = [c async for c in provider.stream("hello there", SynthesisOptions())]
+        assert chunks == [b"WAV:4:24000", b"WAV:4:24000"]
+
+    async def test_load_populates_the_cache_and_unload_clears_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_kokoro(monkeypatch)
+        import lifeops.voice.local as local_module
+
+        provider = LocalTTSProvider(model="kokoro", device="cuda:0")
+        loaded, _ = await provider.load()
+        assert loaded is True
+        assert ("a", "cuda") in local_module._TTS_PIPELINE_CACHE
+
+        unloaded, _ = await provider.unload()
+        assert unloaded is True
+        assert ("a", "cuda") not in local_module._TTS_PIPELINE_CACHE
+
+    async def test_list_voices_and_models_report_real_entries_once_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_kokoro(monkeypatch)
+        provider = LocalTTSProvider(model="kokoro")
+        voices = await provider.list_voices()
+        models = await provider.list_models()
+        assert any(v.id == "af_heart" for v in voices)
+        assert len(models) == 1
+        assert models[0].id == "kokoro"
+        assert models[0].supports_streaming is True
 
 
 class TestVoiceServiceModeSelection:

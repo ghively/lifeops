@@ -143,12 +143,49 @@ describe('Needs Attention', () => {
     renderPage()
 
     expect(
-      await screen.findByRole('heading', { name: 'Waiting on your approval' }),
+      await screen.findByRole('heading', { name: 'Approval' }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Blocked' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Failed' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Conflict' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Failed external action' }),
+    ).toBeInTheDocument()
     expect(screen.getByText('Resolve conflict')).toBeInTheDocument()
     expect(screen.getByText('Retry payment')).toBeInTheDocument()
+  })
+
+  it('recognises MFA, security, and price/term keywords over the default state grouping', async () => {
+    mockedTasks.list.mockResolvedValue({
+      tasks: [
+        makeTask({
+          id: 'task_mfa',
+          title: 'Approve booking',
+          state: 'BLOCKED',
+          current_action: 'waiting for a one-time code from ABC Electric',
+        }),
+        makeTask({
+          id: 'task_security',
+          title: 'Suspicious login attempt flagged',
+          state: 'NEEDS_APPROVAL',
+        }),
+        makeTask({
+          id: 'task_price',
+          title: 'Quote increased since last check',
+          state: 'NEEDS_APPROVAL',
+        }),
+      ],
+      total: 3,
+      by_state: { BLOCKED: 1, NEEDS_APPROVAL: 2 },
+    })
+    renderPage()
+
+    expect(await screen.findByRole('heading', { name: 'MFA' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Security warning' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Price or term change' }),
+    ).toBeInTheDocument()
+    // These three would otherwise all land under one state-based heading —
+    // the point of categorize() is that they don't.
+    expect(screen.queryByRole('heading', { name: 'Approval' })).not.toBeInTheDocument()
   })
 
   it('says what the task was doing when it stopped', async () => {

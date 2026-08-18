@@ -211,31 +211,171 @@ regression here — the fakes will stay green.
 
 ## Known gaps
 
-Recorded in [SECURITY.md](SECURITY.md), not hidden. The 2026-08-18 full
-audit ([docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md))
-holds the complete findings list. The design-decision bugs it originally
-recorded (payee approval split-brain, expired-approval deadlock, shopping
-SUBMITTING wedge, verify-after-hold-expiry, unenforced config capability,
-the Console's missing execute/verify surface, `request_code_change`
-unexposed) were all fixed in the follow-up pass on the same branch; what
-remains open are the spec gaps — Console placeholder screens (Calendar,
-Knowledge, Files, Hermes), the Phase-0 Today view, the Voice Bridge,
-Hermes skills, and universal search breadth. Highlights:
+Recorded in [SECURITY.md](SECURITY.md), not hidden. Two audits hold the
+original findings: [docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md)
+(correctness bugs and spec-fidelity debt in code that exists — all fixed on
+that branch) and [docs/audits/2026-08-18-unimplemented-features.md](docs/audits/2026-08-18-unimplemented-features.md)
+(BUILD_SPEC prose with no corresponding code at all, verified section by
+section against the code rather than against this file). A follow-up pass
+closed most of that second audit's findings — the audit doc's own
+changelog records what changed and when; what follows here is the current,
+much shorter list of what is still genuinely missing.
 
-- World entity facts are current-only: there is no per-fact supersession
-  chain, unlike preferences and memories. `get_entity_history` therefore
-  reports the memories referencing an entity and says so in its `covers`
-  field rather than implying more. (The durable audit log itself exists —
-  Phase 4, section 62 — and answers "which client changed this?".)
-- The World screen shows the *current* view. Section 15 also lists a
-  temporal/current toggle; that is not built.
-- **No provider has been verified against a real account.** Every third-party
-  adapter — ElevenLabs, local ASR/TTS, calendar, email, telephony, browser,
-  payment — ships built and disabled with a fake behind it, per BUILD_SPEC
-  section 88. Enabling each in the Console is where real integration bugs will
-  surface, and none of that has happened yet.
+**Every disabled provider now has a working adapter behind it.** Calendar
+(`calendar/caldav.py`), email (`email/imap_smtp.py`), browser
+(`browser/real.py`, Playwright/Chromium), and telephony
+(`telephony/twilio.py`, Twilio's REST API) are all real, protocol-correct
+adapters, disabled per BUILD_SPEC section 88 until credentials exist (browser
+needs none — see its module docstring). Telephony's `dial()` now resolves a
+real destination number from the target provider's own `phone` fact
+(`_phone_number_for_provider` in `core.py`) before POSTing to Twilio's Calls
+resource with inline TwiML — the call still cannot hold an actual
+conversation without the Voice Bridge (below), but nothing stops it from
+being placed. The browser adapter can launch Chromium and manage isolated
+per-context profiles for real, and now has a retailer chosen for its one
+reviewed site adapter — Instacart, by explicit user decision, deliberately
+narrower than letting an LLM drive checkout live against raw page content
+(the prompt-injection risk that shape would carry) — but `_SITE_ADAPTERS` is
+still empty: this sandbox's Chromium cannot reach any live site at all
+through the network proxy (`net::ERR_CONNECTION_RESET` against
+instacart.com, google.com, and example.com alike, confirmed directly, while
+plain `curl` to the same hosts works), so there is no way to inspect
+Instacart's real rendered DOM or verify any automation logic here. Writing
+selectors blind against that would be exactly the untested, speculative
+scraping this module's own docstring warns against and section 105
+forbids — the user agreed to hold this until it runs somewhere with live
+browser network access, rather than shipping fabricated selectors dressed up
+as real. No payment-provider adapter exists at all — deliberate, not a stub
+(see "Money moves only where a human is present" above).
+
+- **Console.** Every section 10 nav entry now has a real screen — Calendar,
+  Hermes, Files, and Knowledge replaced their `ComingInPhasePage` stubs, and
+  Today shows approvals, waiting items, and calendar appointments alongside
+  tasks. Universal search now covers all 12 spec'd categories (people,
+  preferences, tasks, providers, assets, appointments, memory, documents,
+  knowledge, bills, events, and actions/historical facts — the last two
+  added directly against `AuditRepository`, guarded the same way the bills
+  and audit blocks already were: `search()` skips them cleanly when no
+  audit repository is configured, rather than raising). The World screen's
+  temporal/current toggle now applies to every entity type, not only
+  preferences — see the next bullet.
+- **Voice.** The Voice Bridge does not exist as a runtime path — no duplex
+  audio streaming code anywhere, not even scaffolding, which is a stronger
+  gap than "no websocket scaffolding, no codec" suggests. Per BUILD_SPEC
+  section 32's own diagram, the Voice Bridge sits between audio and "the
+  same Hermes runtime," not LifeOps Core — combined with this file's rule
+  against building a second agent or agent runtime, that orchestration
+  likely belongs in Hermes itself, not this repository; a design check-in
+  with the user surfaced this rather than building it unilaterally in the
+  wrong place. The RTX resource-priority scheduler (section 31) and the
+  latency instrumentation (section 33) are pure spec text with no
+  corresponding code, and stay that way until the Voice Bridge that would
+  use them exists somewhere.
+
+  What *is* LifeOps Core's job — the swappable ASR/TTS provider layer
+  (section 28) — is no longer a stub. `LocalASRProvider` (faster-whisper)
+  and `LocalTTSProvider` (Kokoro, section 30's fallback/reference candidate)
+  in `core/lifeops/voice/local.py` do real work once their runtime is
+  installed: real transcription, real synthesis (including genuinely
+  incremental streaming for TTS, bridging Kokoro's blocking per-segment
+  generator onto the event loop from a worker thread), a real Load/Unload
+  lifecycle, and an in-process model/pipeline cache so `VoiceService`
+  rebuilding a provider fresh on every call doesn't reload multi-gigabyte
+  weights each time. Neither package is installed by default — both live in
+  `pyproject.toml`'s `voice-local` extra, with AGENTS.md's dependency
+  justification written there, since this remains a GPU-class footprint most
+  deployments never touch. This sandbox has no GPU and neither package
+  installed, so `health()` correctly reports "not installed" here exactly as
+  before; `tests/unit/test_voice.py` covers that real, honest path directly
+  and covers the "installed" code paths against `sys.modules`-injected
+  fakes standing in for the real libraries, the same way `ElevenLabsTTSProvider`
+  is tested against `httpx.MockTransport` instead of the live API — neither
+  adapter has been run against real hardware. Qwen3-TTS and Chatterbox Turbo
+  (section 30's other TTS candidates) still have no adapter; the user asked
+  to try all the candidates eventually, and Kokoro was the first, not the
+  only intended one.
+- **MCP surface.** Closed except for one deliberate absence: all 8 spec'd
+  resources exist (`lifeops://me`, `today`, `waiting`, `household`,
+  `approvals`, `entity/{id}`, `task/{id}`, `provider/{id}`), and every
+  previously-HTTP-only read (`list_waiting_items`, `find_provider`,
+  `get_task`, `list_appointments`, `get_bill`, `search_knowledge`) now has
+  an MCP tool. `commit_payment` still has no MCP tool — that one is
+  intentional, not a gap (see "Money moves only where a human is present").
+  The `Knowledge` world entity type (section 36) now exists, backing
+  `search_knowledge` and the Knowledge screen; `WorkflowTemplate` also
+  exists (`workflow-templates` HTTP routes, the Routines screen) — neither
+  is a world entity type in the section 36 sense, so this bullet previously
+  conflated two different gaps that are both closed now regardless.
+- **Memory.** Promotion (section 47) is implemented: `promote_memory` turns
+  a confirmed `PREFERENCE_CANDIDATE` into a real preference
+  (Console/HTTP-only, the same boundary `create_document` draws). The
+  original "trust-hierarchy enforcement checks preference supersession
+  only" claim was a false negative, not a real gap — `remember()`
+  deliberately has no supersession check (a fresh memory is independent
+  evidence, not a competing claim, per section 46's own "external content
+  creates evidence, it does not create user authority"); `correct_memory`
+  is where a competing claim is actually asserted, and it was already
+  trust-checked via `may_supersede` — `tests/unit/test_memory.py`'s
+  `TestMemoryTrustHierarchy` now names this explicitly so a future grep
+  finds it rather than concluding otherwise again.
+- **Hermes self-configuration** (sections 73-76) is wired now, without
+  inventing a second scheduler (section 55): `routine_template`, `cron_job`,
+  and `reminder` all route through the existing `WorkflowTemplate` mechanism
+  (`save_workflow_template`/`list_workflow_templates`/`due_routines`/
+  `delete_workflow_template`, exposed over both MCP and HTTP), `skill` and
+  `non_critical_prompt` go through `propose_self_change` as a pure gate — it
+  validates and files a request, it does not write skill content itself —
+  and `preference` uses the save path that already existed. All of this is
+  now reachable over MCP, closing the one gap the earlier audit found (the
+  generic entry point existed but wasn't exposed). Nine Hermes skills are now
+  instantiated in `hermes/skills/lifeops/` (personal-core, daily-brief,
+  weekly-review, waiting-for-manager, provider-manager, appointment-manager,
+  calendar-manager, email-triage, shopping-manager) — the template is no
+  longer unused. The six "Later"-tier skills BUILD_SPEC itself defers are
+  still not written, deliberately, matching the spec's own tier.
+- **Chaos tests** (section 86) now cover all 16 spec'd failure scenarios —
+  see `tests/chaos/` (13 scenarios, fakes-only, in `make test-fast`) and
+  `tests/e2e/test_chaos_duplicate_mcp_request.py` (scenario 6, needs a live
+  NornicDB and a real MCP subprocess). Three of the sixteen (DeepSeek
+  timeout, local ASR crash, local TTS crash) have no adapter or runtime to
+  fail yet, so those are documented, honest skips rather than fabricated
+  tests — `tests/chaos/test_documented_gaps.py` explains each. One test run
+  found a genuine, previously-unknown gap rather than just filling in
+  coverage: a repository write failure between committing an action and
+  recording its result was not caught anywhere in `execute_action`, so the
+  action stranded in `EXECUTING` (the approval was still safely consumed,
+  so nothing could retry it into a duplicate external commitment — see
+  `TestCrashBetweenCommitAndRecordResult` in
+  `tests/chaos/test_outbox_and_transport_failures.py`). This is now
+  bounded-retried rather than stranding on the first failure:
+  `record_action_result` retries a `RepositoryError` up to three times with
+  a short delay before giving up (`_record_result_with_retry` in
+  `core.py`), so a transient write failure recovers on its own —
+  `TestRecordActionResultRetry` covers both the recovery and the bound
+  (a failure past the retry budget still strands, deliberately: an
+  unlimited retry would just move the same distributed-systems question
+  to "how long is too long," not answer it).
+- World entity facts now carry the same per-fact supersession chain
+  preferences and memories do — `EntityFact`, `update_facts`, and
+  `fact_history` (BUILD_SPEC section 16), following the identical
+  close-old/open-new/`SUPERSEDES`-edge pattern `Preference` established.
+  `get_entity_history`'s `covers` field lists both what it now reports:
+  every version of every fact the entity has carried, and the memories
+  referencing it. (The durable audit log itself exists — Phase 4, section
+  62 — and separately answers "which client changed this?".)
+- The voice acceptance scenario (section 103) has no automated coverage of
+  its Console walkthrough, since the Voice Bridge doesn't exist. The
+  provider-configuration scenario (section 104) does have a real, passing
+  test (`test_phase0_exit.py`) — "Both acceptance scenarios pass (sections
+  101 and 102)" above undercounts this; 104 passes too, and only 103 is
+  genuinely incomplete.
 - Hermes itself has not been attached on this machine — it is not installed
   here. See [HERMES_INTEGRATION.md](HERMES_INTEGRATION.md).
+
+A consolidated, standalone accounting of every item above — grouped by
+whether it's blocked by this environment, deferred by BUILD_SPEC itself, out
+of this repository's scope by design, or waiting on the user — lives in
+[docs/REMAINING_WORK.md](docs/REMAINING_WORK.md).
 
 ---
 
@@ -244,4 +384,5 @@ Hermes skills, and universal search breadth. Highlights:
 [README](README.md) · [BUILD_SPEC](BUILD_SPEC.md) · [ARCHITECTURE](ARCHITECTURE.md) ·
 [DATA_MODEL](DATA_MODEL.md) · [MCP_API](MCP_API.md) · [SECURITY](SECURITY.md) ·
 [OPERATIONS](OPERATIONS.md) · [TESTING](TESTING.md) · [CONFIGURATION](CONFIGURATION.md) ·
-[HERMES_INTEGRATION](HERMES_INTEGRATION.md) · [AGENTS](AGENTS.md)
+[HERMES_INTEGRATION](HERMES_INTEGRATION.md) · [AGENTS](AGENTS.md) ·
+[REMAINING_WORK](docs/REMAINING_WORK.md)

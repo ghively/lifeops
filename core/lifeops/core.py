@@ -12,6 +12,7 @@ is precisely the one where drift is least visible.
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import logging
 from collections.abc import Callable
@@ -72,6 +73,7 @@ from lifeops.domain.documents import (
     Document,
     DocumentDraft,
     document_to_entity,
+    entity_to_document,
 )
 from lifeops.domain.documents import create_document as create_document_domain
 from lifeops.domain.email import (
@@ -80,6 +82,13 @@ from lifeops.domain.email import (
     EmailThread,
 )
 from lifeops.domain.email import build_send_payload as build_send_email_payload
+from lifeops.domain.knowledge import (
+    Knowledge,
+    KnowledgeDraft,
+    entity_to_knowledge,
+    knowledge_to_entity,
+)
+from lifeops.domain.knowledge import create_knowledge as create_knowledge_domain
 from lifeops.domain.memory import (
     MemoryDraft,
     MemoryRecord,
@@ -151,6 +160,7 @@ from lifeops.domain.workflow_templates import (
 from lifeops.domain.world import (
     EntityDetail,
     EntityDraft,
+    EntityFact,
     EntityHistory,
     WorldEdge,
     WorldEntity,
@@ -159,6 +169,7 @@ from lifeops.domain.world import (
     WorldNode,
     WorldRelationship,
     assemble_world_graph,
+    diff_facts,
     is_world_entity_id,
     parse_entity_types,
     parse_relationship,
@@ -170,6 +181,7 @@ from lifeops.errors import (
     ConflictError,
     LifeOpsError,
     NotFoundError,
+    RepositoryError,
     ValidationError,
     VerificationRequiredError,
 )
@@ -291,6 +303,18 @@ class MemoryService:
                 query, subject_id=subject_id, memory_types=memory_types, limit=limit
             )
         return await self._memories.list_current(
+            subject_id, memory_types=memory_types, limit=limit
+        )
+
+    async def list_invalidated(
+        self,
+        *,
+        subject_id: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """Section 17's "invalidated/superseded history" view."""
+        return await self._memories.list_invalidated(
             subject_id, memory_types=memory_types, limit=limit
         )
 
@@ -438,6 +462,48 @@ class WorldService:
             raise NotFoundError(f"no such entity: {entity_id}", entity_id=entity_id)
         return entity
 
+    async def fact_history(self, entity_id: str, *, key: str | None = None) -> list[EntityFact]:
+        return await self._world.fact_history(entity_id, key=key)
+
+    async def exists(self, entity_id: str) -> bool:
+        return await self._world.exists(entity_id)
+
+    async def list_full(
+        self, *, entity_types: list[WorldEntityType] | None = None, limit: int = 500
+    ) -> list[WorldEntity]:
+        """Full entities of the given types, facts included.
+
+        ``graph()`` downgrades entities to lightweight ``WorldNode`` rows for
+        the World screen; a caller that needs to search *content* (section
+        50's ``search_knowledge``, not just a name) needs the facts bag
+        ``graph()`` throws away.
+        """
+        return await self._world.list_entities(types=entity_types, limit=limit)
+
+    async def search_full(
+        self,
+        *,
+        entity_types: list[WorldEntityType] | None,
+        query: str,
+        limit: int = 50,
+    ) -> list[WorldEntity]:
+        """Full entities of the given types matching ``query`` in name or
+        facts — a case-insensitive substring match (section 19: "Phase 1 is
+        a substring match"), shared by ``search_knowledge`` and universal
+        search's provider/asset/document/appointment categories rather than
+        each reimplementing the same facts-bag scan.
+        """
+        entities = await self.list_full(entity_types=entity_types, limit=limit)
+        needle = query.strip().lower()
+        if not needle:
+            return entities
+        return [
+            e
+            for e in entities
+            if needle in e.display_name.lower()
+            or any(needle in v.lower() for v in e.facts.values())
+        ]
+
     async def graph(
         self,
         *,
@@ -536,8 +602,75 @@ class WorldService:
             client_id=client_id,
         ):
             created = await self._world.create(entity)
+            if facts:
+                # The first version of every starting fact, so history is
+                # complete from creation — not just from the first edit
+                # onward. No superseding: there is nothing yet to replace.
+                now = created.updated_at
+                await self._world.seed_fact_versions(
+                    [
+                        EntityFact(
+                            id=EntityFact.make_id(),
+                            entity_id=created.id,
+                            key=key,
+                            value=value,
+                            valid_from=now,
+                            created_by_client=client_id,
+                        )
+                        for key, value in facts.items()
+                    ]
+                )
         self._notify(created.id)
         return created
+
+    async def update_facts(
+        self, entity_id: str, facts: dict[str, str], *, client_id: str
+    ) -> WorldEntity:
+        """Revise an entity's facts, recording per-fact history the same way
+        ``save_preference`` records preference history (section 16).
+
+        ``facts`` is a partial update: only the given keys are considered,
+        and only the ones whose value actually changed get a new version —
+        re-submitting an unchanged value is a no-op, not new history.
+        """
+        entity = await self.get(entity_id)
+        cleaned = validate_facts(facts)
+        changed = diff_facts(entity.facts, cleaned)
+        if not changed:
+            return entity
+
+        current_versions = await self._world.current_facts(entity_id)
+        now = now_iso(self._clock)
+        new_versions = [
+            EntityFact(
+                id=EntityFact.make_id(),
+                entity_id=entity_id,
+                key=key,
+                value=value,
+                valid_from=now,
+                supersedes=current_versions[key].id if key in current_versions else None,
+                created_by_client=client_id,
+            )
+            for key, value in changed.items()
+        ]
+        superseded_ids = [
+            current_versions[key].id for key in changed if key in current_versions
+        ]
+        updated = entity.model_copy(
+            update={"facts": {**entity.facts, **changed}, "updated_at": now}
+        )
+
+        with operation(
+            "world.update_facts",
+            entity_id=entity_id,
+            client_id=client_id,
+            changed_keys=sorted(changed),
+        ):
+            saved = await self._world.update_facts(
+                updated, new_versions=new_versions, superseded_ids=superseded_ids
+            )
+        self._notify(saved.id)
+        return saved
 
     async def link(
         self,
@@ -1771,6 +1904,27 @@ class LifeOpsCore:
         self._require(client, Capability.READ_MEMORY)
         return await self._memory().history(memory_id)
 
+    async def list_invalidated_memories(
+        self,
+        client: ClientIdentity,
+        *,
+        subject_id: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        """Section 17's "invalidated/superseded history" view — every closed
+        record across subjects, not one memory's own chain (that's
+        memory_history). The list route refuses this by default (a closed
+        record is reachable per-memory through history) because listing every
+        closed record needed its own read path, which this is."""
+        self._require(client, Capability.READ_MEMORY)
+        resolved = (
+            await self._resolve_subject(subject_id) if subject_id is not None else None
+        )
+        return await self._memory().list_invalidated(
+            subject_id=resolved, memory_types=memory_types, limit=limit
+        )
+
     async def invalidate_memory(
         self, client: ClientIdentity, *, memory_id: str, reason: str | None = None
     ) -> MemoryRecord:
@@ -1800,6 +1954,78 @@ class LifeOpsCore:
             importance=importance,
             client_id=client.client_id,
         )
+
+    async def promote_memory(
+        self, client: ClientIdentity, *, memory_id: str, key: str, value: str | None = None
+    ) -> Preference:
+        """Turn a PREFERENCE_CANDIDATE memory into a real preference (section
+        47's confirm/promote step).
+
+        Section 47 parks a candidate "for confirmation" rather than saving it
+        as a preference outright; ``domain/memory.py`` enforces that a
+        candidate can never be read back through the preference surface.
+        Until this method, nothing closed the loop the other way either — no
+        code turned a confirmed candidate into the real thing. A free-text
+        memory carries no preference ``key``, so the caller (the human
+        reviewing it in the Console) supplies one; ``value`` defaults to the
+        memory's own content when the human accepts it as written.
+
+        Requires both WRITE_MEMORY (to close the candidate out) and
+        WRITE_PREFERENCE (to create the record) — held together only by
+        Hermes and the Console. No MCP tool spends this: a candidate exists
+        so a human looks at it, and the model that inferred it confirming
+        its own guess would defeat the review this section asks for — the
+        same boundary ``correct_memory`` already draws by staying off MCP.
+        """
+        self._require(client, Capability.WRITE_MEMORY)
+        self._require(client, Capability.WRITE_PREFERENCE)
+
+        memory = await self._memory().get(memory_id)
+        if memory.type is not MemoryType.PREFERENCE_CANDIDATE:
+            raise ValidationError(
+                f"{memory_id} is a {memory.type} memory, not a preference candidate",
+                memory_id=memory_id,
+                memory_type=str(memory.type),
+            )
+        if memory.valid_to is not None:
+            raise ConflictError(
+                f"{memory_id} is no longer current; a closed candidate cannot "
+                "be promoted",
+                memory_id=memory_id,
+            )
+
+        normalized_key = normalise_key(key)
+        if not normalized_key:
+            raise ValidationError("preference key must not be empty", field="key")
+
+        resolved_value = (value if value is not None else memory.content).strip()
+        if not resolved_value:
+            raise ValidationError("preference value must not be empty", field="value")
+
+        preference = await self.save_preference(
+            client,
+            PreferenceDraft(
+                key=normalized_key,
+                value=resolved_value,
+                subject_id=memory.subject_id,
+                source_type=PreferenceSource.USER_EXPLICIT,
+                confidence=1.0,
+            ),
+        )
+        await self._memory().invalidate(
+            memory_id,
+            reason=f"promoted to preference {normalized_key}",
+            client_id=client.client_id,
+        )
+        await self.audit(
+            client,
+            result="promoted",
+            intent="promote_memory",
+            tool="memory",
+            target=memory_id,
+            risk="low",
+        )
+        return preference
 
     # --- preferences --------------------------------------------------------
 
@@ -2126,28 +2352,33 @@ class LifeOpsCore:
     async def entity_history(
         self, client: ClientIdentity, *, entity_id: str
     ) -> EntityHistory:
-        """What the record can honestly say about how an entity changed.
-
-        World entity facts are current-only in Phase 3, so the history is the
-        full memory record referencing the entity — closed versions included.
-        ``covers`` travels with the answer so no consumer mistakes it for the
-        durable audit log (Phase 4, section 62).
+        """What the record can honestly say about how an entity changed
+        (section 16's HISTORY panel): every version of every fact the entity
+        has carried, plus every version of every memory referencing it.
+        ``covers`` travels with the answer so no consumer mistakes either for
+        the durable audit log (Phase 4, section 62) — that answers "which
+        client changed this," not "what did this entity's facts used to be."
         """
         self._require(client, Capability.READ_WORLD)
 
         with operation("world.entity_history", entity_id=entity_id, client_id=client.client_id):
             await self._world().get(entity_id)
 
-            covers = ["memories referencing this entity, including closed versions"]
+            fact_history = await self._world().fact_history(entity_id)
+            covers = ["every version of every fact this entity has carried"]
+
             memories: list[MemoryRecord] = []
             if Capability.READ_MEMORY in client.capabilities and self._memory_service:
                 memories = await self._memory().list_for_entity(
                     entity_id, current_only=False
                 )
+                covers.append("memories referencing this entity, including closed versions")
             else:
-                covers = ["nothing: this client cannot read memory"]
+                covers.append("nothing about memory: this client cannot read it")
 
-        return EntityHistory(entity_id=entity_id, memories=memories, covers=covers)
+        return EntityHistory(
+            entity_id=entity_id, fact_history=fact_history, memories=memories, covers=covers
+        )
 
     async def create_entity(
         self, client: ClientIdentity, draft: EntityDraft
@@ -2159,6 +2390,49 @@ class LifeOpsCore:
         """
         self._require(client, Capability.WRITE_WORLD)
         return await self._world().create(draft, client_id=client.client_id)
+
+    async def update_entity(
+        self, client: ClientIdentity, *, entity_id: str, facts: dict[str, str]
+    ) -> WorldEntity:
+        """Revise a household, provider, or asset's facts, with history
+        (section 16). The Console's own edit path, and what ``record_provider``
+        /``record_asset`` fall back to over MCP when the entity already
+        exists — see those methods for why a generic MCP tool does not exist
+        here (section 51's write_world surface is narrow and named on
+        purpose)."""
+        self._require(client, Capability.WRITE_WORLD)
+        return await self._world().update_facts(
+            entity_id, facts, client_id=client.client_id
+        )
+
+    async def record_or_update_entity(
+        self,
+        client: ClientIdentity,
+        *,
+        entity_type: WorldEntityType,
+        display_name: str,
+        facts: dict[str, str],
+    ) -> WorldEntity:
+        """What ``record_provider``/``record_asset`` actually do (section 51):
+        create the entity if this is the first time it has been named, or
+        merge in whatever facts changed if it already exists — tracked the
+        same way ``update_entity`` tracks any other revision.
+
+        Distinct from ``create_entity`` on purpose: a human naming a
+        duplicate provider in the Console is probably a mistake worth a 409;
+        an agent calling this because it just learned something about a
+        provider it has mentioned before is the ordinary case, not an error.
+        """
+        self._require(client, Capability.WRITE_WORLD)
+        entity_id = WorldEntity.make_id(entity_type, display_name.strip())
+        if await self._world().exists(entity_id):
+            return await self._world().update_facts(
+                entity_id, facts, client_id=client.client_id
+            )
+        return await self._world().create(
+            EntityDraft(entity_type=entity_type, display_name=display_name, facts=facts),
+            client_id=client.client_id,
+        )
 
     async def link_entities(
         self, client: ClientIdentity, *, source_id: str, target_id: str, rel_type: str
@@ -2498,6 +2772,20 @@ class LifeOpsCore:
         )
         return committed
 
+    #: A chaos test found this write escaping uncaught in execute_action:
+    #: when it follows a real external effect that already happened (a
+    #: booking, a call, a sent email), a permanent failure here strands the
+    #: action in EXECUTING with its approval already spent (BUILD_SPEC
+    #: section 57: single-use). The write is naturally idempotent — it sets
+    #: status/reference on an existing row keyed by id — so retrying it a
+    #: few times risks nothing a single attempt did not already risk; it
+    #: only gives a transient failure a real chance to recover instead of
+    #: guaranteeing the strand. A genuinely persistent outage still strands
+    #: the action after the budget is spent — recovering *that* case is the
+    #: distributed-systems design question this does not attempt to solve.
+    _RECORD_RESULT_ATTEMPTS = 3
+    _RECORD_RESULT_RETRY_DELAY_S = 0.05
+
     async def record_action_result(
         self,
         client: ClientIdentity,
@@ -2510,7 +2798,7 @@ class LifeOpsCore:
         """Persist what the external system returned (section 60 step 3)."""
         action = await self._actions().get(action_id)
         self._require(client, capability_for_action(str(action.type)))
-        saved = await self._actions().record_result(
+        saved = await self._record_result_with_retry(
             action_id,
             succeeded=succeeded,
             external_reference=external_reference,
@@ -2525,6 +2813,30 @@ class LifeOpsCore:
             verification=str(saved.verification_state),
         )
         return saved
+
+    async def _record_result_with_retry(
+        self,
+        action_id: str,
+        *,
+        succeeded: bool,
+        external_reference: str | None,
+        failure_reason: str | None,
+    ) -> Action:
+        last_error: RepositoryError | None = None
+        for attempt in range(self._RECORD_RESULT_ATTEMPTS):
+            try:
+                return await self._actions().record_result(
+                    action_id,
+                    succeeded=succeeded,
+                    external_reference=external_reference,
+                    failure_reason=failure_reason,
+                )
+            except RepositoryError as exc:
+                last_error = exc
+                if attempt < self._RECORD_RESULT_ATTEMPTS - 1:
+                    await asyncio.sleep(self._RECORD_RESULT_RETRY_DELAY_S)
+        assert last_error is not None  # the loop always runs at least once
+        raise last_error
 
     async def verify_action(
         self, client: ClientIdentity, *, action_id: str, evidence: str
@@ -2931,6 +3243,26 @@ class LifeOpsCore:
         self._require(client, Capability.READ_WORLD)
         return await self._service_requests().list(task_id=task_id)
 
+    async def _phone_number_for_provider(self, provider_entity_id: str) -> str:
+        """The provider's dial-out number, from its own world-entity facts —
+        ``record_provider``'s own tool description names ``'phone'`` as the
+        example key, so that is the one convention this reads. Raises rather
+        than silently building an objective that can never actually dial,
+        which is exactly the gap that used to make ``dial()`` always refuse:
+        nothing anywhere in this codebase ever resolved a real destination
+        number.
+        """
+        provider = await self._world().get(provider_entity_id)
+        phone = (provider.facts.get("phone") or "").strip()
+        if not phone:
+            raise ValidationError(
+                f"provider {provider_entity_id} has no phone number on file — "
+                "record one (record_provider's 'phone' fact) before requesting a call",
+                field="phone",
+                provider_entity_id=provider_entity_id,
+            )
+        return phone
+
     async def _prepare_provider_contact(
         self,
         client: ClientIdentity,
@@ -2941,9 +3273,18 @@ class LifeOpsCore:
         collect: list[str] | None,
         action_type: ActionType,
     ) -> Action:
+        # Checked here, ahead of any read, not only inside prepare_action
+        # below — a client lacking this capability must get capability_denied,
+        # not incidental information (e.g. whether the provider exists or has
+        # a phone number on file) leaked by a read that ran before the check.
+        self._require(client, capability_for_action(str(action_type)))
         request = await self._service_requests().get(service_request_id)
+        to_number = await self._phone_number_for_provider(provider_entity_id)
         call_objective = build_call_objective(
-            objective=objective, provider_entity_id=provider_entity_id, collect=collect
+            objective=objective,
+            to_number=to_number,
+            provider_entity_id=provider_entity_id,
+            collect=collect,
         )
         payload = build_call_payload(call_objective, service_request_id=service_request_id)
         action = await self.prepare_action(
@@ -3145,6 +3486,80 @@ class LifeOpsCore:
             target=document.id,
         )
         return document
+
+    async def get_document(self, client: ClientIdentity, *, document_id: str) -> Document:
+        self._require(client, Capability.READ_WORLD)
+        entity = await self._world().get(document_id)
+        return entity_to_document(entity)
+
+    async def search_documents(
+        self, client: ClientIdentity, *, query: str = "", limit: int = 50
+    ) -> list[Document]:
+        """List/search document references by title, source, or summary —
+        the same substring approach ``search_knowledge`` uses, and the read
+        half of the create/read pair ``create_document`` started (section
+        64). Recording one stayed a Console/HTTP act; reading one has no
+        equivalent reason to be narrower, so this has no MCP counterpart
+        deliberately, matching ``create_document``'s own boundary."""
+        self._require(client, Capability.READ_WORLD)
+        entities = await self._world().search_full(
+            entity_types=[WorldEntityType.DOCUMENT], query=query, limit=limit
+        )
+        return [entity_to_document(e) for e in entities]
+
+    # --- knowledge (BUILD_SPEC sections 18, 36, 50) ----------------------------
+
+    async def record_knowledge(
+        self, client: ClientIdentity, draft: KnowledgeDraft
+    ) -> Knowledge:
+        """Record a piece of reference content (section 18).
+
+        ``write_world`` over MCP is deliberately narrow — record_provider,
+        record_asset, and create_service_request are the only tools that
+        spend it (BUILD_SPEC section 51) — so this is Console/HTTP-only, the
+        same boundary ``create_document`` already draws.
+        """
+        self._require(client, Capability.WRITE_WORLD)
+        now = now_iso(self._clock)
+        knowledge = create_knowledge_domain(draft, now=now, client_id=client.client_id)
+        if self._world_repo is None:
+            raise ConfigurationError(
+                "no world repository is configured", component="world"
+            )
+        entity = await self._world_repo.create(knowledge_to_entity(knowledge))
+        self._publish(WORLD_CHANGED, entity_id=entity.id)
+        await self.audit(
+            client,
+            result="created",
+            intent="record_knowledge",
+            tool="knowledge",
+            target=knowledge.id,
+        )
+        return knowledge
+
+    async def get_knowledge(
+        self, client: ClientIdentity, *, knowledge_id: str
+    ) -> Knowledge:
+        self._require(client, Capability.READ_WORLD)
+        entity = await self._world().get(knowledge_id)
+        return entity_to_knowledge(entity)
+
+    async def search_knowledge(
+        self, client: ClientIdentity, *, query: str = "", limit: int = 50
+    ) -> list[Knowledge]:
+        """Search reference content by title, category, or body (section 50).
+
+        The World screen's ``graph()`` text filter only matches display
+        names — fine for finding a provider by name, useless for finding a
+        checklist by what it says. This searches the full facts bag instead,
+        the same substring approach ``LifeOpsCore.search`` uses elsewhere
+        (section 19: "Phase 1 is a case-insensitive substring match").
+        """
+        self._require(client, Capability.READ_WORLD)
+        entities = await self._world().search_full(
+            entity_types=[WorldEntityType.KNOWLEDGE], query=query, limit=limit
+        )
+        return [entity_to_knowledge(e) for e in entities]
 
     # --- shopping (BUILD_SPEC section 98) -------------------------------------
     #
@@ -3703,7 +4118,10 @@ class LifeOpsCore:
     async def search(
         self, client: ClientIdentity, *, query: str, limit: int = 10
     ) -> SearchResults:
-        """Universal search over people, preferences, and tasks (section 19).
+        """Universal search (section 19): all twelve categories — people,
+        preferences, tasks, providers, assets, appointments, events, memory,
+        documents, knowledge, bills, actions, and historical facts (the
+        durable audit log).
 
         Phase 1 is a case-insensitive substring match; ranking and semantic
         retrieval arrive with the memory layer (Phase 2).
@@ -3711,10 +4129,87 @@ class LifeOpsCore:
         self._require(client, Capability.READ_WORLD)
         # Each section honours its own read capability, the same per-section
         # filtering get_entity_detail does — READ_WORLD alone must not be a
-        # side door to preferences and tasks.
+        # side door to preferences, tasks, memory, or bills.
         can_read_prefs = Capability.READ_PREFERENCES in client.capabilities
         can_read_tasks = Capability.READ_TASKS in client.capabilities
+        can_read_memory = Capability.READ_MEMORY in client.capabilities
+        has_world = self._world_service is not None
         with operation("search.query", client_id=client.client_id):
+            providers: list[WorldEntity] = []
+            assets: list[WorldEntity] = []
+            appointments: list[Appointment] = []
+            events: list[WorldEntity] = []
+            documents: list[Document] = []
+            knowledge: list[Knowledge] = []
+            if has_world:
+                providers = await self._world().search_full(
+                    entity_types=[WorldEntityType.PROVIDER], query=query, limit=limit
+                )
+                assets = await self._world().search_full(
+                    entity_types=[WorldEntityType.ASSET], query=query, limit=limit
+                )
+                appointments = [
+                    entity_to_appointment(e)
+                    for e in await self._world().search_full(
+                        entity_types=[WorldEntityType.APPOINTMENT],
+                        query=query,
+                        limit=limit,
+                    )
+                ]
+                events = await self._world().search_full(
+                    entity_types=[WorldEntityType.EVENT], query=query, limit=limit
+                )
+                documents = [
+                    entity_to_document(e)
+                    for e in await self._world().search_full(
+                        entity_types=[WorldEntityType.DOCUMENT],
+                        query=query,
+                        limit=limit,
+                    )
+                ]
+                knowledge = [
+                    entity_to_knowledge(e)
+                    for e in await self._world().search_full(
+                        entity_types=[WorldEntityType.KNOWLEDGE],
+                        query=query,
+                        limit=limit,
+                    )
+                ]
+
+            bills: list[Bill] = []
+            actions: list[Action] = []
+            historical_facts: list[AuditRecord] = []
+            if can_read_tasks:
+                needle = query.strip().lower()
+                if self._bills_repo is not None:
+                    all_bills = await self._bills().list_bills(limit=200)
+                    bills = [
+                        b
+                        for b in all_bills
+                        if not needle or needle in b.description.lower()
+                    ][:limit]
+                if self._action_service is not None:
+                    all_actions = await self._actions().list(limit=200)
+                    actions = [
+                        a
+                        for a in all_actions
+                        if not needle
+                        or needle in str(a.type).lower()
+                        or (a.failure_reason and needle in a.failure_reason.lower())
+                        or (a.external_reference and needle in a.external_reference.lower())
+                    ][:limit]
+                if self._audit_repo is not None:
+                    all_audit = await self._audit_repo.list_recent(limit=200)
+                    historical_facts = [
+                        r
+                        for r in all_audit
+                        if not needle
+                        or (r.intent and needle in r.intent.lower())
+                        or (r.tool and needle in r.tool.lower())
+                        or needle in r.result.lower()
+                        or (r.target and needle in r.target.lower())
+                    ][:limit]
+
             return SearchResults(
                 people=await self._people.find_by_name(query),
                 preferences=(
@@ -3727,4 +4222,18 @@ class LifeOpsCore:
                     if can_read_tasks
                     else []
                 ),
+                providers=providers,
+                assets=assets,
+                appointments=appointments,
+                events=events,
+                memories=(
+                    await self._memory().recall(query=query, limit=limit)
+                    if can_read_memory and self._memory_service is not None
+                    else []
+                ),
+                documents=documents,
+                knowledge=knowledge,
+                bills=bills,
+                actions=actions,
+                historical_facts=historical_facts,
             )

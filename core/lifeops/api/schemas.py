@@ -12,6 +12,7 @@ from lifeops.domain.approvals import ApprovalStatus
 from lifeops.domain.calendar import DEFAULT_HOLD_MINUTES, AppointmentStatus
 from lifeops.domain.memory import MemorySource, MemoryType
 from lifeops.domain.preferences import PreferenceSource
+from lifeops.domain.self_config import SelfConfigTarget
 from lifeops.domain.service_request import ServiceRequestStatus
 from lifeops.domain.shopping import ShoppingListStatus
 from lifeops.domain.tasks import TaskPriority, TaskState, VerificationState
@@ -291,6 +292,17 @@ class CorrectMemoryRequest(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
 
 
+class PromoteMemoryRequest(BaseModel):
+    """Section 47's confirm/promote step: a human supplies the preference
+    key a free-text PREFERENCE_CANDIDATE memory doesn't carry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=200)
+    #: Defaults to the memory's own content when omitted.
+    value: str | None = Field(default=None, max_length=2000)
+
+
 # --- world (BUILD_SPEC sections 36, 39, 92) ------------------------------------
 #
 # These mirror ``lifeops.domain.world`` one-for-one. The wire contract is
@@ -418,20 +430,46 @@ class EntityDetailResponse(BaseModel):
     related_memories: list[MemoryResponse] = Field(default_factory=list)
 
 
-class EntityHistoryResponse(BaseModel):
-    """What Phase 3 can honestly report about an entity's past.
+class EntityFactResponse(BaseModel):
+    """One version of one fact on a world entity (section 16)."""
 
-    ``covers`` states the scope in words. World entity facts are current-only
-    until a later phase, so the history is the memory record referencing the
-    entity — closed versions included — and never claims to be the durable
-    audit log (Phase 4, section 62).
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    entity_id: str
+    key: str
+    value: str
+    valid_from: str
+    valid_to: str | None = None
+    supersedes: str | None = None
+    created_by_client: str | None = None
+
+
+class EntityHistoryResponse(BaseModel):
+    """What the record can honestly report about an entity's past.
+
+    ``covers`` states the scope in words. ``fact_history`` is every version
+    of every fact the entity has carried; ``memories`` is every version of
+    every memory referencing it. Neither claims to be the durable audit log
+    (Phase 4, section 62) — that answers "which client changed this, when."
     """
 
     model_config = ConfigDict(extra="forbid")
 
     entity_id: str
+    fact_history: list[EntityFactResponse] = Field(default_factory=list)
     memories: list[MemoryResponse] = Field(default_factory=list)
     covers: list[str] = Field(default_factory=list)
+
+
+class UpdateEntityFactsRequest(BaseModel):
+    """Revise a household, provider, or asset's facts. Partial: only the
+    given keys are considered, and only ones whose value actually changed
+    get a new version (section 16)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    facts: dict[str, str] = Field(default_factory=dict)
 
 
 # --- bills and payees (BUILD_SPEC sections 72, 99) -----------------------------
@@ -568,6 +606,24 @@ class SaveWorkflowTemplateRequest(BaseModel):
     #: Lets a routine be paused. Omitting it defaulted every save to enabled,
     #: so revising a paused routine switched it back on.
     enabled: bool = True
+
+
+class SelfChangeCheckRequest(BaseModel):
+    """Whether a proposed self-change (section 73) is one Hermes may apply
+    itself, without actually applying anything."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: SelfConfigTarget
+    name: str = Field(min_length=1, max_length=200)
+    effects: list[str] = Field(default_factory=list)
+    rationale: str | None = None
+
+
+class SelfChangeCheckResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    permitted: bool = True
 
 
 # --- configuration -----------------------------------------------------------
@@ -962,6 +1018,45 @@ class CreateDocumentRequest(BaseModel):
     source_ref: str = Field(default="", max_length=500)
     mime_type: str = Field(default="", max_length=200)
     summary: str = Field(default="", max_length=4000)
+
+
+class DocumentListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    documents: list[DocumentResponse]
+    total: int
+
+
+# --- knowledge (BUILD_SPEC sections 18, 36, 50) --------------------------------
+
+
+class KnowledgeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    category: str
+    content: str
+    source_document_id: str | None
+    created_at: str
+    updated_at: str
+    created_by_client: str | None
+
+
+class CreateKnowledgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=300)
+    category: str = Field(default="", max_length=100)
+    content: str = Field(default="", max_length=8000)
+    source_document_id: str | None = None
+
+
+class KnowledgeListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    knowledge: list[KnowledgeResponse]
+    total: int
 
 
 # --- service requests (BUILD_SPEC sections 36, 67, 68, 97, 101) ---------------

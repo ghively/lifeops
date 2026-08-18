@@ -51,13 +51,15 @@ class TestFreshDeployment:
         # grounds that a missing required field is the more informative truth
         # — and calendar/email declare required fields for the same reason:
         # without them, {"enabled": true} with nothing configured reached
-        # state CONFIGURED while the factory refused every call.
+        # state CONFIGURED while the factory refused every call. Telephony
+        # now speaks Twilio's REST API and needs the same treatment — an
+        # account SID/auth token/from number, all required — so it moved
+        # out of the "no config needed at all" group browser is still in.
         statuses = {s.id: s for s in config_service.list_status()}
-        for provider_id in ("calendar", "email"):
+        for provider_id in ("calendar", "email", "telephony"):
             assert statuses[provider_id].state is ProviderState.NOT_CONFIGURED
             assert statuses[provider_id].missing_required
-        for provider_id in ("browser", "telephony"):
-            assert statuses[provider_id].state is ProviderState.DISABLED
+        assert statuses["browser"].state is ProviderState.DISABLED
 
     def test_the_required_phase_zero_providers_are_registered(self) -> None:
         registered = {p.id for p in all_providers()}

@@ -169,3 +169,50 @@ class TestWorkflowTemplates:
 
         listed = (await http.get(f"{API}/workflow-templates")).json()["templates"]
         assert listed == []
+
+
+class TestSelfConfigCheck:
+    """The MCP tool of the same name is tested against a real MCPServer in
+    tests/unit/test_mcp_self_config_tools.py; this pins the equivalent HTTP
+    surface the Console would use to show the same check."""
+
+    async def test_an_ordinary_change_is_permitted(self, env) -> None:
+        http, _ = env
+        response = await http.post(
+            f"{API}/self-config/check",
+            json={"target": "cron_job", "name": "nightly sweep"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"permitted": True}
+
+    async def test_a_protected_component_is_refused_with_a_stable_code(self, env) -> None:
+        http, _ = env
+        response = await http.post(
+            f"{API}/self-config/check",
+            json={"target": "skill", "name": "approval validation"},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "validation_error"
+
+    async def test_a_forbidden_effect_is_refused_even_with_a_permitted_target(
+        self, env
+    ) -> None:
+        http, _ = env
+        response = await http.post(
+            f"{API}/self-config/check",
+            json={
+                "target": "reminder",
+                "name": "harmless reminder",
+                "effects": ["disable_emergency_stop"],
+            },
+        )
+        assert response.status_code == 422
+
+    async def test_the_check_never_persists_a_template(self, env) -> None:
+        http, _ = env
+        await http.post(
+            f"{API}/self-config/check",
+            json={"target": "cron_job", "name": "nightly sweep"},
+        )
+        listed = (await http.get(f"{API}/workflow-templates")).json()["templates"]
+        assert listed == []
