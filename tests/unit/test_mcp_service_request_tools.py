@@ -25,6 +25,7 @@ from lifeops.config.service import ConfigurationService
 from lifeops.container import Container
 from lifeops.core import LifeOpsCore
 from lifeops.domain.people import Person
+from lifeops.domain.world import WorldEntity, WorldEntityType
 from lifeops.mcp.server import build_server
 from lifeops.policy import Capability, ClientIdentity, ClientRole
 from lifeops.policy.capabilities import HERMES
@@ -142,6 +143,20 @@ async def core(
     )
     preferences = FakePreferenceRepository()
     world = FakeWorldRepository(preferences=preferences)
+    for provider_id, name in (
+        ("provider_abc_electric", "ABC Electric"),
+        ("provider_abc_hvac", "ABC HVAC"),
+    ):
+        world.seed(
+            WorldEntity(
+                id=provider_id,
+                entity_type=WorldEntityType.PROVIDER,
+                display_name=name,
+                facts={"phone": "+15550100"},
+                created_at=TS,
+                updated_at=TS,
+            )
+        )
     return LifeOpsCore(
         people=people,
         preferences=preferences,

@@ -11,7 +11,7 @@ placed today.
 from __future__ import annotations
 
 import base64
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote
 
 import httpx
 import pytest
@@ -95,15 +95,60 @@ class TestHealth:
 
 
 class TestDial:
-    async def test_raises_because_no_destination_number_is_ever_available(self) -> None:
-        # No handler should ever be reached — dial() must refuse before
-        # making any request, since it has nothing to call.
+    async def test_places_a_real_call_with_to_from_and_twiml(self) -> None:
+        captured: dict = {}
+
         def handler(request: httpx.Request) -> httpx.Response:
-            raise AssertionError("dial() must not make a request with no destination number")
+            captured["url"] = str(request.url)
+            captured["body"] = parse_qs(request.content.decode())
+            return httpx.Response(201, json={"sid": "CA" + "1" * 32, "status": "queued"})
 
         provider = _provider(handler)
-        objective = build_objective(objective="schedule_electrician", collect=["availability"])
-        with pytest.raises(ProviderError, match="no destination phone number"):
+        objective = build_objective(
+            objective="schedule_electrician", to_number="+15559876543", collect=["availability"]
+        )
+        result = await provider.dial(objective)
+        await provider.aclose()
+
+        assert "/Calls.json" in captured["url"]
+        assert captured["body"]["To"] == ["+15559876543"]
+        assert captured["body"]["From"] == [FROM_NUMBER]
+        assert "schedule_electrician" in captured["body"]["Twiml"][0]
+        assert result.external_reference == "CA" + "1" * 32
+
+    async def test_a_brand_new_call_is_not_yet_connected(self) -> None:
+        """Twilio's create-call response reports 'queued' or 'ringing', never
+        'in-progress'/'completed' — the call has not connected at the time
+        the API call returns, so dial() must not claim it has."""
+        provider = _provider(
+            lambda request: httpx.Response(201, json={"sid": "CA123", "status": "queued"})
+        )
+        objective = build_objective(objective="schedule_electrician", to_number="+15559876543")
+        result = await provider.dial(objective)
+        await provider.aclose()
+
+        assert result.connected is False
+        assert result.follow_up_required is True
+        # No Voice Bridge exists yet, so a call can never truthfully report
+        # its objective was met, connected or not.
+        assert result.objective_met is False
+
+    async def test_raises_on_a_transport_failure(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused", request=request)
+
+        provider = _provider(handler)
+        objective = build_objective(objective="schedule_electrician", to_number="+15559876543")
+        with pytest.raises(ProviderError, match="Twilio request failed"):
+            await provider.dial(objective)
+        await provider.aclose()
+
+    async def test_raises_on_an_http_error_status(self) -> None:
+        provider = _provider(
+            lambda request: httpx.Response(400, json={"message": "invalid number"})
+        )
+        objective = build_objective(objective="schedule_electrician", to_number="+15559876543")
+        with pytest.raises(ProviderError, match="HTTP 400"):
             await provider.dial(objective)
         await provider.aclose()
 

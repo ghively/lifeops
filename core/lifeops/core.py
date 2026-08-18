@@ -3080,6 +3080,26 @@ class LifeOpsCore:
         self._require(client, Capability.READ_WORLD)
         return await self._service_requests().list(task_id=task_id)
 
+    async def _phone_number_for_provider(self, provider_entity_id: str) -> str:
+        """The provider's dial-out number, from its own world-entity facts —
+        ``record_provider``'s own tool description names ``'phone'`` as the
+        example key, so that is the one convention this reads. Raises rather
+        than silently building an objective that can never actually dial,
+        which is exactly the gap that used to make ``dial()`` always refuse:
+        nothing anywhere in this codebase ever resolved a real destination
+        number.
+        """
+        provider = await self._world().get(provider_entity_id)
+        phone = (provider.facts.get("phone") or "").strip()
+        if not phone:
+            raise ValidationError(
+                f"provider {provider_entity_id} has no phone number on file — "
+                "record one (record_provider's 'phone' fact) before requesting a call",
+                field="phone",
+                provider_entity_id=provider_entity_id,
+            )
+        return phone
+
     async def _prepare_provider_contact(
         self,
         client: ClientIdentity,
@@ -3090,9 +3110,18 @@ class LifeOpsCore:
         collect: list[str] | None,
         action_type: ActionType,
     ) -> Action:
+        # Checked here, ahead of any read, not only inside prepare_action
+        # below — a client lacking this capability must get capability_denied,
+        # not incidental information (e.g. whether the provider exists or has
+        # a phone number on file) leaked by a read that ran before the check.
+        self._require(client, capability_for_action(str(action_type)))
         request = await self._service_requests().get(service_request_id)
+        to_number = await self._phone_number_for_provider(provider_entity_id)
         call_objective = build_call_objective(
-            objective=objective, provider_entity_id=provider_entity_id, collect=collect
+            objective=objective,
+            to_number=to_number,
+            provider_entity_id=provider_entity_id,
+            collect=collect,
         )
         payload = build_call_payload(call_objective, service_request_id=service_request_id)
         action = await self.prepare_action(

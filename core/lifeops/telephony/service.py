@@ -4,10 +4,10 @@
 
 ``TwilioTelephonyProvider`` (``telephony/twilio.py``) is the real adapter —
 see its module docstring for what "real" does and does not mean here (call
-control is genuine; a destination phone number and a conversation are not,
-for reasons that predate this adapter). Tests inject
-``FakeTelephonyProvider`` through the ``factories`` constructor argument, the
-same seam ``CalendarProviderService`` offers for CalDAV.
+control and the destination number are both genuine; a live conversation
+is not, since the Voice Bridge that would hold one does not exist here).
+Tests inject ``FakeTelephonyProvider`` through the ``factories`` constructor
+argument, the same seam ``CalendarProviderService`` offers for CalDAV.
 """
 
 from __future__ import annotations

@@ -44,11 +44,19 @@ class CallAuthority(BaseModel):
 
 
 class CallObjective(BaseModel):
-    """The constrained brief a call is placed with (section 68)."""
+    """The constrained brief a call is placed with (section 68).
+
+    ``to_number`` is the destination — required, because a call with nowhere
+    to dial cannot happen. Nothing in this module resolves it: this is a
+    pure domain type, and looking up a provider's phone number is a
+    repository read that belongs in ``core.py``'s orchestration layer, not
+    here. ``build_objective`` requires the caller to already have it.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     objective: str = Field(min_length=1, max_length=200)
+    to_number: str = Field(min_length=1, max_length=32)
     provider_entity_id: str | None = None
     collect: list[str] = Field(default_factory=list)
     authority: CallAuthority = Field(default_factory=CallAuthority)
@@ -77,6 +85,7 @@ class CallResult(BaseModel):
 def build_objective(
     *,
     objective: str,
+    to_number: str,
     provider_entity_id: str | None = None,
     collect: list[str] | None = None,
     request_information: bool = True,
@@ -85,6 +94,9 @@ def build_objective(
 ) -> CallObjective:
     """The only constructor for ``CallObjective``.
 
+    ``to_number`` is required and positioned right after ``objective`` on
+    purpose — a call cannot be built without somewhere to dial, the same way
+    it cannot be built with charge or repair authority (below).
     ``authorize_charge`` and ``authorize_repairs`` are not parameters: a
     caller cannot request them, so there is no argument to accidentally set
     to ``True``. This is section 97's hard rule and section 101 step 9 made
@@ -93,6 +105,7 @@ def build_objective(
     """
     return CallObjective(
         objective=objective.strip(),
+        to_number=to_number.strip(),
         provider_entity_id=provider_entity_id,
         collect=list(collect or []),
         authority=CallAuthority(
@@ -110,6 +123,10 @@ def validate_objective(objective: CallObjective) -> None:
     from a persisted Action payload). Raises rather than silently clearing
     the field, so a tampered payload is a loud failure, not a quiet downgrade.
     """
+    if not objective.to_number.strip():
+        raise ValidationError(
+            "a phone call must have a destination number", field="to_number"
+        )
     if objective.authority.authorize_charge:
         raise ValidationError(
             "a phone call may never carry authorize_charge=True "

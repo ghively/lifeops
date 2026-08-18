@@ -28,6 +28,7 @@ from lifeops.domain.calendar import AppointmentHoldDraft, AppointmentStatus
 from lifeops.domain.people import Person
 from lifeops.domain.service_request import ServiceRequestDraft, ServiceRequestStatus
 from lifeops.domain.tasks import TaskDraft, TaskState
+from lifeops.domain.world import WorldEntity, WorldEntityType
 from lifeops.errors import ValidationError
 from lifeops.policy.capabilities import CONSOLE, HERMES
 from lifeops.repositories.fakes import (
@@ -124,6 +125,16 @@ async def core(
     )
     preferences = FakePreferenceRepository()
     world = FakeWorldRepository(preferences=preferences)
+    world.seed(
+        WorldEntity(
+            id="provider_abc_electric",
+            entity_type=WorldEntityType.PROVIDER,
+            display_name="ABC Electric",
+            facts={"phone": "+15550100"},
+            created_at=TS,
+            updated_at=TS,
+        )
+    )
     return LifeOpsCore(
         people=people,
         preferences=preferences,
