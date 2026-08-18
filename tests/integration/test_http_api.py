@@ -55,6 +55,9 @@ class StubContainer:
             preferences=self.preferences,
             tasks=self.tasks,
             clock=self.clock,
+            # Mirrors Container: safe mode is read live from the config
+            # document, which is how a Console toggle reaches other processes.
+            safe_mode=lambda: self.config.get_system().safe_mode,
         )
 
     async def startup(self) -> None:

@@ -106,20 +106,34 @@ class ConfigurationService:
         self._secrets = secret_store
         self._clock = clock or SystemClock()
         self._document: dict[str, Any] | None = None
+        self._stamp: tuple[int, int] | None = None
         config_dir.mkdir(parents=True, exist_ok=True)
 
     # --- persistence --------------------------------------------------------
 
+    def _file_stamp(self) -> tuple[int, int] | None:
+        try:
+            stat = self._path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
     def _load(self) -> dict[str, Any]:
-        if self._document is not None:
+        # The cache is keyed on the file's identity, not held forever: the
+        # HTTP and MCP servers are separate processes sharing this file, and
+        # a Console change — safe mode above all — must reach a long-running
+        # MCP process without a restart. A stat per read buys that.
+        stamp = self._file_stamp()
+        if self._document is not None and stamp == self._stamp:
             return self._document
-        if not self._path.exists():
+        if stamp is None:
             self._document = {
                 "version": _DOCUMENT_VERSION,
                 "system": SystemConfig().model_dump(),
                 "providers": {},
                 "health": {},
             }
+            self._stamp = None
             return self._document
         try:
             data = json.loads(self._path.read_text())
@@ -131,6 +145,7 @@ class ConfigurationService:
         data.setdefault("providers", {})
         data.setdefault("health", {})
         self._document = data
+        self._stamp = stamp
         return data
 
     def _save(self, document: dict[str, Any]) -> None:
@@ -148,6 +163,7 @@ class ConfigurationService:
             Path(tmp_name).unlink(missing_ok=True)
             raise
         self._document = document
+        self._stamp = self._file_stamp()
 
     # --- system config ------------------------------------------------------
 
