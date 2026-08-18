@@ -314,6 +314,36 @@ class TestCorrectAndInvalidate:
         assert response.json()["code"] == "not_found"
 
 
+class TestInvalidatedOnly:
+    """Section 17's "invalidated/superseded history" view, over HTTP."""
+
+    async def test_returns_only_closed_records(
+        self, env: tuple[httpx.AsyncClient, Any, StubContainer]
+    ) -> None:
+        client, _, _ = env
+        current = (await _remember(client, "has a dog named Rex")).json()
+        closed = (await _remember(client, "had a cat named Tom")).json()
+        await client.post(
+            f"{API}/memory/{closed['id']}/invalidate",
+            json={"reason": "cat passed away"},
+        )
+
+        response = await client.get(f"{API}/memory", params={"invalidated_only": True})
+        assert response.status_code == 200
+        body = response.json()
+        ids = {m["id"] for m in body["memories"]}
+        assert ids == {closed["id"]}
+        assert current["id"] not in ids
+
+    async def test_include_invalid_is_still_refused(
+        self, env: tuple[httpx.AsyncClient, Any, StubContainer]
+    ) -> None:
+        client, _, _ = env
+        response = await client.get(f"{API}/memory", params={"include_invalid": True})
+        assert response.status_code == 422
+        assert response.json()["details"]["reason"] == "include_invalid_unsupported"
+
+
 class TestPromote:
     """Section 47's confirm/promote step, over HTTP."""
 
