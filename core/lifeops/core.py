@@ -39,6 +39,15 @@ from lifeops.domain.approvals import consume as consume_approval
 from lifeops.domain.approvals import decide as decide_approval
 from lifeops.domain.approvals import request as request_approval
 from lifeops.domain.audit import AuditRecord
+from lifeops.domain.bills import (
+    Bill,
+    BillDraft,
+    BillStatus,
+    Payee,
+    PayeeDraft,
+    may_pay,
+    validate_amount,
+)
 from lifeops.domain.calendar import (
     Appointment,
     AppointmentHoldDraft,
@@ -169,6 +178,7 @@ from lifeops.repositories.interfaces import (
     ActionRepository,
     ApprovalRepository,
     AuditRepository,
+    BillRepository,
     MemoryRepository,
     PersonRepository,
     PreferenceRepository,
@@ -1407,6 +1417,7 @@ class LifeOpsCore:
         actions: ActionRepository | None = None,
         approvals: ApprovalRepository | None = None,
         audit: AuditRepository | None = None,
+        bills: BillRepository | None = None,
         calendar: CalendarProviderService | None = None,
         email: EmailProviderService | None = None,
         telephony: TelephonyProviderService | None = None,
@@ -1477,6 +1488,7 @@ class LifeOpsCore:
             else None
         )
         self._audit_repo = audit
+        self._bills_repo = bills
         # Calendar/email (Phase 7, section 96) need both a persistence path
         # (``world``) and a provider adapter (``calendar``), the same
         # two-dependency shape ``ActionService`` uses for actions+approvals.
@@ -3158,7 +3170,189 @@ class LifeOpsCore:
         )
         return action
 
+    # --- bills and payees (BUILD_SPEC sections 72, 99) -------------------------
+    #
+    # Section 99: "Bills first. Payments last." Everything here records what is
+    # owed and to whom. Moving money goes through the action outbox, which
+    # means it inherits approval, idempotency, verification, audit, and the
+    # emergency stop rather than re-deriving any of them.
+
+    def _bills(self) -> BillRepository:
+        if self._bills_repo is None:
+            raise ConfigurationError(
+                "no bill repository is configured", component="bills"
+            )
+        return self._bills_repo
+
+    async def record_payee(self, client: ClientIdentity, draft: PayeeDraft) -> Action:
+        """Propose a new payee — which section 72 says always needs approval.
+
+        Returns the *action*, not the payee. A payee nobody approved is not a
+        payee you can pay, so recording one is a proposal until a human
+        decides; returning the payee here would read as though it were done.
+        """
+        self._require(client, Capability.FINANCIAL_PAYMENT)
+        payee = Payee(
+            id=Payee.make_id(draft.display_name),
+            display_name=draft.display_name.strip(),
+            provider_entity_id=draft.provider_entity_id,
+            secret_ref=draft.secret_ref,
+            created_at=now_iso(self._clock),
+            created_by_client=client.client_id,
+        )
+        await self._bills().upsert_payee(payee)
+        action = await self.prepare_action(
+            client,
+            ActionDraft(
+                type=ActionType.ADD_PAYEE,
+                payload={"payee_id": payee.id, "display_name": payee.display_name},
+                target_entity_id=payee.provider_entity_id,
+            ),
+        )
+        return action
+
+    async def approve_payee(
+        self, client: ClientIdentity, *, payee_id: str, approved_at: str | None = None
+    ) -> Payee:
+        """Mark a payee usable, once its ADD_PAYEE action was approved."""
+        self._require(client, Capability.APPROVE_ACTION)
+        payee = await self._bills().get_payee(payee_id)
+        if payee is None:
+            raise NotFoundError(f"no such payee: {payee_id}", payee_id=payee_id)
+        payee.approved_at = approved_at or now_iso(self._clock)
+        payee.approved_by = client.client_id
+        saved = await self._bills().upsert_payee(payee)
+        await self.audit(
+            client, result="approved", intent="approve_payee",
+            target=saved.id, risk="R4",
+        )
+        return saved
+
+    async def list_payees(self, client: ClientIdentity) -> list[Payee]:
+        self._require(client, Capability.READ_TASKS)
+        return await self._bills().list_payees()
+
+    async def record_bill(self, client: ClientIdentity, draft: BillDraft) -> Bill:
+        """Record something owed. This tracks a debt; it pays nothing."""
+        self._require(client, Capability.CREATE_TASK)
+        payee = await self._bills().get_payee(draft.payee_id)
+        if payee is None:
+            raise NotFoundError(f"no such payee: {draft.payee_id}", payee_id=draft.payee_id)
+
+        now = now_iso(self._clock)
+        bill = Bill(
+            id=Bill.make_id(),
+            payee_id=draft.payee_id,
+            description=draft.description.strip(),
+            amount=validate_amount(draft.amount),
+            currency=draft.currency.upper(),
+            due_at=draft.due_at,
+            source_document_id=draft.source_document_id,
+            created_at=now,
+            updated_at=now,
+            created_by_client=client.client_id,
+        )
+        with operation("bill.record", bill_id=bill.id, client_id=client.client_id):
+            created = await self._bills().create(bill)
+        await self.audit(
+            client, result="recorded", intent="record_bill",
+            target=created.id, risk="R1",
+        )
+        return created
+
+    async def get_bill(self, client: ClientIdentity, *, bill_id: str) -> Bill:
+        self._require(client, Capability.READ_TASKS)
+        bill = await self._bills().get(bill_id)
+        if bill is None:
+            raise NotFoundError(f"no such bill: {bill_id}", bill_id=bill_id)
+        return bill
+
+    async def list_bills(
+        self,
+        client: ClientIdentity,
+        *,
+        statuses: list[BillStatus] | None = None,
+        limit: int = 100,
+    ) -> list[Bill]:
+        """What is owed. Readable by any client that may read tasks — knowing
+        a bill is due is not the same as being able to pay it."""
+        self._require(client, Capability.READ_TASKS)
+        return await self._bills().list_bills(statuses=statuses, limit=limit)
+
+    async def prepare_bill_payment(
+        self, client: ClientIdentity, *, bill_id: str
+    ) -> Action:
+        """Prepare a payment for a bill (sections 57, 72).
+
+        Returns an action that always needs approval — R4 is never
+        policy-relaxable — and whose payload carries the exact amount, so a
+        later edit to that amount invalidates whatever a human agreed to.
+        """
+        self._require(client, Capability.FINANCIAL_PAYMENT)
+        bill = await self.get_bill(client, bill_id=bill_id)
+        payee = await self._bills().get_payee(bill.payee_id)
+        if payee is None:
+            raise NotFoundError(f"no such payee: {bill.payee_id}", payee_id=bill.payee_id)
+
+        may_pay(bill, payee)
+
+        if bill.action_id is not None:
+            # Section 60: before starting again, find out whether the previous
+            # attempt exists. Two live payment actions for one bill is how a
+            # bill gets paid twice.
+            existing = await self._actions().get(bill.action_id)
+            if existing.is_live:
+                return existing
+
+        action = await self.prepare_action(
+            client,
+            ActionDraft(
+                type=ActionType.PREPARE_PAYMENT,
+                payload={
+                    "bill_id": bill.id,
+                    "payee_id": payee.id,
+                    "payee": payee.display_name,
+                    "amount": bill.amount,
+                    "currency": bill.currency,
+                    "description": bill.description,
+                },
+                target_entity_id=payee.provider_entity_id,
+            ),
+        )
+        bill.action_id = action.id
+        bill.updated_at = now_iso(self._clock)
+        await self._bills().update(bill)
+        return action
+
+    async def settle_bill(
+        self, client: ClientIdentity, *, bill_id: str, external_reference: str
+    ) -> Bill:
+        """Mark a bill paid — only with the provider's own confirmation.
+
+        Section 72 requires external confirmation and section 53 requires
+        evidence; a bill is not paid because LifeOps believes it is.
+        """
+        self._require(client, Capability.FINANCIAL_PAYMENT)
+        if not external_reference.strip():
+            raise ValidationError(
+                "a bill is settled only with the provider's confirmation",
+                field="external_reference",
+                bill_id=bill_id,
+            )
+        bill = await self.get_bill(client, bill_id=bill_id)
+        bill.status = BillStatus.PAID
+        bill.paid_at = now_iso(self._clock)
+        bill.external_reference = external_reference
+        bill.updated_at = bill.paid_at
+        saved = await self._bills().update(bill)
+        await self.audit(
+            client, result="paid", intent="settle_bill", target=saved.id,
+            risk="R4", verification=external_reference,
+        )
+        return saved
+
     # --- search -------------------------------------------------------------
+
 
 
     async def search(

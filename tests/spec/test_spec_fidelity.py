@@ -126,10 +126,24 @@ class TestActionToolSurface:
     calendar before writing to one. This pins the *action* vocabulary only.
     """
 
-    #: Not implemented until the phase that executes them (section 99 gates
-    #: payment behind proven infrastructure), so they are excused by name
-    #: rather than by silence.
-    DEFERRED_TO_PHASE_10 = {"prepare_payment", "commit_payment"}
+    #: Section 51 lists these as agent tools. They are deliberately NOT on the
+    #: MCP surface, and this is a judgement beyond what the spec requires —
+    #: recorded here so it is a decision someone can reverse, not an omission.
+    #:
+    #: Both exist as ActionTypes and are reachable from the Console. What is
+    #: withheld is the *agent* path: FINANCIAL_PAYMENT is granted to the
+    #: Console alone, so an MCP tool for either would be denied to every
+    #: client that could call it — dead surface rather than a capability.
+    #:
+    #: The spec would also permit the other reading: grant Hermes
+    #: FINANCIAL_PAYMENT and let the approval gate (APPROVE_ACTION, also
+    #: Console-only) be the thing that stops money moving. That is the design
+    #: sections 56 and 57 describe, and it is strictly more useful — Hermes
+    #: could notice a bill is due and prepare a payment for a human to approve.
+    #: It is not taken here because Phase 10 is the last-implemented, highest
+    #: consequence phase, and granting a capability later is easier than
+    #: clawing one back.
+    CONSOLE_ONLY_BY_JUDGEMENT = {"prepare_payment", "commit_payment"}
 
     @staticmethod
     def _registered_tools() -> set[str]:
@@ -148,12 +162,14 @@ class TestActionToolSurface:
 
     def test_every_section_51_action_tool_exists_under_its_own_name(self) -> None:
         sanctioned = set(fenced_list(51)) | set(fenced_list(51, block=2))
-        missing = sanctioned - self._registered_tools() - self.DEFERRED_TO_PHASE_10
+        missing = sanctioned - self._registered_tools() - self.CONSOLE_ONLY_BY_JUDGEMENT
         assert missing == set()
 
-    def test_deferred_tools_really_are_absent(self) -> None:
-        """A payment tool must not exist before section 99's gate is closed."""
-        assert self.DEFERRED_TO_PHASE_10 & self._registered_tools() == set()
+    def test_payment_tools_stay_off_the_agent_surface(self) -> None:
+        """Deliberate: see CONSOLE_ONLY_BY_JUDGEMENT. Reversing this means
+        granting Hermes FINANCIAL_PAYMENT and adding both tools together —
+        a tool without the capability would only ever return a denial."""
+        assert self.CONSOLE_ONLY_BY_JUDGEMENT & self._registered_tools() == set()
 
     def test_no_generic_action_tool_is_exposed(self) -> None:
         """Section 51: avoid do_action, browser_action, execute_anything."""

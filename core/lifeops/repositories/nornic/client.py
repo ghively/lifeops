@@ -72,6 +72,14 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     # "checked out twice" failure section 60 exists to prevent.
     "CREATE CONSTRAINT lifeops_shopping_list_id IF NOT EXISTS "
     "FOR (s:ShoppingList) REQUIRE s.id IS UNIQUE",
+    # Phase 10 (sections 72, 99). The payee constraint matters most: two
+    # Payee nodes sharing an id is how a payment reaches the wrong one.
+    "CREATE CONSTRAINT lifeops_bill_id IF NOT EXISTS "
+    "FOR (b:Bill) REQUIRE b.id IS UNIQUE",
+    "CREATE CONSTRAINT lifeops_payee_id IF NOT EXISTS "
+    "FOR (p:Payee) REQUIRE p.id IS UNIQUE",
+    "CREATE INDEX lifeops_bill_status IF NOT EXISTS FOR (b:Bill) ON (b.status)",
+    "CREATE INDEX lifeops_bill_due IF NOT EXISTS FOR (b:Bill) ON (b.due_at)",
     "CREATE INDEX lifeops_preference_subject_key IF NOT EXISTS "
     "FOR (p:Preference) ON (p.subject_id, p.key)",
     "CREATE INDEX lifeops_task_state IF NOT EXISTS FOR (t:Task) ON (t.state)",
