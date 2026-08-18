@@ -212,30 +212,43 @@ regression here — the fakes will stay green.
 ## Known gaps
 
 Recorded in [SECURITY.md](SECURITY.md), not hidden. Two audits hold the
-complete findings: [docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md)
+original findings: [docs/audits/2026-08-18-bugcheck.md](docs/audits/2026-08-18-bugcheck.md)
 (correctness bugs and spec-fidelity debt in code that exists — all fixed on
 that branch) and [docs/audits/2026-08-18-unimplemented-features.md](docs/audits/2026-08-18-unimplemented-features.md)
 (BUILD_SPEC prose with no corresponding code at all, verified section by
-section against the code rather than against this file). What follows is
-that second audit's findings, superseding the shorter list this section
-used to carry.
+section against the code rather than against this file). A follow-up pass
+closed most of that second audit's findings — the audit doc's own
+changelog records what changed and when; what follows here is the current,
+much shorter list of what is still genuinely missing.
 
-**Not every disabled provider has a working adapter behind it — the old
-"ships built and disabled with a fake behind it" claim below overstated
-this.** Calendar and email do: real, protocol-correct adapters
-(`calendar/caldav.py`, `email/imap_smtp.py`), disabled per BUILD_SPEC
-section 88 until credentials exist. Browser and telephony do not:
-`browser/real.py` raises on every method regardless of whether Playwright
-is installed, and `telephony/` has no `real.py` at all, only a Protocol and
-a fake. Shopping checkout inherits the browser gap, since it has no other
-execution path. No payment-provider adapter exists at all — deliberate, not
-a stub (see "Money moves only where a human is present" above).
+**Every disabled provider now has a working adapter behind it.** Calendar
+(`calendar/caldav.py`), email (`email/imap_smtp.py`), browser
+(`browser/real.py`, Playwright/Chromium), and telephony
+(`telephony/twilio.py`, Twilio's REST API) are all real, protocol-correct
+adapters, disabled per BUILD_SPEC section 88 until credentials exist (browser
+needs none — see its module docstring). Two are real but honestly narrower
+than "working": the browser adapter can launch Chromium and manage isolated
+per-context profiles for real, but has no site-specific automation for any
+actual shopping site (`browser/real.py`'s `_SITE_ADAPTERS` is empty — no
+retailer has ever been chosen); the telephony adapter can place/track/hang up
+a real call, but `dial()` always refuses because nothing in this codebase —
+not `CallObjective`, not `_prepare_provider_contact`, not the Protocol
+signature — ever resolves an actual destination phone number, and no call
+can meet its objective without the Voice Bridge (below) to hold the
+conversation. No payment-provider adapter exists at all — deliberate, not a
+stub (see "Money moves only where a human is present" above).
 
-- **Console.** Calendar, Knowledge, Files, and Hermes are `ComingInPhasePage`
-  stubs with no backing route. Today shows tasks only — no approvals,
-  waiting items, or calendar events, though the spec calls for them.
-  Universal search covers people, preferences, and tasks — 3 of the 12
-  spec'd categories.
+- **Console.** Every section 10 nav entry now has a real screen — Calendar,
+  Hermes, Files, and Knowledge replaced their `ComingInPhasePage` stubs, and
+  Today shows approvals, waiting items, and calendar appointments alongside
+  tasks. Universal search covers 10 of the 12 spec'd categories (people,
+  preferences, tasks, providers, assets, appointments, memory, documents,
+  knowledge, bills); events and actions/historical facts are still missing
+  because no domain model or dedicated screen exists for either
+  (`SearchPage.tsx`'s footer says so). The World screen's temporal/current
+  toggle exists but is honestly scoped: only preferences carry real
+  per-fact supersession history to toggle to (see the next bullet), so
+  every other entity type stays current-only either way.
 - **Voice.** The Voice Bridge does not exist as a runtime path — no duplex
   audio streaming code anywhere, not even scaffolding, which is a stronger
   gap than "no websocket scaffolding, no codec" suggests. The RTX
@@ -243,27 +256,42 @@ a stub (see "Money moves only where a human is present" above).
   (section 33) are pure spec text with no corresponding code. The local
   ASR/TTS adapters raise unconditionally even when the underlying runtime
   is installed — a step short of section 88's "fake behind it" bar, unlike
-  ElevenLabs's fake, which behaves.
-- **MCP surface.** 3 of 7 resources exist (`lifeops://me`, `today`,
-  `waiting`); several named tools from sections 50-51 are missing or
-  MCP-unexposed (`list_waiting_items`, `find_provider`, `commit_payment`,
-  `search_knowledge`, and more — `get_task`/`list_appointments`/`get_bill`
-  exist server-side but only reach HTTP, not MCP). The `Knowledge` and
-  `WorkflowTemplate` world entity types (section 36) don't exist at all,
-  which is why Knowledge search and the Knowledge/Files screens have
-  nothing to back them.
-- **Memory.** Promotion (section 47) is a write-time filter, not the
-  confirm/promote pipeline the spec describes — no code turns a
-  `PREFERENCE_CANDIDATE` memory into a real preference. Trust-hierarchy
-  enforcement (section 46) checks preference supersession only;
-  `remember()` never checks a new memory's source against an existing
-  one's.
+  ElevenLabs's fake, which behaves. This is the one gap left that was
+  explicitly deferred to a design check-in rather than closed, since it
+  needs the user's input on hardware/latency tradeoffs, not unilateral
+  building.
+- **MCP surface.** Closed except for one deliberate absence: all 8 spec'd
+  resources exist (`lifeops://me`, `today`, `waiting`, `household`,
+  `approvals`, `entity/{id}`, `task/{id}`, `provider/{id}`), and every
+  previously-HTTP-only read (`list_waiting_items`, `find_provider`,
+  `get_task`, `list_appointments`, `get_bill`, `search_knowledge`) now has
+  an MCP tool. `commit_payment` still has no MCP tool — that one is
+  intentional, not a gap (see "Money moves only where a human is present").
+  The `Knowledge` world entity type (section 36) now exists, backing
+  `search_knowledge` and the Knowledge screen; `WorkflowTemplate` also
+  exists (`workflow-templates` HTTP routes, the Routines screen) — neither
+  is a world entity type in the section 36 sense, so this bullet previously
+  conflated two different gaps that are both closed now regardless.
+- **Memory.** Promotion (section 47) is implemented: `promote_memory` turns
+  a confirmed `PREFERENCE_CANDIDATE` into a real preference
+  (Console/HTTP-only, the same boundary `create_document` draws). The
+  original "trust-hierarchy enforcement checks preference supersession
+  only" claim was a false negative, not a real gap — `remember()`
+  deliberately has no supersession check (a fresh memory is independent
+  evidence, not a competing claim, per section 46's own "external content
+  creates evidence, it does not create user authority"); `correct_memory`
+  is where a competing claim is actually asserted, and it was already
+  trust-checked via `may_supersede` — `tests/unit/test_memory.py`'s
+  `TestMemoryTrustHierarchy` now names this explicitly so a future grep
+  finds it rather than concluding otherwise again.
 - **Hermes self-configuration** (sections 73-76) is unwired beyond filing
   code change requests: the `skill`, `cron_job`, `reminder`,
   `non_critical_prompt`, and `routine_template` self-config targets have no
   save/apply path, and the one generic entry point, `propose_self_change`,
   isn't exposed over MCP or HTTP. Zero Hermes skills are instantiated — the
-  template is finished; nothing uses it.
+  template is finished; nothing uses it. Deferred alongside the Voice
+  Bridge, for the same reason: writing actual skill content needs the
+  user's input, not unilateral building.
 - **Chaos tests** (section 86) now cover all 16 spec'd failure scenarios —
   see `tests/chaos/` (13 scenarios, fakes-only, in `make test-fast`) and
   `tests/e2e/test_chaos_duplicate_mcp_request.py` (scenario 6, needs a live
@@ -285,8 +313,6 @@ a stub (see "Money moves only where a human is present" above).
   reports the memories referencing an entity and says so in its `covers`
   field rather than implying more. (The durable audit log itself exists —
   Phase 4, section 62 — and answers "which client changed this?".)
-- The World screen shows the *current* view. Section 15 also lists a
-  temporal/current toggle; that is not built.
 - The voice acceptance scenario (section 103) has no automated coverage of
   its Console walkthrough, since the Voice Bridge doesn't exist. The
   provider-configuration scenario (section 104) does have a real, passing
