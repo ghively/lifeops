@@ -551,6 +551,11 @@ export function BillsPage() {
     mutationFn: (id: string) => payeesApi.approve(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'payees'] })
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'approvals'] })
+    },
+    // Money-adjacent: a failed approval must be visible, not swallowed.
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'payees'] })
     },
   })
 
@@ -629,6 +634,14 @@ export function BillsPage() {
           </Button>
         </div>
 
+        {approvePayee.isError ? (
+          <p
+            role="alert"
+            className="rounded-lg border border-red-300/60 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-300"
+          >
+            The payee was not approved: {errorMessage(approvePayee.error)}
+          </p>
+        ) : null}
         {payeesQuery.isLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />

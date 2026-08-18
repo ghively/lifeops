@@ -232,6 +232,15 @@ export function LifeOpsTasksPage() {
         </Button>
       </form>
 
+      {createTask.isError ? (
+        <p
+          role="alert"
+          className="rounded-lg border border-red-300/60 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-300"
+        >
+          The task was not captured: {errorMessage(createTask.error)}
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         {FILTERS.map((option) => (
           <button
