@@ -412,6 +412,90 @@ own input on hardware and priorities.
   closer reading of that same diagram, to sit in the Hermes runtime rather
   than LifeOps Core — see below.
 
+## Follow-up (third session, same branch): "finish all the repo work"
+
+The user's instruction this pass was unqualified: close every remaining gap
+against BUILD_SPEC that is actually buildable in this repository, having
+already confirmed the three items that are not (Voice Bridge orchestration,
+extra TTS candidates, the six Later-tier skills — see above).
+
+- **Hermes self-configuration's save/apply mechanism (§73–76)** is wired now,
+  closing the half the previous session's skill-content work left open.
+  `routine_template`, `cron_job`, and `reminder` all route through the
+  existing `WorkflowTemplate` mechanism rather than a second scheduler
+  (§55) — `save_workflow_template`, `list_workflow_templates`,
+  `due_routines`, and `delete_workflow_template` are now exposed over both
+  MCP and HTTP. `skill` and `non_critical_prompt` go through
+  `propose_self_change` as a pure validate-and-file gate, now itself
+  exposed over MCP (`propose_self_change`) where it previously only existed
+  as an unreachable method on `LifeOpsCore`. `preference` used the
+  pre-existing save path throughout.
+- **Telephony's destination-number gap**, named explicitly in the previous
+  section as the reason `dial()` could never succeed, is closed:
+  `_phone_number_for_provider` in `core.py` resolves a real number from the
+  target provider's own `phone` fact before `_prepare_provider_contact`
+  builds the call objective, and `telephony/twilio.py`'s `dial()` now
+  genuinely POSTs to Twilio's Calls resource with inline TwiML instead of
+  always refusing. Fixed alongside, proactively: `_prepare_provider_contact`
+  ran its capability check after doing repository reads, which could leak
+  existence/data to an unauthorized client before the check ever ran — the
+  check now runs first.
+- **Universal search's two missing categories (events, actions/historical
+  facts)** are closed — `search()` now queries `AuditRepository` for both,
+  guarded the same way the pre-existing bills/audit blocks were so a
+  deployment without an audit repository configured still degrades
+  cleanly instead of raising.
+- **World entity facts were current-only** (no per-fact supersession chain,
+  unlike preferences and memories, per §16). Closed: `EntityFact`,
+  `WorldRepository.update_facts`/`fact_history`, and
+  `LifeOpsCore.update_entity`/`record_or_update_entity` replicate the exact
+  close-old/open-new/`SUPERSEDES`-edge transaction `Preference` established,
+  written in one `write_many` the same way. `record_provider`/`record_asset`
+  now upsert-with-history instead of only ever creating, closing a gap the
+  original audit had not even named: there was no update path for a world
+  entity at all. §51's narrow MCP surface still holds — `record_provider`,
+  `record_asset`, and `create_service_request` are still the only
+  `write_world` entry points; nothing generic was added.
+- **The stranded-action gap** the previous session's chaos-test run
+  surfaced (a repository write failure between commit and result-recording
+  escaping uncaught) is now bounded-retried: `record_action_result` retries
+  a `RepositoryError` up to three times with a short delay
+  (`_record_result_with_retry`) before giving up, so a transient failure
+  recovers instead of stranding on the first attempt. A failure past the
+  retry budget still strands, deliberately — recovering *that* case is
+  still the distributed-systems design question the previous section named,
+  not something a retry loop can answer.
+- **Nine Hermes skills** now exist under `hermes/skills/lifeops/` — the
+  eight from the previous session plus `shopping-manager`, added alongside
+  the browser-automation architecture decision below.
+- **Browser: an Instacart site adapter was scoped, not built.** The user was
+  asked directly whether an LLM should drive checkout live against raw page
+  content, given the prompt-injection risk of putting untrusted page
+  content next to a payment-capable action loop; they chose the safer
+  shape — one reviewed, deterministic site adapter registered in
+  `browser/real.py`'s `_SITE_ADAPTERS` extension point, plus a Hermes skill
+  that drives it generically — and named Instacart as the retailer.
+  Implementation hit a hard environment wall before any Instacart-specific
+  code was written: this sandbox's Chromium cannot reach any live site
+  through the network proxy at all (`net::ERR_CONNECTION_RESET` against
+  instacart.com, google.com, and plain example.com alike, with several
+  proxy configurations tried; `curl` to the same hosts works fine), so
+  there is no way to render Instacart's real DOM or verify any automation
+  logic in this session. Writing selectors without ever seeing the real
+  page would be exactly the "shipping scraping logic never tested against
+  a live site" anti-pattern `browser/real.py`'s own docstring calls out and
+  §105 forbids — worse here, since this session has concrete proof no
+  verification was possible, not just an absence of one. Raised with the
+  user directly rather than either faking it or silently dropping the
+  item; they confirmed: document it as an environment-blocked gap and build
+  the real adapter once this runs somewhere with live browser network
+  access. `_SITE_ADAPTERS` stays empty. `hermes/skills/lifeops/
+  shopping-manager/SKILL.md` was still written now — it describes how
+  Hermes should drive whichever site adapters exist through the narrow
+  shopping MCP tools (`search_shopping`, `create_shopping_list`,
+  `build_grocery_cart`, `apply_substitution`, `submit_grocery_order`), and
+  needs no changes once a real adapter lands behind those same tools.
+
 **Still open**, matching CLAUDE.md's "Known gaps": the Voice Bridge
 orchestrator itself (§32's diagram places it between audio and "the same
 Hermes runtime," not LifeOps Core — building duplex-audio orchestration here
@@ -419,8 +503,10 @@ would cross the "no second agent/agent runtime" boundary, so this stays
 Hermes-side and out of this repository's scope) and everything downstream of
 it that only the Bridge would drive: RTX scheduling (§31), latency
 instrumentation (§33), the §103 acceptance walkthrough, and telephony
-actually holding a conversation. Also still open: Hermes self-configuration's
-save/apply *mechanism* (§73–76, as distinguished above — the skill *content*
-gap is closed) and Qwen3-TTS/Chatterbox Turbo adapters (§30's other two TTS
-candidates — the user asked to try all of them eventually; Kokoro was first,
-not exclusive).
+actually holding a conversation. Also still open: the Instacart site adapter
+itself (scoped and approved, blocked on live browser network access this
+sandbox cannot provide — see above) and Qwen3-TTS/Chatterbox Turbo adapters
+(§30's other two TTS candidates — the user asked to try all of them
+eventually; Kokoro was first, not exclusive). Every other item this audit
+originally found has a closure recorded above or in the previous session's
+section.
