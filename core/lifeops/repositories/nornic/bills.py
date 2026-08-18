@@ -250,3 +250,20 @@ class NornicBillRepository:
         )
         stored = await self.get_payee(merged.id)
         return stored or merged
+
+    async def clear_payee_approval(self, payee_id: str) -> Payee:
+        existing = await self.get_payee(payee_id)
+        if existing is None:
+            raise NotFoundError(f"no such payee: {payee_id}", payee_id=payee_id)
+        await self._client.write(
+            """
+            MATCH (p:Payee {id: $id})
+            SET p.approved_at = null,
+                p.approved_by = null
+            """,
+            id=payee_id,
+        )
+        existing.approved_at = None
+        existing.approved_by = None
+        stored = await self.get_payee(payee_id)
+        return stored or existing

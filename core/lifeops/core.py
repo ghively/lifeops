@@ -16,6 +16,8 @@ import builtins
 import logging
 from collections.abc import Callable
 
+from pydantic import ValidationError as PydanticValidationError
+
 from lifeops.browser.service import BrowserProviderService
 from lifeops.calendar.service import CalendarProviderService
 from lifeops.clock import Clock, SystemClock, now_iso
@@ -164,8 +166,8 @@ from lifeops.email.service import EmailProviderService
 from lifeops.errors import (
     ConfigurationError,
     ConflictError,
+    LifeOpsError,
     NotFoundError,
-    ProviderError,
     ValidationError,
     VerificationRequiredError,
 )
@@ -789,6 +791,18 @@ class ActionService:
             elif saved.status is ApprovalStatus.DECLINED:
                 action.status = ActionStatus.CANCELLED
                 action.failure_reason = "declined by the user"
+            elif (
+                saved.status is ApprovalStatus.EXPIRED
+                and action.status is ActionStatus.NEEDS_APPROVAL
+            ):
+                # The human decided too late. Without a fresh approval the
+                # action deadlocks: it stays live forever, no path re-requests
+                # approval, and idempotency dedup pins any re-prepare of the
+                # same payload to it. Issue a new card — the human still
+                # decides; they just get something decidable to click.
+                fresh = request_approval(action, now=now, requested_by=by)
+                await self._approvals.create(fresh)
+                self._notify(APPROVAL_CHANGED, fresh.id)
             await self._actions.update(action)
             self._notify(ACTION_CHANGED, action.id)
 
@@ -1272,6 +1286,14 @@ class ShoppingService:
     ) -> ShoppingList:
         shopping_list = await self.get(list_id)
         updated = shopping_domain.mark_submitting(shopping_list, action_id=action_id, now=now)
+        await self._shopping.upsert(updated)
+        self._notify(updated.id)
+        return updated
+
+    async def revert_submitting(self, list_id: str, *, now: str) -> ShoppingList:
+        """CART_BUILT again after a declined or failed checkout."""
+        shopping_list = await self.get(list_id)
+        updated = shopping_domain.cancel_submission(shopping_list, now=now)
         await self._shopping.upsert(updated)
         self._notify(updated.id)
         return updated
@@ -2390,7 +2412,51 @@ class LifeOpsCore:
             action=approval.action_id,
             risk="approval",
         )
+        # ADD_PAYEE's whole effect is internal — the payee becoming payable —
+        # so it completes here at the decision, not in a provider call.
+        # Without this, approving the card left the payee unusable and the
+        # Bills screen's button left the card pending forever: two halves of
+        # one gate that never spoke (section 72).
+        if approval.status is ApprovalStatus.APPROVED:
+            action = await self._actions().get(approval.action_id)
+            if action is not None and action.type is ActionType.ADD_PAYEE:
+                await self._complete_payee_approval(client, action)
+        elif approval.status is ApprovalStatus.DECLINED:
+            action = await self._actions().get(approval.action_id)
+            if action is not None and action.type is ActionType.SUBMIT_GROCERY_ORDER:
+                # The cart still exists; only the order was refused. Without
+                # this the list stayed SUBMITTING forever — every operation
+                # refuses that state and nothing else exits it.
+                list_id = action.payload.get("shopping_list_id")
+                if list_id:
+                    await self._shopping().revert_submitting(
+                        str(list_id), now=now_iso(self._clock)
+                    )
         return approval
+
+    async def _complete_payee_approval(
+        self, client: ClientIdentity, action: Action
+    ) -> None:
+        """Apply an approved ADD_PAYEE: mark the payee payable and close the
+        outbox record, so the action does not sit APPROVED awaiting an
+        executor that does not exist."""
+        payee_id = str(action.payload.get("payee_id") or "")
+        payee = await self._bills().get_payee(payee_id)
+        if payee is None:
+            raise NotFoundError(
+                f"approved ADD_PAYEE names a payee that does not exist: {payee_id!r}",
+                payee_id=payee_id,
+                action_id=action.id,
+            )
+        payee.approved_at = now_iso(self._clock)
+        payee.approved_by = client.client_id
+        saved = await self._bills().upsert_payee(payee)
+        await self.commit_action(client, action_id=action.id)
+        await self.record_action_result(client, action_id=action.id, succeeded=True)
+        await self.audit(
+            client, result="approved", intent="approve_payee",
+            target=saved.id, action=action.id, risk="R4",
+        )
 
     async def commit_action(self, client: ClientIdentity, *, action_id: str) -> Action:
         """Clear an action to execute, spending its approval (section 57)."""
@@ -2503,13 +2569,25 @@ class LifeOpsCore:
                 external_reference, _ = await self._shopping().execute_checkout(committed)
             else:
                 external_reference, _ = await self._execute_send_email(committed)
-        except (ProviderError, ValidationError, ConfigurationError) as exc:
+        except (LifeOpsError, PydanticValidationError) as exc:
+            # Broad on purpose: the old narrow catch (provider/validation/
+            # config) let a RepositoryError or a pydantic error from payload
+            # parsing escape with no FAILED record — the action sat live in
+            # EXECUTING with a consumed approval, unfinishable and
+            # uncommittable. Any LifeOps-shaped failure now lands in the
+            # outbox; only genuine programming errors still propagate.
             result = await self.record_action_result(
                 client, action_id=action_id, succeeded=False, failure_reason=str(exc)
             )
             list_id = committed.payload.get("shopping_list_id")
             if committed.type is ActionType.BUILD_GROCERY_CART and list_id:
                 await self._shopping().mark_cart_failed(str(list_id), now=now_iso(self._clock))
+            elif committed.type is ActionType.SUBMIT_GROCERY_ORDER and list_id:
+                # The order did not go out; the cart is intact. CART_BUILT
+                # again, so the checkout can be retried.
+                await self._shopping().revert_submitting(
+                    str(list_id), now=now_iso(self._clock)
+                )
             return result
         return await self.record_action_result(
             client, action_id=action_id, succeeded=True, external_reference=external_reference
@@ -3240,6 +3318,23 @@ class LifeOpsCore:
             created_at=now_iso(self._clock),
             created_by_client=client.client_id,
         )
+        # Changing an approved payee's payment details is exactly what
+        # NOT_AUTHORISED_BY[ADD_PAYEE] says the old approval does not cover:
+        # revoke it first, so the payee is unpayable until a human decides
+        # the new ADD_PAYEE card (section 72). The revocation comes before
+        # the upsert — a crash between the two leaves the payee unapproved
+        # with its old details, which fails safe.
+        existing = await self._bills().get_payee(payee.id)
+        details_changed = existing is not None and existing.is_approved and (
+            existing.secret_ref != payee.secret_ref
+            or existing.provider_entity_id != payee.provider_entity_id
+        )
+        if details_changed:
+            await self._bills().clear_payee_approval(payee.id)
+            await self.audit(
+                client, result="approval_revoked", intent="record_payee",
+                target=payee.id, risk="R4",
+            )
         await self._bills().upsert_payee(payee)
         action = await self.prepare_action(
             client,
@@ -3254,11 +3349,38 @@ class LifeOpsCore:
     async def approve_payee(
         self, client: ClientIdentity, *, payee_id: str, approved_at: str | None = None
     ) -> Payee:
-        """Mark a payee usable, once its ADD_PAYEE action was approved."""
+        """Mark a payee usable — through its ADD_PAYEE approval when one is
+        pending, so the Bills screen's button and the Approvals card are one
+        gate, not two that never spoke."""
         self._require(client, Capability.APPROVE_ACTION)
         payee = await self._bills().get_payee(payee_id)
         if payee is None:
             raise NotFoundError(f"no such payee: {payee_id}", payee_id=payee_id)
+
+        pending = await self._pending_add_payee_approval(payee_id)
+        if pending is not None:
+            # decide_approval runs the ADD_PAYEE completion hook, which marks
+            # the payee approved and closes the outbox record — one flow.
+            await self.decide_approval(
+                client, approval_id=pending.id, approved=True
+            )
+            refreshed = await self._bills().get_payee(payee_id)
+            if refreshed is not None and refreshed.is_approved:
+                return refreshed
+            # The card had expired: deciding marked it EXPIRED and issued a
+            # fresh one. Decide that fresh card so the human's click still
+            # lands — one bounded retry, never a loop.
+            reissued = await self._pending_add_payee_approval(payee_id)
+            if reissued is not None:
+                await self.decide_approval(
+                    client, approval_id=reissued.id, approved=True
+                )
+                refreshed = await self._bills().get_payee(payee_id)
+                if refreshed is not None and refreshed.is_approved:
+                    return refreshed
+
+        # No card exists (a payee recorded before the outbox, or a card
+        # already resolved): approve directly, as before.
         payee.approved_at = approved_at or now_iso(self._clock)
         payee.approved_by = client.client_id
         saved = await self._bills().upsert_payee(payee)
@@ -3267,6 +3389,20 @@ class LifeOpsCore:
             target=saved.id, risk="R4",
         )
         return saved
+
+    async def _pending_add_payee_approval(self, payee_id: str) -> Approval | None:
+        """The PENDING approval on the payee's live ADD_PAYEE action, if any."""
+        live = await self._actions().list(
+            statuses=[ActionStatus.NEEDS_APPROVAL], limit=100
+        )
+        for action in live:
+            if action.type is ActionType.ADD_PAYEE and (
+                str(action.payload.get("payee_id") or "") == payee_id
+            ):
+                approval = await self._actions().approval_for(action.id)
+                if approval is not None and approval.status is ApprovalStatus.PENDING:
+                    return approval
+        return None
 
     async def list_payees(self, client: ClientIdentity) -> list[Payee]:
         self._require(client, Capability.READ_TASKS)
