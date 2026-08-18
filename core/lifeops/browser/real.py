@@ -1,48 +1,132 @@
-"""RealBrowserWorker (BUILD_SPEC sections 88, 98).
+"""RealBrowserWorker (BUILD_SPEC sections 66, 88, 98).
 
-This exists so the ``BrowserWorker`` abstraction has a real-adapter shape to
-select once a browser runtime is installed — not to ship a working automated
-browser. AGENTS.md requires a written justification for any new dependency,
-and a browser automation runtime (playwright, selenium, puppeteer) is exactly
-the kind of large, speculative install BUILD_SPEC section 105 forbids adding
-before a concrete need calls for it; this codebase adds none of them.
+Playwright is a new dependency; AGENTS.md requires a written justification
+before adding one:
 
-Instead this adapter *detects* whether a runtime it could call is importable
-and reports the honest result through ``health()`` — "not installed" when it
-genuinely is not — exactly the pattern ``voice/local.py`` established for the
-local speech runtimes. Every other method never fabricates a result: it raises
-with that same message, exactly as ``api/http.py``'s ``test_provider`` already
-does for every provider that has no adapter (BUILD_SPEC section 88 — never
-fake success).
+    Problem:              browser/real.py raised on every method regardless
+                           of whether a runtime was installed, and health()
+                           reported "not integrated" even when Chromium was
+                           reachable — a real capability reported as absent,
+                           which is exactly the dishonesty section 88's
+                           never-fake-success rule exists to prevent, just
+                           pointed the other direction.
+    Existing capability:  none. No code anywhere in this repository can
+                           launch or drive a browser; Hermes's own web tools
+                           are read-only search/extraction (section 65), not
+                           authenticated interaction with a dynamic site.
+    Why it is required:   section 98's shopping flow and section 66's
+                           "separate persistent browser contexts" both
+                           presuppose an actual browser process. Unlike
+                           CalDAV or IMAP there is no protocol to speak
+                           instead — driving a real site requires a real
+                           browser.
+    Operational cost:     one Chromium process per call
+                           (``BrowserProviderService`` rebuilds the worker on
+                           every call, same as every other provider, so
+                           config changes take effect without a restart) plus
+                           Chromium's own footprint. The binary ships
+                           pre-installed in this environment; no download
+                           step is added.
+    Removal plan:         delete this module and the ``playwright``
+                           dependency. ``BrowserWorker`` is a ``Protocol``,
+                           so nothing else in the codebase imports Playwright
+                           directly — removing this file is the whole
+                           removal.
 
-No browser is ever launched here. Endpoint, headless mode, and navigation
-timeout are Console fields (``config/provider_registry.py``'s ``browser``
-provider); this module only decides whether it could possibly use whatever
-the user configures.
+What this makes real: launching Chromium and reporting whether that
+genuinely worked (``health()``), and per-context persistent, isolated
+browser profiles on disk (``_open_context``) — section 66's "separate
+persistent browser contexts" requirement, actually enforced: two different
+context names get two different on-disk profile directories that share no
+cookies (``tests/unit/test_browser.py`` proves this against a real browser,
+not a mock).
+
+What this does NOT make real: searching or checking out on any actual
+shopping site. That needs site-specific automation — a login flow, a page
+structure, selectors — per retailer, and no retailer is named anywhere in
+this codebase. Inventing one here would mean shipping scraping logic never
+tested against a live site, for a store nobody chose, which is precisely
+the kind of speculative build BUILD_SPEC section 105 warns against. The
+five shopping methods below therefore report a specific, honest gap — "no
+site adapter for store X" — through ``_SITE_ADAPTERS``, the extension point
+a real site integration would register itself into. Nothing else in this
+module needs to change to add one.
 """
 
 from __future__ import annotations
 
+import os
+import re
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
 from lifeops.domain.shopping import CartResult, OrderResult, ProductResult, ShoppingItem
 from lifeops.errors import ProviderError
-from lifeops.runtime import detect_runtime
 
-#: Real, commonly installed package names a browser-automation adapter could
-#: eventually be written against. Detecting them is useful even though no
-#: adapter exists yet — same reasoning as ``voice/local.py``'s
-#: ``ASR_RUNTIME_CANDIDATES``.
-BROWSER_RUNTIME_CANDIDATES: tuple[str, ...] = ("playwright", "selenium")
+if TYPE_CHECKING:
+    from playwright.async_api import Browser, BrowserContext, Playwright
 
+
+def _default_profile_root() -> Path:
+    """Mirrors ``settings._default_state_dir``'s XDG rule without importing
+    it: a browser-runtime detail stays independent of the composition root,
+    the same way ``RealBrowserWorker`` is built fresh from stored Console
+    fields rather than from ``Settings`` (``browser/service.py``)."""
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return base / "lifeops" / "browser-profiles"
+
+
+#: Playwright resolves its own bundled Chromium build by default, which is
+#: right for a normal deployment that ran ``playwright install``. Some
+#: environments (this one included) instead pre-install a specific Chromium
+#: binary at a fixed path and skip that step; ``PLAYWRIGHT_CHROMIUM_EXECUTABLE``
+#: lets an operator point at one explicitly, and the well-known path such
+#: environments use is checked as a fallback before deferring to Playwright's
+#: own resolution.
+_KNOWN_PREINSTALLED_CHROMIUM = Path("/opt/pw-browsers/chromium")
+
+
+def _local_chromium_executable() -> str | None:
+    override = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+    if override:
+        return override
+    if _KNOWN_PREINSTALLED_CHROMIUM.exists():
+        return str(_KNOWN_PREINSTALLED_CHROMIUM)
+    return None
+
+
+_UNSAFE_NAME_CHARS = re.compile(r"[^a-z0-9_-]+")
+
+
+def _profile_dirname(name: str) -> str:
+    """A context name (a ``store`` value), made safe as a single path
+    segment — never used to build a URL or a shell command, only a
+    directory name under ``profile_root``."""
+    cleaned = _UNSAFE_NAME_CHARS.sub("-", name.strip().lower()).strip("-")
+    return cleaned or "default"
+
+
+#: Site-specific shopping automation, keyed by ``store``. Empty: no retailer
+#: has been chosen yet (see the module docstring's "what this does NOT make
+#: real"). Populate this to make ``search``/``build_cart``/``submit_order``
+#: work for a real store.
+_SITE_ADAPTERS: dict[str, Any] = {}
 
 
 class RealBrowserWorker:
-    """BUILD_SPEC section 98 — authenticated browsing for sites without a
-    usable API. Constructed fresh from stored Console settings, like
-    ``ElevenLabsTTSProvider``, so a changed endpoint or timeout takes effect
-    on the next call without a process restart.
-    """
+    """BUILD_SPEC sections 66, 98 — a real Playwright-driven Chromium,
+    constructed fresh from stored Console settings on every call (mirrors
+    every other provider, e.g. ``ElevenLabsTTSProvider``), so a changed
+    endpoint, headless mode, or timeout takes effect without a restart.
 
-    _RUNTIME_CANDIDATES = BROWSER_RUNTIME_CANDIDATES
+    Cross-call persistence therefore has to live on disk, not on this
+    instance: each context gets its own profile directory under
+    ``profile_root``, and Playwright's ``launch_persistent_context`` reloads
+    whatever cookies and local storage a previous call left there. Two
+    different context names never share a directory — the isolation section
+    66 asks for.
+    """
 
     def __init__(
         self,
@@ -50,48 +134,104 @@ class RealBrowserWorker:
         endpoint: str | None = None,
         headless: bool = True,
         timeout_s: float = 30.0,
+        profile_root: Path | None = None,
     ) -> None:
-        self._endpoint = endpoint
+        self._endpoint = endpoint or None
         self._headless = headless
         self._timeout_s = timeout_s
-
-    def _runtime_missing_message(self) -> str:
-        return (
-            "no browser automation runtime installed (expected one of: "
-            f"{', '.join(self._RUNTIME_CANDIDATES)}) — BUILD_SPEC section 98"
-        )
+        self._profile_root = profile_root or _default_profile_root()
 
     async def health(self) -> tuple[bool, str]:
-        runtime = detect_runtime(self._RUNTIME_CANDIDATES)
-        if runtime is None:
-            return False, self._runtime_missing_message()
-        if not self._endpoint:
-            return False, f"{runtime} is installed but no remote browser endpoint is set"
-        return False, (
-            f"{runtime} is installed but LifeOps has no adapter wired to it "
-            "yet — being importable is not the same as being integrated"
+        """Actually launches Chromium (or connects to the configured remote
+        endpoint) and closes it again — the genuine check section 88 asks
+        for, not a runtime-importability guess. Never raises: any failure is
+        reported through the return tuple, matching the Protocol."""
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            return False, (
+                "the playwright package is not installed in this "
+                "environment (pip install playwright)"
+            )
+        try:
+            async with async_playwright() as playwright:
+                browser = await self._launch(playwright)
+                await browser.close()
+        except Exception as exc:  # noqa: BLE001 - reporting the failure, not handling it
+            return False, f"chromium could not be launched: {exc}"
+        if self._endpoint:
+            return True, f"connected to the browser at {self._endpoint}"
+        return True, "chromium launched successfully"
+
+    async def _launch(self, playwright: Playwright) -> Browser:
+        if self._endpoint:
+            return await playwright.chromium.connect_over_cdp(self._endpoint)
+        return await playwright.chromium.launch(
+            headless=self._headless, executable_path=_local_chromium_executable()
+        )
+
+    async def _open_context(self, playwright: Playwright, name: str) -> BrowserContext:
+        """A persistent, isolated context for ``name`` (a ``store`` value).
+
+        A local launch gets an on-disk profile directory unique to ``name``,
+        so cookies and login state persist between calls without this
+        Python object staying alive. A remote CDP endpoint gets a fresh
+        in-memory context per call instead — profile persistence for a
+        remote browser is that server's responsibility, not this adapter's.
+        """
+        if self._endpoint:
+            browser = await playwright.chromium.connect_over_cdp(self._endpoint)
+            context = await browser.new_context()
+        else:
+            profile_dir = self._profile_root / _profile_dirname(name)
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            context = await playwright.chromium.launch_persistent_context(
+                str(profile_dir),
+                headless=self._headless,
+                executable_path=_local_chromium_executable(),
+            )
+        context.set_default_timeout(self._timeout_s * 1000)
+        return context
+
+    def _no_site_adapter_error(self, store: str) -> ProviderError:
+        return ProviderError(
+            f"no site automation is configured for store {store!r} — LifeOps "
+            "has a real browser runtime now, but no site-specific adapter "
+            "for this store yet (see browser/real.py's _SITE_ADAPTERS)",
+            provider="browser",
+        )
+
+    def _no_site_adapter_message(self, store: str) -> str:
+        return (
+            f"no site automation is configured for store {store!r} — nothing "
+            "to confirm against"
         )
 
     async def search(
         self, query: str, *, store: str = "", limit: int = 10
     ) -> list[ProductResult]:
-        _, message = await self.health()
-        raise ProviderError(message, provider="browser")
+        if store not in _SITE_ADAPTERS:
+            raise self._no_site_adapter_error(store)
+        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
 
     async def build_cart(self, *, store: str, items: list[ShoppingItem]) -> CartResult:
-        _, message = await self.health()
-        raise ProviderError(message, provider="browser")
+        if store not in _SITE_ADAPTERS:
+            raise self._no_site_adapter_error(store)
+        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
 
     async def submit_order(
         self, *, store: str, cart_reference: str, items: list[ShoppingItem]
     ) -> OrderResult:
-        _, message = await self.health()
-        raise ProviderError(message, provider="browser")
+        if store not in _SITE_ADAPTERS:
+            raise self._no_site_adapter_error(store)
+        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
 
     async def confirm_cart(self, *, store: str, cart_reference: str) -> tuple[bool, str]:
-        _, message = await self.health()
-        raise ProviderError(message, provider="browser")
+        if store not in _SITE_ADAPTERS:
+            return False, self._no_site_adapter_message(store)
+        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
 
     async def confirm_order(self, *, store: str, order_reference: str) -> tuple[bool, str]:
-        _, message = await self.health()
-        raise ProviderError(message, provider="browser")
+        if store not in _SITE_ADAPTERS:
+            return False, self._no_site_adapter_message(store)
+        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover

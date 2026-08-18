@@ -1868,9 +1868,10 @@ async def _test_voice_provider(container: Container, provider_id: str) -> TestPr
 
 async def _test_browser(container: Container) -> TestProviderResponse:
     """Actually call the browser provider (phase 9) when it is enabled; it
-    honestly detects whether a browser automation runtime is installed and
-    reports that it is not integrated even if one is (AGENTS.md never fakes
-    success — same pattern as the local voice adapters)."""
+    genuinely launches Chromium and reports whether that succeeded (AGENTS.md
+    never fakes success — this is the one honest check that can actually
+    come back healthy, unlike the local voice adapters it started life
+    copying)."""
     try:
         report = await container.browser.health()
     except ProviderNotConfiguredError as exc:
