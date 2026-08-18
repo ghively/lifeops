@@ -107,29 +107,54 @@ class TestNornicUnavailable:
 class FlakyActionRepository(FakeActionRepository):
     """Wraps ``FakeActionRepository`` so a specific write can be made to
     fail on demand — the injection point for section 86 scenario 5 (a crash
-    between committing an action and recording what happened to it)."""
+    between committing an action and recording what happened to it).
 
-    def __init__(self, *, fail_update_after: int | None = None) -> None:
+    ``recovers_after_failures`` distinguishes a transient blip from a
+    genuine outage: ``None`` (the default) fails every call past the
+    threshold forever, the same permanent failure the original scenario
+    tests; a number caps how many of those calls actually fail before the
+    repository starts succeeding again, standing in for the kind of
+    momentary failure ``record_action_result``'s retry is meant to survive.
+    """
+
+    def __init__(
+        self,
+        *,
+        fail_update_after: int | None = None,
+        recovers_after_failures: int | None = None,
+    ) -> None:
         super().__init__()
         self._fail_update_after = fail_update_after
+        self._recovers_after_failures = recovers_after_failures
         self.update_calls = 0
+        self._induced_failures = 0
 
     async def update(self, action: Action) -> Action:
         self.update_calls += 1
         if self._fail_update_after is not None and self.update_calls > self._fail_update_after:
-            raise RepositoryError("simulated repository failure writing the action record")
+            still_failing = (
+                self._recovers_after_failures is None
+                or self._induced_failures < self._recovers_after_failures
+            )
+            if still_failing:
+                self._induced_failures += 1
+                raise RepositoryError("simulated repository failure writing the action record")
         return await super().update(action)
 
 
 class TestCrashBetweenCommitAndRecordResult:
     """``execute_action`` (core.py) catches every ``LifeOpsError`` the
     *provider* call raises, so a calendar/email/browser/telephony failure
-    always lands as a FAILED action (scenarios 8-10 below). Nothing catches
-    a failure on the write that *records* the result, though — this proves
-    that gap is real: the external effect can genuinely happen (the fake
-    calendar really creates the event) while LifeOps's own record of it
-    fails to save, stranding the action in EXECUTING with its approval
-    already spent.
+    always lands as a FAILED action (scenarios 8-10 below). The write that
+    *records* the result is retried a few times (``record_action_result``),
+    since it is naturally idempotent and so often follows a real external
+    effect that already happened — but a genuinely persistent failure still
+    escapes once the retry budget is spent, which is what this test proves:
+    the external effect can genuinely happen (the fake calendar really
+    creates the event) while LifeOps's own record of it fails to save every
+    time, stranding the action in EXECUTING with its approval already
+    spent. ``TestRecordActionResultRetry`` below proves the transient case
+    — the one the retry actually exists for — recovers instead.
 
     The invariant section 86 actually asks for still holds even here: a
     stranded action's approval is consumed, so nothing can retry it into a
@@ -211,6 +236,147 @@ class TestCrashBetweenCommitAndRecordResult:
         # needed was already spent at the first (successful) commit.
         with pytest.raises(ConflictError):
             await core.commit_action(HERMES, action_id=action.id)
+
+
+class TestRecordActionResultRetry:
+    """The fix for the gap ``TestCrashBetweenCommitAndRecordResult`` proves
+    is real: a transient failure recording the result of a real external
+    effect must not strand the action just because the write blipped once
+    or twice. ``record_action_result`` retries up to
+    ``LifeOpsCore._RECORD_RESULT_ATTEMPTS`` (3) times.
+    """
+
+    async def test_a_transient_failure_within_the_retry_budget_recovers(
+        self, tmp_path: Path
+    ) -> None:
+        fake_calendar = FakeCalendarProvider()
+        config = ConfigurationService(
+            config_dir=tmp_path / "config",
+            secret_store=InMemorySecretStore(),
+            clock=FrozenClock(),
+        )
+        config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        calendar_service = CalendarProviderService(
+            config=config,
+            secret_store=InMemorySecretStore(),
+            factories={"caldav": lambda settings, secrets: fake_calendar},
+        )
+
+        # Calls #1/#2 are decide_approval's/begin_commit's own status syncs;
+        # #3 and #4 (record_action_result's first two tries) fail, #5 (its
+        # third try) succeeds — exactly the retry budget, not more.
+        actions = FlakyActionRepository(fail_update_after=2, recovers_after_failures=2)
+        people = FakePersonRepository()
+        await people.upsert(
+            Person(
+                id=PRIMARY,
+                display_name="Chaos User",
+                is_primary=True,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        preferences = FakePreferenceRepository()
+        world = FakeWorldRepository(preferences=preferences)
+        core = LifeOpsCore(
+            people=people,
+            preferences=preferences,
+            tasks=FakeTaskRepository(),
+            world=world,
+            waiting=FakeWaitingRepository(),
+            actions=actions,
+            approvals=FakeApprovalRepository(),
+            audit=FakeAuditRepository(),
+            calendar=calendar_service,
+            clock=FrozenClock(),
+        )
+
+        appointment = await core.create_appointment_hold(
+            HERMES,
+            AppointmentHoldDraft(
+                subject="Furnace tune-up",
+                start_at="2026-09-01T14:00:00Z",
+                end_at="2026-09-01T15:00:00Z",
+            ),
+        )
+        action = await core.book_appointment(HERMES, appointment_id=appointment.id)
+        pending = await core.list_pending_approvals(CONSOLE)
+        await core.decide_approval(CONSOLE, approval_id=pending[0].id, approved=True)
+
+        # No exception this time: the retry absorbs the two induced failures.
+        result = await core.execute_action(HERMES, action_id=action.id)
+        assert result.status is ActionStatus.EXECUTED
+        assert len(fake_calendar._events) == 1
+
+        # And the outbox agrees with what execute_action returned — the
+        # record genuinely landed, not just the in-memory return value.
+        fetched = await core.get_action(HERMES, action_id=action.id)
+        assert fetched.status is ActionStatus.EXECUTED
+        assert actions.update_calls == 5
+
+    async def test_the_retry_is_bounded_not_unlimited(self, tmp_path: Path) -> None:
+        """A failure count exactly at the budget's edge still strands —
+        proving the retry has a real limit, not an accidental infinite loop
+        that happened to terminate above."""
+        fake_calendar = FakeCalendarProvider()
+        config = ConfigurationService(
+            config_dir=tmp_path / "config",
+            secret_store=InMemorySecretStore(),
+            clock=FrozenClock(),
+        )
+        config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        calendar_service = CalendarProviderService(
+            config=config,
+            secret_store=InMemorySecretStore(),
+            factories={"caldav": lambda settings, secrets: fake_calendar},
+        )
+
+        # Calls #3, #4, and #5 all fail — every try in the retry budget —
+        # so the fourth attempt (#6) that would finally succeed never comes.
+        actions = FlakyActionRepository(fail_update_after=2, recovers_after_failures=3)
+        people = FakePersonRepository()
+        await people.upsert(
+            Person(
+                id=PRIMARY,
+                display_name="Chaos User",
+                is_primary=True,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        preferences = FakePreferenceRepository()
+        world = FakeWorldRepository(preferences=preferences)
+        core = LifeOpsCore(
+            people=people,
+            preferences=preferences,
+            tasks=FakeTaskRepository(),
+            world=world,
+            waiting=FakeWaitingRepository(),
+            actions=actions,
+            approvals=FakeApprovalRepository(),
+            audit=FakeAuditRepository(),
+            calendar=calendar_service,
+            clock=FrozenClock(),
+        )
+
+        appointment = await core.create_appointment_hold(
+            HERMES,
+            AppointmentHoldDraft(
+                subject="Furnace tune-up",
+                start_at="2026-09-01T14:00:00Z",
+                end_at="2026-09-01T15:00:00Z",
+            ),
+        )
+        action = await core.book_appointment(HERMES, appointment_id=appointment.id)
+        pending = await core.list_pending_approvals(CONSOLE)
+        await core.decide_approval(CONSOLE, approval_id=pending[0].id, approved=True)
+
+        with pytest.raises(RepositoryError):
+            await core.execute_action(HERMES, action_id=action.id)
+
+        stranded = await core.get_action(HERMES, action_id=action.id)
+        assert stranded.status is ActionStatus.EXECUTING
+        assert actions.update_calls == 5
 
 
 # --- scenario 7: duplicate HTTP request ---------------------------------------

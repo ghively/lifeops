@@ -12,6 +12,7 @@ is precisely the one where drift is least visible.
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import logging
 from collections.abc import Callable
@@ -180,6 +181,7 @@ from lifeops.errors import (
     ConflictError,
     LifeOpsError,
     NotFoundError,
+    RepositoryError,
     ValidationError,
     VerificationRequiredError,
 )
@@ -2770,6 +2772,20 @@ class LifeOpsCore:
         )
         return committed
 
+    #: A chaos test found this write escaping uncaught in execute_action:
+    #: when it follows a real external effect that already happened (a
+    #: booking, a call, a sent email), a permanent failure here strands the
+    #: action in EXECUTING with its approval already spent (BUILD_SPEC
+    #: section 57: single-use). The write is naturally idempotent — it sets
+    #: status/reference on an existing row keyed by id — so retrying it a
+    #: few times risks nothing a single attempt did not already risk; it
+    #: only gives a transient failure a real chance to recover instead of
+    #: guaranteeing the strand. A genuinely persistent outage still strands
+    #: the action after the budget is spent — recovering *that* case is the
+    #: distributed-systems design question this does not attempt to solve.
+    _RECORD_RESULT_ATTEMPTS = 3
+    _RECORD_RESULT_RETRY_DELAY_S = 0.05
+
     async def record_action_result(
         self,
         client: ClientIdentity,
@@ -2782,7 +2798,7 @@ class LifeOpsCore:
         """Persist what the external system returned (section 60 step 3)."""
         action = await self._actions().get(action_id)
         self._require(client, capability_for_action(str(action.type)))
-        saved = await self._actions().record_result(
+        saved = await self._record_result_with_retry(
             action_id,
             succeeded=succeeded,
             external_reference=external_reference,
@@ -2797,6 +2813,30 @@ class LifeOpsCore:
             verification=str(saved.verification_state),
         )
         return saved
+
+    async def _record_result_with_retry(
+        self,
+        action_id: str,
+        *,
+        succeeded: bool,
+        external_reference: str | None,
+        failure_reason: str | None,
+    ) -> Action:
+        last_error: RepositoryError | None = None
+        for attempt in range(self._RECORD_RESULT_ATTEMPTS):
+            try:
+                return await self._actions().record_result(
+                    action_id,
+                    succeeded=succeeded,
+                    external_reference=external_reference,
+                    failure_reason=failure_reason,
+                )
+            except RepositoryError as exc:
+                last_error = exc
+                if attempt < self._RECORD_RESULT_ATTEMPTS - 1:
+                    await asyncio.sleep(self._RECORD_RESULT_RETRY_DELAY_S)
+        assert last_error is not None  # the loop always runs at least once
+        raise last_error
 
     async def verify_action(
         self, client: ClientIdentity, *, action_id: str, evidence: str
