@@ -19,8 +19,7 @@ section 74's schema field for field): `component`, `problem`,
 
 ## Status
 
-Empty. `request_code_change` exists in LifeOpsCore (Phase 11), gated on
-`SELF_CONFIGURE`, but is not yet exposed as an MCP tool or HTTP route — so
-nothing can file a request here yet except code calling the core directly.
-Exposing it to Hermes is recorded as an open gap in the 2026-08-18 audit
-(`docs/audits/`).
+Empty. `request_code_change` is exposed as an MCP tool (gated on
+`SELF_CONFIGURE`), so Hermes can file a request here. The directory is
+resolved to this repository checkout when it is writable, otherwise to the
+LifeOps state directory (`LIFEOPS_CHANGE_REQUESTS_DIR` overrides both).

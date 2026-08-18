@@ -4,7 +4,7 @@ The portable agent interface. Hermes is the primary consumer; any trusted MCP
 client can connect to the same server and operate on the same personal state,
 subject to its own permissions.
 
-**The server exposes thirty-three tools and three resources.** Phases 0-4
+**The server exposes thirty-four tools and three resources.** Phases 0-4
 shipped the set documented in detail below: the Phase 0 tools (BUILD_SPEC
 section 49), the memory tools of section 91, the world-graph reads of section
 92, and the durable-work tools of section 51. Phases 7-9 added calendar,
@@ -490,6 +490,7 @@ descriptions are the tool docstrings in `core/lifeops/mcp/server.py`.
 | Email (Phase 7) | `search_email`, `read_email_thread`, `send_email`* |
 | Service requests (Phase 8) | `create_service_request`, `get_service_request`, `place_phone_call`*, `request_quote`*, `book_service_request`* |
 | Shopping (Phase 9) | `search_shopping`, `create_shopping_list`, `build_grocery_cart`*, `apply_substitution`, `submit_grocery_order`* |
+| Self-configuration (Phase 11) | `request_code_change` — files a section-74 Code Change Request for a coding agent; changes nothing itself |
 
 Tools marked * prepare an Action in the outbox; anything with real
 consequence still waits for a human's approval in the Console before it
