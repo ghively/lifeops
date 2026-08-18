@@ -291,3 +291,59 @@ class TestSafeModePersistsAcrossRestart:
             config_dir=tmp_path / "config", secret_store=secrets, clock=clock
         )
         assert second.get_system().safe_mode is False
+
+
+class TestSafeModeReachesOtherProcesses:
+    """The HTTP and MCP servers are separate processes over one config file.
+
+    Section 84's emergency stop is pressed in the Console (the HTTP process)
+    and must stop Hermes (the MCP process) — a snapshot taken at boot, or a
+    config cache that never invalidates, leaves the one surface no human is
+    watching running with the old answer until its next restart.
+    """
+
+    def test_a_toggle_by_one_service_is_seen_by_a_long_lived_other(
+        self, tmp_path: Path
+    ) -> None:
+        secrets = InMemorySecretStore()
+        clock = FrozenClock()
+
+        console_side = ConfigurationService(
+            config_dir=tmp_path / "config", secret_store=secrets, clock=clock
+        )
+        mcp_side = ConfigurationService(
+            config_dir=tmp_path / "config", secret_store=secrets, clock=clock
+        )
+        # The MCP-side service has already read (and cached) the document,
+        # as a long-running server would have.
+        assert mcp_side.get_system().safe_mode is False
+
+        console_side.update_system({"safe_mode": True})
+        assert mcp_side.get_system().safe_mode is True
+
+        console_side.update_system({"safe_mode": False})
+        assert mcp_side.get_system().safe_mode is False
+
+    async def test_core_with_a_live_source_blocks_without_restart(
+        self, tmp_path: Path, core: LifeOpsCore
+    ) -> None:
+        secrets = InMemorySecretStore()
+        config = ConfigurationService(
+            config_dir=tmp_path / "config",
+            secret_store=secrets,
+            clock=FrozenClock(),
+        )
+        core.safe_mode = lambda: config.get_system().safe_mode
+
+        # Another process (here: another service over the same file) engages
+        # the stop; this core must refuse on its very next check.
+        other = ConfigurationService(
+            config_dir=tmp_path / "config",
+            secret_store=secrets,
+            clock=FrozenClock(),
+        )
+        other.update_system({"safe_mode": True})
+        with pytest.raises(SafeModeError):
+            await core.prepare_action(
+                HERMES, ActionDraft(type=ActionType.BOOK_APPOINTMENT)
+            )

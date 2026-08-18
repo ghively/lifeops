@@ -112,7 +112,13 @@ class Container:
 
         # Safe mode may be set at boot or flipped by the user from the
         # Console; the config document is authoritative once it exists.
-        safe_mode = self.settings.safe_mode or self.config.get_system().safe_mode
+        # Passed as a callable, not a snapshot: the HTTP and MCP servers are
+        # separate processes over the same config file, and the emergency
+        # stop must reach a running MCP server without a restart. The config
+        # service invalidates its cache on file change, so this is one stat
+        # per capability check.
+        def safe_mode() -> bool:
+            return self.settings.safe_mode or self.config.get_system().safe_mode
 
         self.core = LifeOpsCore(
             people=self.people,
