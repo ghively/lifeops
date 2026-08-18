@@ -182,6 +182,7 @@ class TestToolSurface:
             "request_quote",
             "save_preference",
             "search_email",
+            "search_knowledge",
             "search_memory",
             "search_shopping",
             "send_email",

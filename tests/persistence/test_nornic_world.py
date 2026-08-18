@@ -873,3 +873,60 @@ class TestPhase9EntityRoundTrip:
 
         listed = {e.id for e in await repo.list_entities(limit=2000)}
         assert shopping_list.id in listed
+
+
+class TestKnowledgeEntityRoundTrip:
+    """Knowledge (BUILD_SPEC sections 18, 36), projected the same way
+    Document is — outside ``CREATABLE_ENTITY_TYPES``, written through its own
+    draft rather than the generic entity path. Reuses ``phase7_cleanup``: its
+    teardown behaviour is not phase-specific.
+    """
+
+    async def test_a_knowledge_entity_round_trips(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.knowledge import (
+            Knowledge,
+            entity_to_knowledge,
+            knowledge_to_entity,
+        )
+
+        repo, _, _ = world
+        knowledge = Knowledge(
+            id=f"knowledge_{test_label}",
+            title="Water heater warranty",
+            category="warranty",
+            content="10-year tank warranty, registered 2024-03-01.",
+            source_document_id="document_9",
+            created_at=TS,
+            updated_at=TS,
+            created_by_client="console",
+        )
+        phase7_cleanup.append(knowledge.id)
+
+        await repo.create(knowledge_to_entity(knowledge))
+        fetched = await repo.get(knowledge.id)
+        assert fetched is not None
+        roundtripped = entity_to_knowledge(fetched)
+        assert roundtripped.title == knowledge.title
+        assert roundtripped.category == "warranty"
+        assert roundtripped.content == knowledge.content
+        assert roundtripped.source_document_id == "document_9"
+
+    async def test_knowledge_is_included_in_a_full_listing(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.knowledge import Knowledge, knowledge_to_entity
+
+        repo, _, _ = world
+        knowledge = Knowledge(
+            id=f"knowledge_{test_label}",
+            title="Listing check",
+            created_at=TS,
+            updated_at=TS,
+        )
+        phase7_cleanup.append(knowledge.id)
+        await repo.create(knowledge_to_entity(knowledge))
+
+        listed = {e.id for e in await repo.list_entities(limit=2000)}
+        assert knowledge.id in listed
