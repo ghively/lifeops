@@ -20,6 +20,8 @@ from lifeops.domain.bills import Bill, BillStatus, Payee
 from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
+from lifeops.domain.service_request import ServiceRequest
+from lifeops.domain.shopping import ShoppingList
 from lifeops.domain.tasks import Task, TaskState
 from lifeops.domain.waiting import ACTIVE_STATUSES, WaitingItem, WaitingStatus
 from lifeops.domain.workflow_templates import WorkflowTemplate
@@ -746,6 +748,65 @@ class FakeWorkflowTemplateRepository:
         return self._templates.pop(template_id, None) is not None
 
 
+class FakeShoppingRepository:
+    def __init__(self) -> None:
+        self._lists: dict[str, ShoppingList] = {}
+
+    async def get(self, list_id: str) -> ShoppingList | None:
+        found = self._lists.get(list_id)
+        return copy.deepcopy(found) if found else None
+
+    async def list_all(self, *, limit: int = 100) -> list[ShoppingList]:
+        ordered = sorted(
+            self._lists.values(), key=lambda s: (s.created_at, s.id), reverse=True
+        )
+        return [copy.deepcopy(s) for s in ordered[:limit]]
+
+    async def find_lists_containing(self, item_name: str) -> list[ShoppingList]:
+        needle = item_name.strip().lower()
+        matches = [
+            s
+            for s in self._lists.values()
+            if any(needle in item.name.lower() for item in s.items)
+        ]
+        matches.sort(key=lambda s: (s.created_at, s.id), reverse=True)
+        return [copy.deepcopy(s) for s in matches]
+
+    async def upsert(self, shopping_list: ShoppingList) -> ShoppingList:
+        self._lists[shopping_list.id] = copy.deepcopy(shopping_list)
+        return copy.deepcopy(shopping_list)
+
+    async def delete(self, list_id: str) -> bool:
+        return self._lists.pop(list_id, None) is not None
+
+
+class FakeServiceRequestRepository:
+    def __init__(self) -> None:
+        self._requests: dict[str, ServiceRequest] = {}
+
+    async def get(self, request_id: str) -> ServiceRequest | None:
+        found = self._requests.get(request_id)
+        return copy.deepcopy(found) if found else None
+
+    async def list_all(self, *, limit: int = 100) -> list[ServiceRequest]:
+        ordered = sorted(
+            self._requests.values(), key=lambda r: (r.created_at, r.id), reverse=True
+        )
+        return [copy.deepcopy(r) for r in ordered[:limit]]
+
+    async def list_for_provider(self, provider_entity_id: str) -> list[ServiceRequest]:
+        matches = [
+            r for r in self._requests.values()
+            if r.provider_entity_id == provider_entity_id
+        ]
+        matches.sort(key=lambda r: (r.created_at, r.id), reverse=True)
+        return [copy.deepcopy(r) for r in matches]
+
+    async def upsert(self, request: ServiceRequest) -> ServiceRequest:
+        self._requests[request.id] = copy.deepcopy(request)
+        return copy.deepcopy(request)
+
+
 __all__ = [
     "FakeActionRepository",
     "FakeApprovalRepository",
@@ -754,6 +815,8 @@ __all__ = [
     "FakeMemoryRepository",
     "FakePersonRepository",
     "FakePreferenceRepository",
+    "FakeServiceRequestRepository",
+    "FakeShoppingRepository",
     "FakeTaskRepository",
     "FakeWaitingRepository",
     "FakeWorkflowTemplateRepository",

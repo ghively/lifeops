@@ -85,6 +85,12 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "FOR (t:WorkflowTemplate) REQUIRE t.id IS UNIQUE",
     "CREATE INDEX lifeops_workflow_template_next_run IF NOT EXISTS "
     "FOR (t:WorkflowTemplate) ON (t.next_run_at)",
+    "CREATE CONSTRAINT lifeops_service_request_id IF NOT EXISTS "
+    "FOR (r:ServiceRequest) REQUIRE r.id IS UNIQUE",
+    "CREATE INDEX lifeops_service_request_provider IF NOT EXISTS "
+    "FOR (r:ServiceRequest) ON (r.provider_entity_id)",
+    "CREATE INDEX lifeops_shopping_item_name IF NOT EXISTS "
+    "FOR (i:ShoppingItem) ON (i.name)",
     "CREATE INDEX lifeops_preference_subject_key IF NOT EXISTS "
     "FOR (p:Preference) ON (p.subject_id, p.key)",
     "CREATE INDEX lifeops_task_state IF NOT EXISTS FOR (t:Task) ON (t.state)",

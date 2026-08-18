@@ -25,6 +25,8 @@ from lifeops.repositories.fakes import (
     FakeMemoryRepository,
     FakePersonRepository,
     FakePreferenceRepository,
+    FakeServiceRequestRepository,
+    FakeShoppingRepository,
     FakeTaskRepository,
     FakeWaitingRepository,
     FakeWorkflowTemplateRepository,
@@ -37,6 +39,10 @@ from lifeops.repositories.nornic.bills import NornicBillRepository
 from lifeops.repositories.nornic.memory import NornicMemoryRepository
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
+from lifeops.repositories.nornic.service_requests import (
+    NornicServiceRequestRepository,
+)
+from lifeops.repositories.nornic.shopping import NornicShoppingRepository
 from lifeops.repositories.nornic.tasks import NornicTaskRepository
 from lifeops.repositories.nornic.waiting import NornicWaitingRepository
 from lifeops.repositories.nornic.workflow_templates import (
@@ -60,6 +66,16 @@ PAIRS: list[tuple[type, type, type]] = [
     (interfaces.ApprovalRepository, FakeApprovalRepository, NornicApprovalRepository),
     (interfaces.AuditRepository, FakeAuditRepository, NornicAuditRepository),
     (interfaces.BillRepository, FakeBillRepository, NornicBillRepository),
+    (
+        interfaces.ServiceRequestRepository,
+        FakeServiceRequestRepository,
+        NornicServiceRequestRepository,
+    ),
+    (
+        interfaces.ShoppingRepository,
+        FakeShoppingRepository,
+        NornicShoppingRepository,
+    ),
     (
         interfaces.WorkflowTemplateRepository,
         FakeWorkflowTemplateRepository,

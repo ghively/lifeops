@@ -98,8 +98,6 @@ from lifeops.domain.self_config import (
 from lifeops.domain.service_request import (
     ServiceRequest,
     ServiceRequestDraft,
-    entity_to_service_request,
-    service_request_to_entity,
 )
 from lifeops.domain.service_request import cancel as cancel_service_request
 from lifeops.domain.service_request import complete as complete_service_request
@@ -118,8 +116,6 @@ from lifeops.domain.shopping import (
     ShoppingListDraft,
     ShoppingListStatus,
     SubstitutionDraft,
-    entity_to_shopping_list,
-    shopping_list_to_entity,
 )
 from lifeops.domain.tasks import (
     Task,
@@ -195,6 +191,8 @@ from lifeops.repositories.interfaces import (
     MemoryRepository,
     PersonRepository,
     PreferenceRepository,
+    ServiceRequestRepository,
+    ShoppingRepository,
     TaskRepository,
     WaitingRepository,
     WorkflowTemplateRepository,
@@ -1090,7 +1088,9 @@ class ShoppingService:
     """Grocery search, cart building, and checkout (BUILD_SPEC section 98).
 
     Holds two dependencies, the same shape ``AppointmentService`` uses for
-    calendar + world: ``world`` for the durable ``ShoppingList`` record and
+    calendar + shopping: a dedicated ``ShoppingRepository`` for the durable
+    ``ShoppingList`` record — items are their own nodes there, so a list's
+    contents stay queryable — and
     ``browser`` for the actual site interaction. ``execute_cart_build`` and
     ``execute_checkout`` are called only from ``LifeOpsCore.execute_action``,
     after an Action has been committed — this class never calls
@@ -1101,12 +1101,12 @@ class ShoppingService:
     def __init__(
         self,
         *,
-        world: WorldRepository,
+        shopping: ShoppingRepository,
         browser: BrowserProviderService,
         clock: Clock,
         publish: Callable[[str], None] | None = None,
     ) -> None:
-        self._world = world
+        self._shopping = shopping
         self._browser = browser
         self._clock = clock
         self._publish_event = publish
@@ -1116,12 +1116,12 @@ class ShoppingService:
             self._publish_event(entity_id)
 
     async def get(self, list_id: str) -> ShoppingList:
-        entity = await self._world.get(list_id)
-        if entity is None:
+        listing = await self._shopping.get(list_id)
+        if listing is None:
             raise NotFoundError(
                 f"no such shopping list: {list_id}", shopping_list_id=list_id
             )
-        return entity_to_shopping_list(entity)
+        return listing
 
     async def list(
         self,
@@ -1129,8 +1129,7 @@ class ShoppingService:
         status: ShoppingListStatus | None = None,
         task_id: str | None = None,
     ) -> list[ShoppingList]:
-        entities = await self._world.list_entities(types=[WorldEntityType.SHOPPING_LIST])
-        lists = [entity_to_shopping_list(e) for e in entities]
+        lists = await self._shopping.list_all(limit=500)
         if status is not None:
             lists = [item for item in lists if item.status is status]
         if task_id is not None:
@@ -1140,7 +1139,7 @@ class ShoppingService:
     async def create(self, draft: ShoppingListDraft, *, client_id: str) -> ShoppingList:
         now = now_iso(self._clock)
         shopping_list = shopping_domain.create(draft, now=now, client_id=client_id)
-        await self._world.create(shopping_list_to_entity(shopping_list))
+        await self._shopping.upsert(shopping_list)
         self._notify(shopping_list.id)
         return shopping_list
 
@@ -1149,7 +1148,7 @@ class ShoppingService:
     ) -> ShoppingList:
         current = await self.get(list_id)
         updated = shopping_domain.add_items(current, items, now=now_iso(self._clock))
-        await self._world.create(shopping_list_to_entity(updated))
+        await self._shopping.upsert(updated)
         self._notify(updated.id)
         return updated
 
@@ -1164,7 +1163,7 @@ class ShoppingService:
         updated = shopping_domain.apply_substitution(
             current, draft, now=now_iso(self._clock)
         )
-        await self._world.create(shopping_list_to_entity(updated))
+        await self._shopping.upsert(updated)
         self._notify(updated.id)
         return updated
 
@@ -1244,7 +1243,7 @@ class ShoppingService:
         updated = shopping_domain.mark_cart_building(
             shopping_list, action_id=action_id, now=now
         )
-        await self._world.create(shopping_list_to_entity(updated))
+        await self._shopping.upsert(updated)
         self._notify(updated.id)
         return updated
 
@@ -1255,14 +1254,14 @@ class ShoppingService:
         updated = shopping_domain.mark_cart_built(
             shopping_list, cart_reference=cart_reference, total_estimate=total_estimate, now=now
         )
-        await self._world.create(shopping_list_to_entity(updated))
+        await self._shopping.upsert(updated)
         self._notify(updated.id)
         return updated
 
     async def mark_cart_failed(self, list_id: str, *, now: str) -> ShoppingList:
         shopping_list = await self.get(list_id)
         updated = shopping_domain.mark_cart_failed(shopping_list, now=now)
-        await self._world.create(shopping_list_to_entity(updated))
+        await self._shopping.upsert(updated)
         self._notify(updated.id)
         return updated
 
@@ -1271,7 +1270,7 @@ class ShoppingService:
     ) -> ShoppingList:
         shopping_list = await self.get(list_id)
         updated = shopping_domain.mark_submitting(shopping_list, action_id=action_id, now=now)
-        await self._world.create(shopping_list_to_entity(updated))
+        await self._shopping.upsert(updated)
         self._notify(updated.id)
         return updated
 
@@ -1283,7 +1282,7 @@ class ShoppingService:
             shopping_list, order_reference=order_reference, now=now
         )
         updated = shopping_domain.mark_verified(updated, now=now)
-        await self._world.create(shopping_list_to_entity(updated))
+        await self._shopping.upsert(updated)
         self._notify(updated.id)
         return updated
 
@@ -1305,11 +1304,11 @@ class ServiceRequestService:
     def __init__(
         self,
         *,
-        world: WorldRepository,
+        requests: ServiceRequestRepository,
         clock: Clock,
         publish: Callable[[str], None] | None = None,
     ) -> None:
-        self._world = world
+        self._requests = requests
         self._clock = clock
         self._publish_event = publish
 
@@ -1318,25 +1317,24 @@ class ServiceRequestService:
             self._publish_event(entity_id)
 
     async def get(self, service_request_id: str) -> ServiceRequest:
-        entity = await self._world.get(service_request_id)
-        if entity is None:
+        request = await self._requests.get(service_request_id)
+        if request is None:
             raise NotFoundError(
                 f"no such service request: {service_request_id}",
                 service_request_id=service_request_id,
             )
-        return entity_to_service_request(entity)
+        return request
 
     async def list(self, *, task_id: str | None = None) -> list[ServiceRequest]:
-        entities = await self._world.list_entities(types=[WorldEntityType.SERVICE_REQUEST])
-        requests = [entity_to_service_request(e) for e in entities]
+        requests = await self._requests.list_all(limit=500)
         if task_id is not None:
             requests = [r for r in requests if r.task_id == task_id]
         return sorted(requests, key=lambda r: r.created_at, reverse=True)
 
     async def _save(self, request: ServiceRequest) -> ServiceRequest:
-        await self._world.create(service_request_to_entity(request))
-        self._notify(request.id)
-        return request
+        saved = await self._requests.upsert(request)
+        self._notify(saved.id)
+        return saved
 
     async def open(self, draft: ServiceRequestDraft, *, client_id: str) -> ServiceRequest:
         """Section 101 step 1: identify the relevant asset, and open the
@@ -1432,6 +1430,8 @@ class LifeOpsCore:
         approvals: ApprovalRepository | None = None,
         audit: AuditRepository | None = None,
         bills: BillRepository | None = None,
+        shopping: ShoppingRepository | None = None,
+        service_requests: ServiceRequestRepository | None = None,
         templates: WorkflowTemplateRepository | None = None,
         change_request_dir: str | None = None,
         calendar: CalendarProviderService | None = None,
@@ -1505,6 +1505,7 @@ class LifeOpsCore:
         )
         self._audit_repo = audit
         self._bills_repo = bills
+        self._shopping_repo = shopping
         self._templates_repo = templates
         # Section 74 persists change requests under changes/requests/.
         self._change_request_dir = change_request_dir or 'changes/requests'
@@ -1531,28 +1532,28 @@ class LifeOpsCore:
         # this class, not a second copy of that orchestration.
         self._service_request_service = (
             ServiceRequestService(
-                world=world,
+                requests=service_requests,
                 clock=self._clock,
                 publish=(
                     lambda entity_id: self._publish(WORLD_CHANGED, entity_id=entity_id)
                 ),
             )
-            if world is not None
+            if service_requests is not None
             else None
         )
         # Phase 9 (BUILD_SPEC section 98): shopping needs both a persistence
-        # path (``world``) and a provider adapter (``browser``), the same
-        # two-dependency shape ``AppointmentService`` uses for world+calendar.
+        # path (its own repository) and a provider adapter (``browser``), the
+        # same two-dependency shape ``AppointmentService`` uses.
         self._shopping_service = (
             ShoppingService(
-                world=world,
+                shopping=shopping,
                 browser=browser,
                 clock=self._clock,
                 publish=(
                     lambda entity_id: self._publish(WORLD_CHANGED, entity_id=entity_id)
                 ),
             )
-            if world is not None and browser is not None
+            if shopping is not None and browser is not None
             else None
         )
 

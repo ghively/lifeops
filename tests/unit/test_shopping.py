@@ -46,6 +46,7 @@ from lifeops.repositories.fakes import (
     FakeAuditRepository,
     FakePersonRepository,
     FakePreferenceRepository,
+    FakeShoppingRepository,
     FakeTaskRepository,
     FakeWaitingRepository,
     FakeWorldRepository,
@@ -104,6 +105,7 @@ async def core(browser_service: BrowserProviderService) -> LifeOpsCore:
         actions=FakeActionRepository(),
         approvals=FakeApprovalRepository(),
         audit=FakeAuditRepository(),
+        shopping=FakeShoppingRepository(),
         browser=browser_service,
         clock=FrozenClock(),
     )
