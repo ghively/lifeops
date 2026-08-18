@@ -2487,6 +2487,7 @@ class LifeOpsCore:
             )
 
         committed = await self.commit_action(client, action_id=action_id)
+        external_reference: str | None
         try:
             if committed.type is ActionType.BOOK_APPOINTMENT:
                 external_reference, _ = await self._appointments().execute_booking(committed)
@@ -2521,7 +2522,7 @@ class LifeOpsCore:
 
     async def _execute_phone_call(
         self, client: ClientIdentity, action: Action
-    ) -> tuple[str, str]:
+    ) -> tuple[str | None, str]:
         """Place a PLACE_PHONE_CALL or REQUEST_QUOTE (BUILD_SPEC sections 68,
         97). ``objective_from_payload`` re-validates the objective against the
         section 97 hard rule (no charge/repair authority) even though
@@ -2539,12 +2540,14 @@ class LifeOpsCore:
         service_request_id = action.payload.get("service_request_id")
         if service_request_id:
             await self._apply_call_result(client, str(service_request_id), result)
-        reference = result.external_reference or action.idempotency_key
+        # Only the provider's reference is an external reference. Substituting
+        # the idempotency key wrote an internal identifier into the outbox as
+        # if the outside world had confirmed something.
         message = (
             f"call {'connected' if result.connected else 'did not connect'}; "
             f"objective_met={result.objective_met}"
         )
-        return reference, message
+        return result.external_reference, message
 
     async def _apply_call_result(
         self, client: ClientIdentity, service_request_id: str, result: CallResult

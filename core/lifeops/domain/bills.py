@@ -191,7 +191,11 @@ def validate_amount(amount: str) -> str:
         raise ValidationError("an amount is required", field="amount")
     negative = cleaned.startswith("-")
     body = cleaned[1:] if negative else cleaned
-    if not body.replace(".", "", 1).isdigit() or body.count(".") > 1:
+    digits = body.replace(".", "", 1)
+    # isascii() matters as much as isdigit(): str.isdigit() admits other
+    # scripts' digits, and a fraction like "٤٥" would survive into the
+    # payload hash unnormalised — two spellings of one amount, two hashes.
+    if not digits.isdigit() or not digits.isascii() or body.count(".") > 1:
         raise ValidationError(f"not a valid amount: {amount!r}", field="amount")
     if negative:
         raise ValidationError(
@@ -200,6 +204,10 @@ def validate_amount(amount: str) -> str:
             field="amount",
         )
     whole, _, fraction = body.partition(".")
+    if not whole:
+        # ".50" would otherwise crash int("") below — an unhandled 500
+        # instead of a validation refusal.
+        raise ValidationError(f"not a valid amount: {amount!r}", field="amount")
     if fraction and len(fraction) != 2:
         raise ValidationError(
             f"amount {amount!r} must have exactly two decimal places",
