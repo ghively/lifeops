@@ -133,16 +133,26 @@ arrow into a node it does not render. Section 16 gives tasks, waiting items,
 documents, and memories their own inspector panels; that is where they belong,
 not as unlabelled relationship rows.
 
-**Known design debt: list-valued facts are JSON-blobbed.** Phases 7 and 9
+**`toLower()` does not evaluate on a parameter.** `toLower(i.name) CONTAINS
+toLower($needle)` silently matches nothing on NornicDB. Lower the parameter in
+Python and call `toLower()` only on the property — `tasks.py` and `people.py`
+already do. Found in Phase 9's item search.
+
+**Resolved debt (kept for the reasoning): list-valued facts were JSON-blobbed.** Phases 7 and 9
 project Appointment, Document, ServiceRequest, and ShoppingList as world nodes,
 encoding list fields (a cart's items, an appointment's attendees) into a single
 `facts` string and bypassing `validate_facts`' 500-character bound on purpose.
 It works and it is consistent, but it defeats a bound that exists so an entity
 cannot become an unbounded document store, and it makes those items
-unqueryable — you cannot ask which lists contain milk. It was chosen partly to
-route around a harness rule, which has since been fixed. If a workflow needs
-to query inside these, give the entity its own repository rather than widening
-the blob.
+unqueryable — you cannot ask which lists contain milk. It was chosen partly to route around a harness rule.
+
+Both are now paid off. `ShoppingList` items are `(:ShoppingItem)` nodes behind
+a `CONTAINS` edge, so `find_lists_containing("milk")` answers. `ServiceRequest`
+stores `availability` as a native string array — the original premise that
+NornicDB "cannot store lists" was simply wrong; `Person.aliases` and
+`Memory.entity_ids` have been arrays since Phase 0. Appointment, Event, and
+Document had no list fields and needed no change. The world projections remain
+for graph *display*, which is a `dict[str, str]` by design.
 
 **Money moves only where a human is present.** `FINANCIAL_PAYMENT` is granted
 to the Console and to nothing else. Hermes can read what is owed and say a bill

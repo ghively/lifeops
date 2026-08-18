@@ -27,6 +27,10 @@ from lifeops.repositories.nornic.client import NornicClient
 from lifeops.repositories.nornic.memory import NornicMemoryRepository
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
+from lifeops.repositories.nornic.service_requests import (
+    NornicServiceRequestRepository,
+)
+from lifeops.repositories.nornic.shopping import NornicShoppingRepository
 from lifeops.repositories.nornic.tasks import NornicTaskRepository
 from lifeops.repositories.nornic.waiting import NornicWaitingRepository
 from lifeops.repositories.nornic.workflow_templates import (
@@ -102,6 +106,8 @@ class Container:
         self.approvals = NornicApprovalRepository(self.nornic)
         self.audit = NornicAuditRepository(self.nornic)
         self.bills = NornicBillRepository(self.nornic)
+        self.shopping = NornicShoppingRepository(self.nornic)
+        self.service_requests = NornicServiceRequestRepository(self.nornic)
         self.templates = NornicWorkflowTemplateRepository(self.nornic)
 
         # Safe mode may be set at boot or flipped by the user from the
@@ -119,6 +125,8 @@ class Container:
             approvals=self.approvals,
             audit=self.audit,
             bills=self.bills,
+            shopping=self.shopping,
+            service_requests=self.service_requests,
             templates=self.templates,
             calendar=self.calendar,
             email=self.email,

@@ -22,6 +22,8 @@ from lifeops.domain.bills import Bill, BillStatus, Payee
 from lifeops.domain.memory import MemoryRecord, MemoryType
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import Preference
+from lifeops.domain.service_request import ServiceRequest
+from lifeops.domain.shopping import ShoppingList
 from lifeops.domain.tasks import Task, TaskState
 from lifeops.domain.waiting import WaitingItem, WaitingStatus
 from lifeops.domain.workflow_templates import WorkflowTemplate
@@ -402,6 +404,50 @@ class WorkflowTemplateRepository(Protocol):
     async def upsert(self, template: WorkflowTemplate) -> WorkflowTemplate: ...
 
     async def delete(self, template_id: str) -> bool: ...
+
+
+@runtime_checkable
+class ShoppingRepository(Protocol):
+    """Persistence for shopping lists (BUILD_SPEC section 98).
+
+    Items are stored as their own nodes rather than packed into a fact, so a
+    list's contents can be queried — see ``find_lists_containing``.
+    """
+
+    async def get(self, list_id: str) -> ShoppingList | None: ...
+
+    async def list_all(self, *, limit: int = 100) -> list[ShoppingList]: ...
+
+    async def find_lists_containing(self, item_name: str) -> list[ShoppingList]:
+        """Every list carrying an item by name — the question a JSON blob
+        could not answer."""
+        ...
+
+    async def upsert(self, shopping_list: ShoppingList) -> ShoppingList: ...
+
+    async def delete(self, list_id: str) -> bool: ...
+
+
+@runtime_checkable
+class ServiceRequestRepository(Protocol):
+    """Persistence for service requests (BUILD_SPEC section 97).
+
+    ``availability`` is a native string array, not a joined string: NornicDB
+    stores lists, and joining them made the slots unqueryable.
+    """
+
+    async def get(self, request_id: str) -> ServiceRequest | None: ...
+
+    async def list_all(self, *, limit: int = 100) -> list[ServiceRequest]: ...
+
+    async def list_for_provider(
+        self, provider_entity_id: str
+    ) -> list[ServiceRequest]:
+        """Every request against one provider — the provider history section
+        101 step 3 asks for."""
+        ...
+
+    async def upsert(self, request: ServiceRequest) -> ServiceRequest: ...
 
 
 @runtime_checkable

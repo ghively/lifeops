@@ -75,6 +75,9 @@ from lifeops.repositories.nornic.audit import NornicAuditRepository
 from lifeops.repositories.nornic.client import NornicClient
 from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
+from lifeops.repositories.nornic.service_requests import (
+    NornicServiceRequestRepository,
+)
 from lifeops.repositories.nornic.tasks import NornicTaskRepository
 from lifeops.repositories.nornic.waiting import NornicWaitingRepository
 from lifeops.repositories.nornic.world import NornicWorldRepository
@@ -93,6 +96,7 @@ async def scenario(nornic_client: NornicClient, test_label: str, tmp_path: Path)
     preferences = NornicPreferenceRepository(nornic_client)
     tasks = NornicTaskRepository(nornic_client)
     world = NornicWorldRepository(nornic_client)
+    service_requests = NornicServiceRequestRepository(nornic_client)
     waiting = NornicWaitingRepository(nornic_client)
     actions = NornicActionRepository(nornic_client)
     approvals = NornicApprovalRepository(nornic_client)
@@ -123,6 +127,7 @@ async def scenario(nornic_client: NornicClient, test_label: str, tmp_path: Path)
         preferences=preferences,
         tasks=tasks,
         world=world,
+        service_requests=service_requests,
         waiting=waiting,
         actions=actions,
         approvals=approvals,
