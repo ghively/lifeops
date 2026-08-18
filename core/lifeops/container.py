@@ -29,6 +29,9 @@ from lifeops.repositories.nornic.people import NornicPersonRepository
 from lifeops.repositories.nornic.preferences import NornicPreferenceRepository
 from lifeops.repositories.nornic.tasks import NornicTaskRepository
 from lifeops.repositories.nornic.waiting import NornicWaitingRepository
+from lifeops.repositories.nornic.workflow_templates import (
+    NornicWorkflowTemplateRepository,
+)
 from lifeops.repositories.nornic.world import NornicWorldRepository
 from lifeops.secrets.local_encrypted import LocalEncryptedSecretStore
 from lifeops.settings import Settings, get_settings
@@ -99,6 +102,7 @@ class Container:
         self.approvals = NornicApprovalRepository(self.nornic)
         self.audit = NornicAuditRepository(self.nornic)
         self.bills = NornicBillRepository(self.nornic)
+        self.templates = NornicWorkflowTemplateRepository(self.nornic)
 
         # Safe mode may be set at boot or flipped by the user from the
         # Console; the config document is authoritative once it exists.
@@ -115,6 +119,7 @@ class Container:
             approvals=self.approvals,
             audit=self.audit,
             bills=self.bills,
+            templates=self.templates,
             calendar=self.calendar,
             email=self.email,
             telephony=self.telephony,

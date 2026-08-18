@@ -89,6 +89,12 @@ from lifeops.domain.preferences import (
     normalise_key,
 )
 from lifeops.domain.search import SearchResults
+from lifeops.domain.self_config import (
+    ChangeRequest,
+    SelfConfigProposal,
+    check_permitted,
+    classify,
+)
 from lifeops.domain.service_request import (
     ServiceRequest,
     ServiceRequestDraft,
@@ -134,6 +140,12 @@ from lifeops.domain.waiting import (
 )
 from lifeops.domain.waiting import record_followup as record_followup_rule
 from lifeops.domain.waiting import resolve as resolve_waiting
+from lifeops.domain.workflow_templates import (
+    WorkflowTemplate,
+    WorkflowTemplateDraft,
+    validate_steps,
+    validate_trigger,
+)
 from lifeops.domain.world import (
     EntityDetail,
     EntityDraft,
@@ -185,6 +197,7 @@ from lifeops.repositories.interfaces import (
     PreferenceRepository,
     TaskRepository,
     WaitingRepository,
+    WorkflowTemplateRepository,
     WorldRepository,
 )
 from lifeops.telephony.service import TelephonyProviderService
@@ -1419,6 +1432,8 @@ class LifeOpsCore:
         approvals: ApprovalRepository | None = None,
         audit: AuditRepository | None = None,
         bills: BillRepository | None = None,
+        templates: WorkflowTemplateRepository | None = None,
+        change_request_dir: str | None = None,
         calendar: CalendarProviderService | None = None,
         email: EmailProviderService | None = None,
         telephony: TelephonyProviderService | None = None,
@@ -1490,6 +1505,9 @@ class LifeOpsCore:
         )
         self._audit_repo = audit
         self._bills_repo = bills
+        self._templates_repo = templates
+        # Section 74 persists change requests under changes/requests/.
+        self._change_request_dir = change_request_dir or 'changes/requests'
         # Calendar/email (Phase 7, section 96) need both a persistence path
         # (``world``) and a provider adapter (``calendar``), the same
         # two-dependency shape ``ActionService`` uses for actions+approvals.
@@ -3352,7 +3370,151 @@ class LifeOpsCore:
         )
         return saved
 
+    # --- self-configuration (BUILD_SPEC sections 73, 74, 100) ------------------
+    #
+    # Section 100: "Protected changes create Code Change Requests." Hermes may
+    # tune what describes how it works. It may not touch what decides what it
+    # is allowed to do — and when it tries, the answer is a written request,
+    # not a silent partial edit.
+
+    def _templates(self) -> WorkflowTemplateRepository:
+        if self._templates_repo is None:
+            raise ConfigurationError(
+                "no workflow template repository is configured", component="templates"
+            )
+        return self._templates_repo
+
+    async def save_workflow_template(
+        self, client: ClientIdentity, draft: WorkflowTemplateDraft
+    ) -> WorkflowTemplate:
+        """Create or revise a template — a permitted self-change (section 73)."""
+        self._require(client, Capability.SELF_CONFIGURE)
+        check_permitted(
+            SelfConfigProposal(target="workflow_template", name=draft.name)
+        )
+        validate_trigger(draft.trigger, draft.next_run_at)
+
+        now = now_iso(self._clock)
+        existing = await self._templates().get(WorkflowTemplate.make_id(draft.name))
+        template = WorkflowTemplate(
+            id=WorkflowTemplate.make_id(draft.name),
+            name=draft.name.strip(),
+            description=draft.description,
+            steps=validate_steps(draft.steps),
+            trigger=draft.trigger,
+            next_run_at=draft.next_run_at,
+            created_at=existing.created_at if existing else now,
+            updated_at=now,
+            created_by_client=client.client_id,
+        )
+        with operation(
+            "self_config.save_template", template_id=template.id, client_id=client.client_id
+        ):
+            saved = await self._templates().upsert(template)
+        await self.audit(
+            client, result="saved", intent="save_workflow_template",
+            target=saved.id, risk="R1",
+        )
+        return saved
+
+    async def list_workflow_templates(
+        self, client: ClientIdentity, *, limit: int = 100
+    ) -> list[WorkflowTemplate]:
+        self._require(client, Capability.READ_WORLD)
+        return await self._templates().list_templates(limit=limit)
+
+    async def due_routines(
+        self, client: ClientIdentity, *, limit: int = 50
+    ) -> list[WorkflowTemplate]:
+        """Scheduled routines whose time has come (section 55's lease idea,
+        reused rather than a second scheduler)."""
+        self._require(client, Capability.READ_WORLD)
+        return await self._templates().list_due(now=now_iso(self._clock), limit=limit)
+
+    async def delete_workflow_template(
+        self, client: ClientIdentity, *, template_id: str
+    ) -> bool:
+        self._require(client, Capability.SELF_CONFIGURE)
+        removed = await self._templates().delete(template_id)
+        await self.audit(
+            client, result="deleted" if removed else "absent",
+            intent="delete_workflow_template", target=template_id,
+        )
+        return removed
+
+    async def propose_self_change(
+        self, client: ClientIdentity, proposal: SelfConfigProposal
+    ) -> None:
+        """Check a self-change before it is applied.
+
+        Raises when the change is protected or forbidden. Callers that want a
+        written request instead should catch that and call
+        ``request_code_change``; this deliberately does not do it for them,
+        because "it was refused" and "a request was filed" are different
+        outcomes and a caller must choose which it meant.
+        """
+        self._require(client, Capability.SELF_CONFIGURE)
+        check_permitted(proposal)
+
+    async def request_code_change(
+        self,
+        client: ClientIdentity,
+        *,
+        component: str,
+        problem: str,
+        observed_behavior: str,
+        desired_behavior: str,
+        risk: str,
+        task_ids: list[str] | None = None,
+        trace_ids: list[str] | None = None,
+        failure_count: int = 0,
+        suggested_acceptance_tests: list[str] | None = None,
+    ) -> ChangeRequest:
+        """File a Code Change Request (section 74).
+
+        Written to ``changes/requests/`` as a file rather than into NornicDB:
+        section 74 says a coding agent makes protected changes, and a coding
+        agent reads the repository, not the user's database.
+        """
+        self._require(client, Capability.SELF_CONFIGURE)
+        request = ChangeRequest(
+            id=ChangeRequest.make_id(),
+            component=component,
+            problem=problem,
+            observed_behavior=observed_behavior,
+            desired_behavior=desired_behavior,
+            task_ids=task_ids or [],
+            trace_ids=trace_ids or [],
+            failure_count=failure_count,
+            risk=risk,
+            suggested_acceptance_tests=suggested_acceptance_tests or [],
+            created_at=now_iso(self._clock),
+            requested_by=client.client_id,
+        )
+        self._write_change_request(request)
+        await self.audit(
+            client,
+            result="filed",
+            intent="request_code_change",
+            target=request.id,
+            risk=request.risk,
+            component=component,
+            protected=str(classify(component)),
+        )
+        return request
+
+    def _write_change_request(self, request: ChangeRequest) -> None:
+        """Persist a change request under ``changes/requests/``."""
+        import json
+        from pathlib import Path
+
+        directory = Path(self._change_request_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{request.id}.json"
+        path.write_text(json.dumps(request.model_dump(), indent=2), encoding="utf-8")
+
     # --- search -------------------------------------------------------------
+
 
 
 
