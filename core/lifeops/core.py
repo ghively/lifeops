@@ -3295,6 +3295,26 @@ class LifeOpsCore:
         )
         return document
 
+    async def get_document(self, client: ClientIdentity, *, document_id: str) -> Document:
+        self._require(client, Capability.READ_WORLD)
+        entity = await self._world().get(document_id)
+        return entity_to_document(entity)
+
+    async def search_documents(
+        self, client: ClientIdentity, *, query: str = "", limit: int = 50
+    ) -> list[Document]:
+        """List/search document references by title, source, or summary —
+        the same substring approach ``search_knowledge`` uses, and the read
+        half of the create/read pair ``create_document`` started (section
+        64). Recording one stayed a Console/HTTP act; reading one has no
+        equivalent reason to be narrower, so this has no MCP counterpart
+        deliberately, matching ``create_document``'s own boundary."""
+        self._require(client, Capability.READ_WORLD)
+        entities = await self._world().search_full(
+            entity_types=[WorldEntityType.DOCUMENT], query=query, limit=limit
+        )
+        return [entity_to_document(e) for e in entities]
+
     # --- knowledge (BUILD_SPEC sections 18, 36, 50) ----------------------------
 
     async def record_knowledge(

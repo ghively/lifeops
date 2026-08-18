@@ -337,6 +337,16 @@ export interface Appointment {
   created_at: string
 }
 
+/** The only sources LifeOps Core accepts for a document reference
+ * (`validate_source` in `domain/documents.py`). */
+export type DocumentSource = 'email' | 'calendar' | 'manual'
+
+export const DOCUMENT_SOURCE_LABELS: Record<DocumentSource, string> = {
+  email: 'Email',
+  calendar: 'Calendar',
+  manual: 'Manual',
+}
+
 /** A reference to something ingested from email or the calendar (§36, §64). */
 export interface LifeOpsDocument {
   id: string
@@ -647,6 +657,44 @@ export const calendarApi = {
 
   cancel: (id: string) =>
     lifeops.post<LifeOpsAction>(`/appointments/${id}/cancel`).then((r) => r.data),
+}
+
+export const documentsApi = {
+  /** List/search document references by title, source, or summary — a
+   * pointer LifeOps stores, never the underlying file (section 18). */
+  search: (params?: { q?: string; limit?: number }) =>
+    lifeops
+      .get<{ documents: LifeOpsDocument[]; total: number }>('/documents', { params })
+      .then((r) => r.data),
+
+  get: (id: string) => lifeops.get<LifeOpsDocument>(`/documents/${id}`).then((r) => r.data),
+
+  /** Record a reference — never a file upload, since LifeOps Core has no
+   * binary storage; the actual content stays wherever it came from. */
+  create: (payload: {
+    title: string
+    source: string
+    source_ref?: string
+    mime_type?: string
+    summary?: string
+  }) => lifeops.post<LifeOpsDocument>('/documents', payload).then((r) => r.data),
+}
+
+export const knowledgeApi = {
+  /** Search reference content by title, category, or body text (section 50). */
+  search: (params?: { q?: string; limit?: number }) =>
+    lifeops
+      .get<{ knowledge: Knowledge[]; total: number }>('/knowledge', { params })
+      .then((r) => r.data),
+
+  get: (id: string) => lifeops.get<Knowledge>(`/knowledge/${id}`).then((r) => r.data),
+
+  create: (payload: {
+    title: string
+    category?: string
+    content?: string
+    source_document_id?: string
+  }) => lifeops.post<Knowledge>('/knowledge', payload).then((r) => r.data),
 }
 
 export const waitingApi = {
