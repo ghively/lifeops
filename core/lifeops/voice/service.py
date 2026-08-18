@@ -50,6 +50,29 @@ ASRProviderFactory = Callable[[dict[str, Any], SecretStore], ASRProvider]
 ProviderFactory = TTSProviderFactory
 
 
+def _number(value: Any, *, default: float) -> float:
+    """A numeric setting, defaulting only when it is truly unset.
+
+    ``float(settings.get(x) or default)`` silently turned a stored,
+    schema-valid 0 back into the default.
+    """
+    return default if value is None else float(value)
+
+
+
+async def _close_provider(provider: object) -> None:
+    """Close a per-call provider's transport, when it has one.
+
+    Providers are built fresh per call from current configuration; the
+    ElevenLabs adapter owns an httpx.AsyncClient, and before this nothing
+    ever called its aclose — every synthesize/health/list call leaked a
+    connection pool.
+    """
+    closer = getattr(provider, "aclose", None)
+    if closer is not None:
+        await closer()
+
+
 def _build_elevenlabs(settings: dict[str, Any], secrets: SecretStore) -> TTSProvider:
     api_key = secrets.get(secret_ref("elevenlabs", "api_key"))
     if not api_key:
@@ -61,9 +84,10 @@ def _build_elevenlabs(settings: dict[str, Any], secrets: SecretStore) -> TTSProv
         voice_id=settings.get("voice_id"),
         model_id=settings.get("model_id"),
         output_format=settings.get("output_format") or "mp3_44100_128",
-        stability=float(settings.get("stability") or 0.5),
-        similarity_boost=float(settings.get("similarity_boost") or 0.75),
-        speed=float(settings.get("speed") or 1.0),
+        # 'or' would turn a stored, schema-valid 0 back into the default.
+        stability=_number(settings.get("stability"), default=0.5),
+        similarity_boost=_number(settings.get("similarity_boost"), default=0.75),
+        speed=_number(settings.get("speed"), default=1.0),
     )
 
 
@@ -71,7 +95,7 @@ def _build_local_tts(settings: dict[str, Any], secrets: SecretStore) -> TTSProvi
     return LocalTTSProvider(
         model=settings.get("model"),
         device=settings.get("device") or "cuda:0",
-        speed=float(settings.get("speed") or 1.0),
+        speed=_number(settings.get("speed"), default=1.0),
     )
 
 
@@ -242,13 +266,19 @@ class VoiceService:
         rather than recording a health entry against a provider nobody has
         chosen yet."""
         provider_id, provider = self._build_tts()
-        return provider_id, await self._checked_health(provider_id, provider)
+        try:
+            return provider_id, await self._checked_health(provider_id, provider)
+        finally:
+            await _close_provider(provider)
 
     async def health_for(self, provider_id: str) -> tuple[str, HealthReport]:
         """Health-check one specific provider, ignoring voice mode — what the
         Console's per-card Test button calls."""
         provider = self._build_specific(provider_id)
-        return provider_id, await self._checked_health(provider_id, provider)
+        try:
+            return provider_id, await self._checked_health(provider_id, provider)
+        finally:
+            await _close_provider(provider)
 
     async def _checked_health(
         self, provider_id: str, provider: TTSProvider | ASRProvider
@@ -264,16 +294,25 @@ class VoiceService:
 
     async def list_voices(self) -> list[Voice]:
         _, provider = self._build_tts()
-        return await provider.list_voices()
+        try:
+            return await provider.list_voices()
+        finally:
+            await _close_provider(provider)
 
     async def list_models(self) -> list[TTSModel]:
         _, provider = self._build_tts()
-        return await provider.list_models()
+        try:
+            return await provider.list_models()
+        finally:
+            await _close_provider(provider)
 
     async def synthesize(self, text: str, options: SynthesisOptions | None = None) -> bytes:
         clean = validate_synthesis_text(text)
         _, provider = self._build_tts()
-        return await provider.synthesize(clean, options or SynthesisOptions())
+        try:
+            return await provider.synthesize(clean, options or SynthesisOptions())
+        finally:
+            await _close_provider(provider)
 
     def stream(
         self, text: str, options: SynthesisOptions | None = None
@@ -282,13 +321,25 @@ class VoiceService:
         now — before a caller has committed to a streaming HTTP response."""
         clean = validate_synthesis_text(text)
         _, provider = self._build_tts()
-        return provider.stream(clean, options or SynthesisOptions())
+        inner = provider.stream(clean, options or SynthesisOptions())
+
+        async def _piped() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in inner:
+                    yield chunk
+            finally:
+                await _close_provider(provider)
+
+        return _piped()
 
     # --- speech-to-text ----------------------------------------------------
 
     async def transcribe(self, audio: bytes) -> TranscriptionResult:
         _, provider = self._build_asr()
-        return await provider.transcribe(audio)
+        try:
+            return await provider.transcribe(audio)
+        finally:
+            await _close_provider(provider)
 
     def transcribe_stream(
         self, audio_stream: AsyncIterator[bytes]

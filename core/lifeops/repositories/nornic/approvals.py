@@ -182,6 +182,16 @@ class NornicApprovalRepository:
         statements: list[tuple[str, dict[str, Any]]] = [(_WRITE, _write_params(approval))]
 
         if existing.approved_by != approval.approved_by:
+            # A changed approver has to drop the stale edge, otherwise the
+            # graph shows two people approving one approval — same stale-edge
+            # discipline as ASSIGNED_TO in tasks.py.
+            statements.append(
+                (
+                    "MATCH (:Person)-[r:APPROVED]->(ap:Approval {id: $approval_id}) "
+                    "DELETE r",
+                    {"approval_id": approval.id},
+                )
+            )
             approved_edge = _approved_statement(approval)
             if approved_edge is not None:
                 statements.append(approved_edge)

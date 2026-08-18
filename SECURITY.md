@@ -35,27 +35,39 @@ Identity is bound **per connection**:
 
 A tool argument would be model-controlled, letting any agent name itself
 `hermes-personal`. An unrecognised `--client` exits non-zero rather than falling
-back, so a typo is loud rather than a silent downgrade. A missing identity
-resolves to the *least* privileged interactive default, never to Hermes.
+back, so a typo is loud rather than a silent downgrade. Over MCP a missing
+identity is refused, never defaulted. Over HTTP, a request with no header is
+treated as the Console — the most privileged interactive identity. That is a
+deliberate trade recorded here honestly: the HTTP API exists for the Console,
+binds to loopback, and can be put behind the console password; but any local
+process that can reach the port can claim the header, so the password (and the
+loopback bind) are the boundary, not the header.
 
 ---
 
 ## Capabilities
 
-| Capability | Hermes | Interactive | Coding agent | Console |
-|---|:---:|:---:|:---:|:---:|
-| `read_world` | ● | ● | ● | ● |
-| `read_preferences` | ● | ● | ● | ● |
-| `read_tasks` | ● | ● | ● | ● |
-| `create_task` | ● | ● | ● | ● |
-| `update_task` | ● | ● | — | ● |
-| `write_preference` | ● | ● | — | ● |
-| `manage_configuration` | — | — | — | ● |
-| `approve_action` | — | — | — | ● |
-| `send_external_message` | — | — | — | — |
-| `book_appointment` | — | — | — | — |
-| `shopping_checkout` | — | — | — | — |
-| `financial_payment` | — | — | — | — |
+As granted in `policy/capabilities.py` (the code is authoritative; this table
+is a rendering of it):
+
+| Capability | Hermes | Interactive | Coding agent | Worker | Console |
+|---|:---:|:---:|:---:|:---:|:---:|
+| `read_world` | ● | ● | ● | — | ● |
+| `read_preferences` | ● | ● | ● | — | ● |
+| `read_tasks` | ● | ● | ● | ● | ● |
+| `read_memory` | ● | ● | ● | — | ● |
+| `create_task` | ● | ● | ● | — | ● |
+| `update_task` | ● | ● | — | ● | ● |
+| `write_preference` | ● | ● | — | — | ● |
+| `write_memory` | ● | — | — | — | ● |
+| `write_world` | ● | — | — | — | ● |
+| `self_configure` | ● | — | — | — | ● |
+| `manage_configuration` | — | — | — | — | ● |
+| `approve_action` | — | — | — | — | ● |
+| `send_external_message` | ● | — | — | — | ● |
+| `book_appointment` | ● | — | — | — | ● |
+| `shopping_checkout` | ● | — | — | — | ● |
+| `financial_payment` | — | — | — | — | ● |
 
 Enforced server-side in `LifeOpsCore`, before any repository call. A client
 cannot grant itself more, and the grants are immutable at runtime.
@@ -191,8 +203,12 @@ Recorded rather than hidden. Each has a phase.
 
 The Console and API ship with optional bearer-token authentication. It is
 **disabled until a console password is set**: with no password configured,
-every route answers without a token, which is acceptable only because LifeOps
-binds to loopback and no client holds an external-action capability.
+every route answers without a token. Since Phases 7-10 the clients *do* hold
+external-action capabilities (booking, messaging, shopping for Hermes and the
+Console; payment for the Console alone), so the loopback bind is the only
+boundary until the password is set — set one before enabling any real
+provider. A headerless HTTP request is treated as the Console (see
+Identity above), which makes this the first thing to harden.
 
 Once a password exists in the secret store, all `/api/v1` routes except
 `/health` and `/auth/login` require `Authorization: Bearer <token>`; the
@@ -213,12 +229,17 @@ authentication layer, and the launch configuration is the trust anchor.
 Mitigated by the fact that such a process already has the user's filesystem
 access. Revisit if LifeOps ever moves to a networked MCP transport.
 
-### There is no audit log yet (Phase 4)
+### Configuration routes check MANAGE_CONFIGURATION (since 2026-08-18)
 
-Semantic operations are logged with trace IDs and durations, and the Activity
-screen shows an ephemeral in-memory feed of recent operations, but there is no
-durable, queryable audit trail in NornicDB. "Why did Hermes do that?" beyond
-the current process lifetime is answerable only from log files.
+The `/config/*` and `/voice/*` management routes require the
+`MANAGE_CONFIGURATION` capability, enforced in the HTTP adapter because the
+config surface deliberately bypasses LifeOpsCore. The check ignores safe
+mode on purpose: configuration is how the emergency stop is lifted, so the
+stop must not lock the door to its own switch. Note the limit of what this
+buys: HTTP identity is a self-declared header (see Identity above), so with
+auth disabled a local process can still claim the Console's identity — the
+capability check removes the accidental paths, the console password removes
+the deliberate ones. Set the password.
 
 ### WebSocket events carry no payload beyond the type (accepted)
 

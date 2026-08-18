@@ -171,10 +171,12 @@ export function TodayPage() {
           'text-sm text-muted-foreground',
         )}
       >
-        <p className="font-medium text-foreground">Phase 0</p>
+        <p className="font-medium text-foreground">Tasks only, for now</p>
         <p className="mt-1">
-          Approvals, Waiting, Calendar, World, and Memory arrive in later
-          phases. Today currently reflects LifeOps task state only.
+          Today reflects LifeOps task state. Pending approvals, waiting
+          items, and calendar events exist in the sidebar screens but are
+          not folded into this view yet (BUILD_SPEC section 11 asks for
+          them here — recorded as an open gap in docs/audits/).
         </p>
       </footer>
     </div>

@@ -172,8 +172,9 @@ describe('Routines', () => {
     )
   })
 
-  it('deletes a routine', async () => {
+  it('deletes a routine after confirmation', async () => {
     mockedTemplates.delete.mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderPage()
     await screen.findByText('Weekly review')
 
@@ -182,6 +183,17 @@ describe('Routines', () => {
     await waitFor(() =>
       expect(mockedTemplates.delete).toHaveBeenCalledWith('template_weekly_review'),
     )
+  })
+
+  it('a cancelled confirmation deletes nothing', async () => {
+    mockedTemplates.delete.mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderPage()
+    await screen.findByText('Weekly review')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Weekly review' }))
+
+    expect(mockedTemplates.delete).not.toHaveBeenCalled()
   })
 
   it('has an honest empty state', async () => {

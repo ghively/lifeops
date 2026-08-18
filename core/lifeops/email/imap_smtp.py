@@ -42,14 +42,22 @@ def _decode_header(value: str | None) -> str:
     )
 
 
+def _decoded_payload(msg: email_lib.message.Message) -> bytes:
+    # get_payload(decode=True) returns bytes or None for leaf parts; the
+    # broader Message|bytes union in its signature covers multipart access,
+    # which decode=True never takes.
+    payload = msg.get_payload(decode=True)
+    return payload if isinstance(payload, bytes) else b""
+
+
 def _snippet(msg: email_lib.message.Message, *, length: int = 200) -> str:
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
-                payload = part.get_payload(decode=True) or b""
+                payload = _decoded_payload(part)
                 return payload.decode(part.get_content_charset() or "utf-8", "replace")[:length]
         return ""
-    payload = msg.get_payload(decode=True) or b""
+    payload = _decoded_payload(msg)
     return payload.decode(msg.get_content_charset() or "utf-8", "replace")[:length]
 
 
@@ -114,6 +122,8 @@ class ImapSmtpEmailProvider:
                 if status != "OK" or not fetched or fetched[0] is None:
                     continue
                 raw = fetched[0][1]
+                if not isinstance(raw, bytes):
+                    continue
                 messages.append(_to_email_message(uid.decode(), "INBOX", raw))
             return messages
         finally:
@@ -136,7 +146,10 @@ class ImapSmtpEmailProvider:
                 status, fetched = conn.fetch(uid, "(RFC822)")
                 if status != "OK" or not fetched or fetched[0] is None:
                     continue
-                messages.append(_to_email_message(uid.decode(), "INBOX", fetched[0][1]))
+                raw = fetched[0][1]
+                if not isinstance(raw, bytes):
+                    continue
+                messages.append(_to_email_message(uid.decode(), "INBOX", raw))
             if not messages:
                 raise NotFoundError(f"no such thread: {thread_id}", thread_id=thread_id)
             return EmailThread(

@@ -23,10 +23,9 @@ the user configures.
 
 from __future__ import annotations
 
-import importlib.util
-
 from lifeops.domain.shopping import CartResult, OrderResult, ProductResult, ShoppingItem
 from lifeops.errors import ProviderError
+from lifeops.runtime import detect_runtime
 
 #: Real, commonly installed package names a browser-automation adapter could
 #: eventually be written against. Detecting them is useful even though no
@@ -34,18 +33,6 @@ from lifeops.errors import ProviderError
 #: ``ASR_RUNTIME_CANDIDATES``.
 BROWSER_RUNTIME_CANDIDATES: tuple[str, ...] = ("playwright", "selenium")
 
-
-def _detect_runtime(candidates: tuple[str, ...]) -> str | None:
-    """The first candidate module that is actually importable, if any."""
-    for name in candidates:
-        try:
-            if importlib.util.find_spec(name) is not None:
-                return name
-        except (ImportError, ValueError):
-            # find_spec can raise for a malformed or partially-shadowed
-            # module name; treat that the same as "not present".
-            continue
-    return None
 
 
 class RealBrowserWorker:
@@ -75,7 +62,7 @@ class RealBrowserWorker:
         )
 
     async def health(self) -> tuple[bool, str]:
-        runtime = _detect_runtime(self._RUNTIME_CANDIDATES)
+        runtime = detect_runtime(self._RUNTIME_CANDIDATES)
         if runtime is None:
             return False, self._runtime_missing_message()
         if not self._endpoint:

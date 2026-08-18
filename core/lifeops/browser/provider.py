@@ -44,9 +44,13 @@ class BrowserWorker(Protocol):
         self, *, store: str, items: list[ShoppingItem]
     ) -> CartResult:
         """Section 98's "cart building" — reversible, commits nothing
-        (BUILD_SPEC section 56: R1). Substituting an unavailable item is the
-        worker's job when ``ShoppingItem.substitution_allowed`` is set;
-        ``CartResult.unavailable_items`` reports what it could not resolve."""
+        (BUILD_SPEC section 56: R1). The worker never substitutes on its
+        own, whatever ``substitution_allowed`` says: a substitution changes
+        what an approval covers, so it travels back via
+        ``CartResult.unavailable_items`` and is applied through
+        ``apply_substitution``, where section 57's payload binding forces a
+        fresh human approval. ``substitution_allowed`` is the *permission*
+        that flow checks, not licence for the worker to act alone."""
         ...
 
     async def submit_order(
