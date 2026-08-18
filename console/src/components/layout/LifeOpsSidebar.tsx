@@ -19,6 +19,8 @@ import {
   Folder,
   Globe,
   Home,
+  Receipt,
+  Repeat,
   Search,
   Settings,
   Settings2,
@@ -56,6 +58,7 @@ const SECTIONS: NavSection[] = [
     label: 'Life',
     items: [
       { label: 'Tasks', href: '/tasks', icon: CheckSquare, phase: 0 },
+      { label: 'Bills', href: '/bills', icon: Receipt, phase: 0 },
       { label: 'Calendar', href: '/calendar', icon: Calendar, phase: 7 },
     ],
   },
@@ -72,6 +75,7 @@ const SECTIONS: NavSection[] = [
     label: 'Hermes',
     items: [
       { label: 'Hermes', href: '/hermes', icon: Bot, phase: 1 },
+      { label: 'Routines', href: '/routines', icon: Repeat, phase: 0 },
       { label: 'Activity', href: '/activity', icon: Activity, phase: 0 },
     ],
   },
