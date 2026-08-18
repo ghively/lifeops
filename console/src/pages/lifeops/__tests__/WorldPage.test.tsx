@@ -135,8 +135,12 @@ beforeEach(() => {
   vi.mocked(worldApi.entity).mockResolvedValue(detail())
   vi.mocked(worldApi.history).mockResolvedValue({
     entity_id: HOUSEHOLD,
+    fact_history: [],
     memories: [],
-    covers: ['memories referencing this entity, including closed versions'],
+    covers: [
+      'every version of every fact this entity has carried',
+      'memories referencing this entity, including closed versions',
+    ],
   })
   vi.mocked(worldApi.unlink).mockResolvedValue(undefined)
   vi.mocked(worldApi.link).mockResolvedValue({
@@ -461,7 +465,7 @@ describe('the section 15 temporal/current toggle', () => {
     )
   })
 
-  it('tells a non-preference entity it has no history to show', async () => {
+  it('tells a non-preference entity it has no fact history yet', async () => {
     renderPage()
     await userEvent.click(await screen.findByText('node:Main House'))
     await screen.findByText('Current facts')
@@ -469,8 +473,48 @@ describe('the section 15 temporal/current toggle', () => {
     await userEvent.click(screen.getByRole('button', { name: /history/i }))
 
     expect(
-      await screen.findByText(/carries only current facts/i),
+      await screen.findByText(/no recorded changes to this entity's facts/i),
     ).toBeInTheDocument()
     expect(preferencesApi.history).not.toHaveBeenCalled()
+  })
+
+  it('shows a non-preference entity its per-fact history, grouped by key', async () => {
+    vi.mocked(worldApi.history).mockResolvedValue({
+      entity_id: HOUSEHOLD,
+      fact_history: [
+        {
+          id: 'fact_phone_2',
+          entity_id: HOUSEHOLD,
+          key: 'phone',
+          value: '555-9999',
+          valid_from: '2026-02-01T00:00:00Z',
+          valid_to: null,
+          supersedes: 'fact_phone_1',
+          created_by_client: 'hermes-personal',
+        },
+        {
+          id: 'fact_phone_1',
+          entity_id: HOUSEHOLD,
+          key: 'phone',
+          value: '555-0100',
+          valid_from: '2026-01-01T00:00:00Z',
+          valid_to: '2026-02-01T00:00:00Z',
+          supersedes: null,
+          created_by_client: 'hermes-personal',
+        },
+      ],
+      memories: [],
+      covers: ['every version of every fact this entity has carried'],
+    })
+    renderPage()
+    await userEvent.click(await screen.findByText('node:Main House'))
+    await screen.findByText('Current facts')
+
+    await userEvent.click(screen.getByRole('button', { name: /history/i }))
+
+    expect(await screen.findByText('Fact history')).toBeInTheDocument()
+    expect(screen.getByText('phone')).toBeInTheDocument()
+    expect(screen.getByText('555-9999')).toBeInTheDocument()
+    expect(screen.getByText('555-0100')).toBeInTheDocument()
   })
 })

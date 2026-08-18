@@ -1283,8 +1283,21 @@ export interface WorldEntityDetail {
   related_memories: MemoryRecord[]
 }
 
+/** One version of one fact on a world entity (BUILD_SPEC section 16). */
+export interface EntityFactRecord {
+  id: string
+  entity_id: string
+  key: string
+  value: string
+  valid_from: string
+  valid_to: string | null
+  supersedes: string | null
+  created_by_client: string | null
+}
+
 export interface WorldEntityHistory {
   entity_id: string
+  fact_history: EntityFactRecord[]
   memories: MemoryRecord[]
   /** What this history does and does not cover, stated by the server. */
   covers: string[]

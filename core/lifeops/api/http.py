@@ -54,6 +54,7 @@ from lifeops.api.schemas import (
     EmailSearchResponse,
     EmailThreadResponse,
     EntityDetailResponse,
+    EntityFactResponse,
     EntityHistoryResponse,
     ErrorResponse,
     FreeBusyResponse,
@@ -96,6 +97,7 @@ from lifeops.api.schemas import (
     TaskListResponse,
     TaskResponse,
     TestProviderResponse,
+    UpdateEntityFactsRequest,
     UpdateProviderRequest,
     UpdateSystemRequest,
     UpdateTaskRequest,
@@ -841,6 +843,7 @@ async def entity_history(
     history = await container.core.entity_history(client, entity_id=entity_id)
     return EntityHistoryResponse(
         entity_id=history.entity_id,
+        fact_history=[EntityFactResponse(**f.model_dump()) for f in history.fact_history],
         memories=[_memory_out(m) for m in history.memories],
         covers=history.covers,
     )
@@ -858,6 +861,26 @@ async def create_entity(
     """Create a household, provider, or asset. This records world state; it
     executes nothing."""
     entity = await container.core.create_entity(client, EntityDraft(**payload.model_dump()))
+    return _entity_out(entity)
+
+
+@router.patch(
+    "/world/entities/{entity_id}",
+    response_model=WorldEntityResponse,
+    tags=["world"],
+)
+async def update_entity(
+    entity_id: str,
+    payload: UpdateEntityFactsRequest,
+    container: ContainerDep,
+    client: ClientDep,
+) -> WorldEntityResponse:
+    """Revise a household, provider, or asset's facts, with history (section
+    16). Partial: only the given keys are considered, and only ones whose
+    value actually changed get a new version."""
+    entity = await container.core.update_entity(
+        client, entity_id=entity_id, facts=payload.facts
+    )
     return _entity_out(entity)
 
 

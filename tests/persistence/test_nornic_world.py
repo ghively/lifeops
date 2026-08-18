@@ -875,6 +875,173 @@ class TestPhase9EntityRoundTrip:
         assert shopping_list.id in listed
 
 
+class TestFactHistory:
+    """Per-fact supersession (section 16), against real NornicDB Cypher —
+    the fakes prove the domain rule (only a changed value gets a new
+    version); only this suite proves the transaction actually closes the old
+    version and opens the new one together, the same discipline
+    ``NornicPreferenceRepository.save_superseding`` already has.
+
+    ``EntityFact`` nodes are not entities the ``world`` fixture's own
+    teardown knows about, so every test tracks its fact ids on
+    ``phase7_cleanup`` (its cleanup behaviour is not phase-specific — see
+    that fixture's own docstring).
+    """
+
+    async def test_seeding_writes_the_first_version_of_each_fact(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.world import EntityFact
+
+        repo, make, _ = world
+        entity = await repo.create(
+            make(WorldEntityType.PROVIDER, "ABC Electric", phone="555-0100")
+        )
+        version = EntityFact(
+            id=EntityFact.make_id(),
+            entity_id=entity.id,
+            key="phone",
+            value="555-0100",
+            valid_from=TS,
+            created_by_client="lifeops-console",
+        )
+        phase7_cleanup.append(version.id)
+        await repo.seed_fact_versions([version])
+
+        current = await repo.current_facts(entity.id)
+        assert current["phone"].id == version.id
+        assert current["phone"].value == "555-0100"
+        assert current["phone"].supersedes is None
+
+        history = await repo.fact_history(entity.id, key="phone")
+        assert [f.id for f in history] == [version.id]
+
+    async def test_update_facts_closes_the_old_version_and_opens_the_new_one(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.world import EntityFact
+
+        repo, make, _ = world
+        entity = await repo.create(
+            make(WorldEntityType.PROVIDER, "ABC Electric", phone="555-0100")
+        )
+        old_version = EntityFact(
+            id=EntityFact.make_id(),
+            entity_id=entity.id,
+            key="phone",
+            value="555-0100",
+            valid_from=TS,
+            created_by_client="lifeops-console",
+        )
+        phase7_cleanup.append(old_version.id)
+        await repo.seed_fact_versions([old_version])
+
+        later = "2026-02-01T00:00:00Z"
+        new_version = EntityFact(
+            id=EntityFact.make_id(),
+            entity_id=entity.id,
+            key="phone",
+            value="555-9999",
+            valid_from=later,
+            supersedes=old_version.id,
+            created_by_client="lifeops-console",
+        )
+        phase7_cleanup.append(new_version.id)
+        updated_entity = entity.model_copy(
+            update={"facts": {"phone": "555-9999"}, "updated_at": later}
+        )
+        saved = await repo.update_facts(
+            updated_entity, new_versions=[new_version], superseded_ids=[old_version.id]
+        )
+
+        # The entity's own current-state property changed...
+        assert saved.facts == {"phone": "555-9999"}
+        fetched = await repo.get(entity.id)
+        assert fetched is not None
+        assert fetched.facts == {"phone": "555-9999"}
+
+        # ...and the version history agrees: exactly one current version,
+        # the old one closed at the moment the new one opened.
+        current = await repo.current_facts(entity.id)
+        assert current["phone"].id == new_version.id
+
+        history = await repo.fact_history(entity.id, key="phone")
+        assert [f.id for f in history] == [new_version.id, old_version.id]
+        closed = next(f for f in history if f.id == old_version.id)
+        assert closed.valid_to == later
+
+    async def test_fact_history_without_a_key_returns_every_fact(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.world import EntityFact
+
+        repo, make, _ = world
+        entity = await repo.create(
+            make(
+                WorldEntityType.ASSET, "Land Rover", mileage="114203", insurance="Progressive"
+            )
+        )
+        mileage_version = EntityFact(
+            id=EntityFact.make_id(),
+            entity_id=entity.id,
+            key="mileage",
+            value="114203",
+            valid_from=TS,
+        )
+        insurance_version = EntityFact(
+            id=EntityFact.make_id(),
+            entity_id=entity.id,
+            key="insurance",
+            value="Progressive",
+            valid_from=TS,
+        )
+        phase7_cleanup.extend([mileage_version.id, insurance_version.id])
+        await repo.seed_fact_versions([mileage_version, insurance_version])
+
+        history = await repo.fact_history(entity.id)
+        assert {f.key for f in history} == {"mileage", "insurance"}
+
+    async def test_current_facts_excludes_superseded_versions(
+        self, world, phase7_cleanup: list[str], test_label: str
+    ) -> None:
+        from lifeops.domain.world import EntityFact
+
+        repo, make, _ = world
+        entity = await repo.create(
+            make(WorldEntityType.ASSET, "Land Rover", mileage="100000")
+        )
+        old_version = EntityFact(
+            id=EntityFact.make_id(),
+            entity_id=entity.id,
+            key="mileage",
+            value="100000",
+            valid_from=TS,
+        )
+        phase7_cleanup.append(old_version.id)
+        await repo.seed_fact_versions([old_version])
+
+        later = "2026-03-01T00:00:00Z"
+        new_version = EntityFact(
+            id=EntityFact.make_id(),
+            entity_id=entity.id,
+            key="mileage",
+            value="108900",
+            valid_from=later,
+            supersedes=old_version.id,
+        )
+        phase7_cleanup.append(new_version.id)
+        updated_entity = entity.model_copy(
+            update={"facts": {"mileage": "108900"}, "updated_at": later}
+        )
+        await repo.update_facts(
+            updated_entity, new_versions=[new_version], superseded_ids=[old_version.id]
+        )
+
+        current = await repo.current_facts(entity.id)
+        assert len(current) == 1
+        assert current["mileage"].value == "108900"
+
+
 class TestKnowledgeEntityRoundTrip:
     """Knowledge (BUILD_SPEC sections 18, 36), projected the same way
     Document is — outside ``CREATABLE_ENTITY_TYPES``, written through its own

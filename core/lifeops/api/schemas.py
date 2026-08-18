@@ -430,20 +430,46 @@ class EntityDetailResponse(BaseModel):
     related_memories: list[MemoryResponse] = Field(default_factory=list)
 
 
-class EntityHistoryResponse(BaseModel):
-    """What Phase 3 can honestly report about an entity's past.
+class EntityFactResponse(BaseModel):
+    """One version of one fact on a world entity (section 16)."""
 
-    ``covers`` states the scope in words. World entity facts are current-only
-    until a later phase, so the history is the memory record referencing the
-    entity — closed versions included — and never claims to be the durable
-    audit log (Phase 4, section 62).
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    entity_id: str
+    key: str
+    value: str
+    valid_from: str
+    valid_to: str | None = None
+    supersedes: str | None = None
+    created_by_client: str | None = None
+
+
+class EntityHistoryResponse(BaseModel):
+    """What the record can honestly report about an entity's past.
+
+    ``covers`` states the scope in words. ``fact_history`` is every version
+    of every fact the entity has carried; ``memories`` is every version of
+    every memory referencing it. Neither claims to be the durable audit log
+    (Phase 4, section 62) — that answers "which client changed this, when."
     """
 
     model_config = ConfigDict(extra="forbid")
 
     entity_id: str
+    fact_history: list[EntityFactResponse] = Field(default_factory=list)
     memories: list[MemoryResponse] = Field(default_factory=list)
     covers: list[str] = Field(default_factory=list)
+
+
+class UpdateEntityFactsRequest(BaseModel):
+    """Revise a household, provider, or asset's facts. Partial: only the
+    given keys are considered, and only ones whose value actually changed
+    get a new version (section 16)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    facts: dict[str, str] = Field(default_factory=dict)
 
 
 # --- bills and payees (BUILD_SPEC sections 72, 99) -----------------------------
