@@ -729,6 +729,14 @@ class FakeBillRepository:
         self._payees[payee.id] = stored
         return copy.deepcopy(stored)
 
+    async def clear_payee_approval(self, payee_id: str) -> Payee:
+        stored = self._payees.get(payee_id)
+        if stored is None:
+            raise NotFoundError(f"no such payee: {payee_id}", payee_id=payee_id)
+        stored.approved_at = None
+        stored.approved_by = None
+        return copy.deepcopy(stored)
+
 
 class FakeWorkflowTemplateRepository:
     def __init__(self) -> None:

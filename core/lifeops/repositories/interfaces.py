@@ -385,6 +385,17 @@ class BillRepository(Protocol):
         """
         ...
 
+    async def clear_payee_approval(self, payee_id: str) -> Payee:
+        """Revoke a payee's approval — a deliberate, named act.
+
+        ``upsert_payee`` refuses to clear approval precisely so it cannot
+        happen by accident; this is the one path that does it on purpose,
+        for when an approved payee's payment details change and section 72
+        requires a human to look again. Raises ``NotFoundError`` when the
+        payee does not exist.
+        """
+        ...
+
 
 @runtime_checkable
 class WorkflowTemplateRepository(Protocol):

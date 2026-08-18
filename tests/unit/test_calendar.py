@@ -116,10 +116,17 @@ class TestBookingConfirmation:
                 already_booked, external_event_id="ext-2", action_id="a2", now=NOW
             )
 
-    def test_an_expired_hold_may_not_be_booked(self) -> None:
+    def test_confirmation_does_not_recheck_hold_expiry(self) -> None:
+        """Expiry gates *execution* (execute_booking refuses before calling
+        the provider). By confirmation time, verification has proved the
+        event exists — an action executed at T+25m and verified at T+35m
+        used to raise here and strand the appointment HELD forever while a
+        real event sat on the calendar."""
         expired = _held(hold_expires_at=PAST)
-        with pytest.raises(ValidationError):
-            confirm_booking(expired, external_event_id="ext-1", action_id="a1", now=NOW)
+        booked = confirm_booking(
+            expired, external_event_id="ext-1", action_id="a1", now=NOW
+        )
+        assert booked.status is AppointmentStatus.BOOKED
 
     def test_a_cancelled_appointment_may_not_be_booked(self) -> None:
         cancelled = _held(status=AppointmentStatus.CANCELLED)

@@ -223,3 +223,117 @@ class TestWhoMayPay:
         )
         assert settled.status is BillStatus.PAID
         assert settled.external_reference == "CONF-12345"
+
+
+class TestPayeeApprovalIsOneGate:
+    """Section 72, unified: the ADD_PAYEE card and the Bills screen button
+    are one flow. Approving either marks the payee payable and closes the
+    outbox record; neither leaves the other half dangling."""
+
+    @staticmethod
+    async def _payee(core, payee_id):
+        payees = await core.list_payees(CONSOLE)
+        matches = [p for p in payees if p.id == payee_id]
+        assert matches, f"no payee {payee_id}"
+        return matches[0]
+
+    @staticmethod
+    async def _approval_for(core, action_id, *, pending_only=True):
+        # Through the same service the adapters use; there is no public
+        # "approval for action" read yet.
+        approval = await core._actions().approval_for(action_id)
+        assert approval is not None
+        return approval
+
+    @staticmethod
+    def _build_core(clock: FrozenClock) -> LifeOpsCore:
+        return LifeOpsCore(
+            people=FakePersonRepository(), preferences=FakePreferenceRepository(),
+            tasks=FakeTaskRepository(), memory=FakeMemoryRepository(),
+            world=FakeWorldRepository(), waiting=FakeWaitingRepository(),
+            actions=FakeActionRepository(), approvals=FakeApprovalRepository(),
+            audit=FakeAuditRepository(), bills=FakeBillRepository(), clock=clock,
+        )
+
+    async def test_deciding_the_card_approves_the_payee_and_closes_the_action(
+        self, core: LifeOpsCore
+    ) -> None:
+        action = await core.record_payee(CONSOLE, PayeeDraft(display_name="ABC Electric"))
+        approval = await self._approval_for(core, action.id)
+        await core.decide_approval(CONSOLE, approval_id=approval.id, approved=True)
+
+        payee = await self._payee(core, "payee_abc_electric")
+        assert payee.is_approved
+        assert payee.approved_by == CONSOLE.client_id
+        # The outbox record is complete, not stuck APPROVED awaiting an
+        # executor that does not exist.
+        refreshed = await core.get_action(CONSOLE, action_id=action.id)
+        assert refreshed.status is ActionStatus.EXECUTED
+
+    async def test_declining_the_card_leaves_the_payee_unpayable(
+        self, core: LifeOpsCore
+    ) -> None:
+        action = await core.record_payee(CONSOLE, PayeeDraft(display_name="ABC Electric"))
+        approval = await self._approval_for(core, action.id)
+        await core.decide_approval(CONSOLE, approval_id=approval.id, approved=False)
+
+        payee = await self._payee(core, "payee_abc_electric")
+        assert not payee.is_approved
+        refreshed = await core.get_action(CONSOLE, action_id=action.id)
+        assert refreshed.status is ActionStatus.CANCELLED
+
+    async def test_the_bills_screen_button_resolves_the_pending_card(
+        self, core: LifeOpsCore
+    ) -> None:
+        action = await core.record_payee(CONSOLE, PayeeDraft(display_name="ABC Electric"))
+        payee = await core.approve_payee(CONSOLE, payee_id="payee_abc_electric")
+        assert payee.is_approved
+        # The card did not sit pending forever: the action completed.
+        refreshed = await core.get_action(CONSOLE, action_id=action.id)
+        assert refreshed.status is ActionStatus.EXECUTED
+        approval = await self._approval_for(core, action.id, pending_only=False)
+        assert approval.consumed_at is not None
+
+    async def test_changing_an_approved_payees_details_revokes_the_approval(
+        self, core: LifeOpsCore
+    ) -> None:
+        """NOT_AUTHORISED_BY[ADD_PAYEE] lists changing an existing payee's
+        details; the old approval must not cover new payment credentials."""
+        await core.record_payee(
+            CONSOLE, PayeeDraft(display_name="ABC Electric", secret_ref="account-a")
+        )
+        await core.approve_payee(CONSOLE, payee_id="payee_abc_electric")
+
+        await core.record_payee(
+            CONSOLE, PayeeDraft(display_name="ABC Electric", secret_ref="account-b")
+        )
+        payee = await self._payee(core, "payee_abc_electric")
+        assert payee.secret_ref == "account-b"
+        assert not payee.is_approved
+
+    async def test_rerecording_with_unchanged_details_keeps_the_approval(
+        self, core: LifeOpsCore
+    ) -> None:
+        await core.record_payee(
+            CONSOLE, PayeeDraft(display_name="ABC Electric", secret_ref="account-a")
+        )
+        await core.approve_payee(CONSOLE, payee_id="payee_abc_electric")
+        await core.record_payee(
+            CONSOLE, PayeeDraft(display_name="ABC Electric", secret_ref="account-a")
+        )
+        payee = await self._payee(core, "payee_abc_electric")
+        assert payee.is_approved
+
+    async def test_an_expired_card_reissues_and_the_button_still_lands(self) -> None:
+        """Deciding after the TTL used to deadlock the intent forever. Now a
+        late decision marks the card EXPIRED and issues a fresh one, and the
+        Bills screen's button converges in one bounded retry."""
+        clock = FrozenClock()
+        core = self._build_core(clock)
+        action = await core.record_payee(CONSOLE, PayeeDraft(display_name="ABC Electric"))
+        clock.advance(31 * 60)  # past the 30-minute approval TTL
+
+        payee = await core.approve_payee(CONSOLE, payee_id="payee_abc_electric")
+        assert payee.is_approved
+        refreshed = await core.get_action(CONSOLE, action_id=action.id)
+        assert refreshed.status is ActionStatus.EXECUTED
