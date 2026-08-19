@@ -82,7 +82,15 @@ class TestDuplicateMcpRequest:
                 created.append(("ServiceRequest", service_request_id))
 
                 provider = await _call(
-                    session, "record_provider", display_name=PROVIDER_NAME
+                    session,
+                    "record_provider",
+                    display_name=PROVIDER_NAME,
+                    # place_phone_call refuses a provider with no number on
+                    # file: LifeOps resolves a real destination rather than
+                    # dialling a placeholder. The scenario under test is
+                    # duplicate *requests*, so the provider has to be dialable
+                    # for the test to reach the idempotency path at all.
+                    facts={"phone": "+15555550100"},
                 )
                 assert provider["ok"] is True
                 provider_entity_id = provider["provider"]["id"]
@@ -129,7 +137,15 @@ class TestDuplicateMcpRequest:
                 created.append(("ServiceRequest", service_request_id))
 
                 provider = await _call(
-                    session, "record_provider", display_name=PROVIDER_NAME
+                    session,
+                    "record_provider",
+                    display_name=PROVIDER_NAME,
+                    # place_phone_call refuses a provider with no number on
+                    # file: LifeOps resolves a real destination rather than
+                    # dialling a placeholder. The scenario under test is
+                    # duplicate *requests*, so the provider has to be dialable
+                    # for the test to reach the idempotency path at all.
+                    facts={"phone": "+15555550100"},
                 )
                 provider_entity_id = provider["provider"]["id"]
                 created.append(("Provider", provider_entity_id))
