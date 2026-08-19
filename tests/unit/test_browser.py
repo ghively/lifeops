@@ -12,6 +12,7 @@ it — a mock would prove nothing about whether the adapter actually works.
 from __future__ import annotations
 
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -25,16 +26,36 @@ from lifeops.domain.shopping import ShoppingItem
 from lifeops.errors import ProviderError
 
 
+@lru_cache(maxsize=1)
 def _playwright_available() -> bool:
+    """Whether a browser can actually be launched here, not merely imported.
+
+    The package being importable is not the requirement — these tests start a
+    real persistent context. A sandbox can have playwright installed and its
+    Chromium downloaded and still be unable to run it (missing system
+    libraries, no sandbox privileges), which surfaces as a TargetClosedError
+    that reads exactly like a code defect and is not one.
+
+    So the check launches one browser and throws it away. AGENTS.md already
+    requires suites that need NornicDB to skip rather than fail when it is
+    unreachable; a browser that cannot start is the same situation.
+    """
     try:
-        import playwright.async_api  # noqa: F401
+        from playwright.sync_api import sync_playwright
     except ImportError:
+        return False
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            browser.close()
+    except Exception:
         return False
     return True
 
 
 requires_playwright = pytest.mark.skipif(
-    not _playwright_available(), reason="playwright is not installed in this environment"
+    not _playwright_available(),
+    reason="no launchable Chromium in this environment",
 )
 
 

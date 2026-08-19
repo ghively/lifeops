@@ -27,6 +27,13 @@ setup-core:  ## Create the Python environment and install LifeOps Core
 	  (python3 -m venv --without-pip .venv && \
 	   curl -sSL https://bootstrap.pypa.io/get-pip.py | .venv/bin/python)
 	@$(PIP) install -q -e ".[dev]"
+	@# Playwright ships the Python package but not the browser binary, and
+	@# tests/unit/test_browser.py launches a real persistent context to prove
+	@# BUILD_SPEC section 98's separate-context isolation. Without this a
+	@# fresh clone fails three tests for a reason that looks like a code bug.
+	@# Best-effort: a machine with no network still gets a working core.
+	@$(PYTHON) -m playwright install chromium >/dev/null 2>&1 || \
+	  echo "  (playwright chromium not installed — browser tests will skip or fail)"
 	@echo "LifeOps Core installed."
 
 setup-console:  ## Install Console dependencies

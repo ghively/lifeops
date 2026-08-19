@@ -24,7 +24,7 @@ import re
 from typing import Any
 
 from lifeops.domain.memory import MemoryRecord, MemorySource, MemoryType
-from lifeops.errors import RepositoryError
+from lifeops.errors import ConcurrentWriteError, RepositoryError
 from lifeops.repositories.nornic.client import NornicClient
 
 
@@ -416,14 +416,19 @@ class NornicMemoryRepository:
     async def invalidate(
         self, memory_id: str, *, at: str, reason: str | None = None
     ) -> MemoryRecord | None:
-        rows = await self._client.write(
-            f"MATCH (m:Memory {{id: $id}}) WHERE m.valid_to IS NULL "
-            f"SET m.valid_to = $at, m.invalidation_reason = $reason "
-            f"RETURN {_RETURN}",
-            id=memory_id,
-            at=at,
-            reason=reason,
-        )
+        try:
+            rows = await self._client.write(
+                f"MATCH (m:Memory {{id: $id}}) WHERE m.valid_to IS NULL "
+                f"SET m.valid_to = $at, m.invalidation_reason = $reason "
+                f"RETURN {_RETURN}",
+                id=memory_id,
+                at=at,
+                reason=reason,
+            )
+        except ConcurrentWriteError:
+            # Another transaction closed this window first — the same None as
+            # "there was nothing open to invalidate".
+            return None
         if rows:
             # The write's own row, not a follow-up read — which can be stale
             # right after an auto-commit write (CLAUDE.md) and report the
