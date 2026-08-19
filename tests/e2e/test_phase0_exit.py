@@ -305,8 +305,16 @@ class TestPhase0ExitCriteria:
         from asgi_lifespan import LifespanManager
 
         from lifeops.api.http import create_app
+        from lifeops.settings import Settings
 
-        app = create_app()
+        # This test crosses a process boundary to read state, not to test
+        # authentication. On a hardened deployment the shared state directory
+        # carries a console password, which turns every unauthenticated call
+        # into a 401 and fails four acceptance tests for a reason unrelated to
+        # what they assert (found 2026-08-19, on the first deployment to set
+        # one). ``console_auth_enabled`` is the documented switch for exactly
+        # this; authentication itself is covered in tests/unit.
+        app = create_app(settings=Settings(console_auth_enabled=False))
         async with LifespanManager(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(
