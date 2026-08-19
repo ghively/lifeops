@@ -2033,18 +2033,6 @@ async def discover_provider_options(
     if provider_id in ("local_tts", "local_asr") and field == "model":
         return await _discover_local_voice(provider_id, field)
 
-    if provider_id == "calendar" and field == "default_calendar":
-        return DiscoverResponse(
-            provider=provider_id,
-            field=field,
-            options=[],
-            message=(
-                "This phase's CalDAV adapter reads one calendar collection at "
-                "the configured server URL; it does not enumerate a user's "
-                "other calendars yet."
-            ),
-        )
-
     return DiscoverResponse(
         provider=provider_id,
         field=field,

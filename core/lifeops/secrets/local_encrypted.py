@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -98,7 +99,7 @@ class LocalEncryptedSecretStore:
         for name, value in plaintext.items():
             if value is None:
                 continue
-            secrets[name] = _encrypt_entry(aesgcm, name, value)
+            secrets[name] = _encrypt_entry(aesgcm, name, value, fingerprint_key=new_key)
 
         self._write_vault(
             {"version": _VAULT_VERSION, "key_file": new_key_name, "secrets": secrets}
@@ -192,7 +193,7 @@ class LocalEncryptedSecretStore:
         vault = dict(self._read_vault())
         key = self._load_key(self._key_path_for(vault))
         secrets = dict(vault["secrets"])
-        secrets[name] = _encrypt_entry(AESGCM(key), name, value)
+        secrets[name] = _encrypt_entry(AESGCM(key), name, value, fingerprint_key=key)
         vault["secrets"] = secrets
         self._write_vault(vault)
 
@@ -217,7 +218,9 @@ class LocalEncryptedSecretStore:
         return entry.get("fingerprint") if entry else None
 
 
-def _encrypt_entry(aesgcm: AESGCM, name: str, value: str) -> dict[str, str]:
+def _encrypt_entry(
+    aesgcm: AESGCM, name: str, value: str, *, fingerprint_key: bytes
+) -> dict[str, str]:
     nonce = os.urandom(_NONCE_BYTES)
     ciphertext = aesgcm.encrypt(nonce, value.encode("utf-8"), name.encode("utf-8"))
     return {
@@ -225,17 +228,23 @@ def _encrypt_entry(aesgcm: AESGCM, name: str, value: str) -> dict[str, str]:
         "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
         # Stored rather than computed on read so that displaying the
         # fingerprint in the Console never requires decryption.
-        "fingerprint": _fingerprint(value),
+        "fingerprint": _fingerprint(value, key=fingerprint_key),
     }
 
 
-def _fingerprint(value: str) -> str:
+def _fingerprint(value: str, *, key: bytes) -> str:
     """A short, non-reversible tag for a secret value.
 
-    Salted with a fixed domain string so the digest is specific to this use and
-    cannot be matched against a rainbow table of common API keys.
+    Keyed with the vault's master key (HMAC-SHA256), not a fixed public
+    salt: the old fixed-salt digest sat beside the ciphertext in
+    secrets.json, so anyone holding the file could confirm dictionary
+    guesses of a weak human-chosen password offline — 12 hex characters is
+    ample to verify a guess (2026-08-18 audit, P2). Keying it means the
+    fingerprint reveals nothing without the master key, which lives in a
+    separate 0600 file. Entries written before this change keep their old
+    stored fingerprints until rewritten; display-only either way.
     """
-    digest = hashlib.sha256(b"lifeops.secret.fingerprint:" + value.encode("utf-8"))
+    digest = hmac.new(key, value.encode("utf-8"), hashlib.sha256)
     return digest.hexdigest()[:12]
 
 
@@ -262,4 +271,8 @@ class InMemorySecretStore:
 
     def fingerprint(self, name: str) -> str | None:
         value = self._values.get(name)
-        return _fingerprint(value) if value is not None else None
+        return (
+            _fingerprint(value, key=b"in-memory-test-double")
+            if value is not None
+            else None
+        )

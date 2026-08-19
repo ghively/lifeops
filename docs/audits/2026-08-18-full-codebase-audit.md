@@ -101,8 +101,46 @@
 >   enum-exhaustiveness pin), and the MANAGE_CONFIGURATION denial loop
 >   covers `all_clients()`.
 >
-> **P2 and the remaining documentation corrections stay open**, recorded
-> below and in [docs/REMAINING_WORK.md](../REMAINING_WORK.md).
+> **P2 disposition (2026-08-19, same branch): all P2 findings are fixed**,
+> with one qualified item:
+>
+> - Repositories/core: the `WAITING_ON` task edge is repaired when an item
+>   moves between tasks; `substitution_allowed`'s default is reachable and
+>   un-inverted; `SHOPPING_CHANGED` is actually published (and the Console
+>   handles it); the change-request file write runs off the event loop; the
+>   stray section header is tidied.
+> - Config registry/validation: email and calendar passwords are `required`
+>   (test fixtures now supply one, like telephony's always did); ports are
+>   bounded 1-65535; URL fields validate scheme+host; the two dead Console
+>   switches (`streaming`, `default_calendar`) and the orphaned discovery
+>   branch are gone.
+> - Secrets: the fingerprint is HMAC-SHA256 keyed with the master key —
+>   `secrets.json` alone can no longer confirm dictionary guesses of a weak
+>   password. SECURITY.md updated.
+> - Scripts: the Go version gate compares numerically; `healthcheck.sh`
+>   probes NornicDB's HTTP `/health` (TCP fallback labelled "port only");
+>   `dev.sh` kills the whole console process tree depth-first and
+>   health-checks the console after launch; the pytest marker descriptions
+>   tell the truth.
+> - Adapters: the browser CDP branch closes its browser with the context;
+>   the local-TTS producer is bounded with real backpressure and stops when
+>   the consumer walks away.
+> - Console: the four dead components, the unused `lib/utils` helpers, and
+>   the orphaned tweaks state are deleted; the theme key migrates from
+>   `knowledge-os:theme` to `lifeops:theme` with a one-time carry-over.
+> - **Qualified: the NornicDB admin password on argv.** Upstream documents a
+>   general `NORNICDB_<SECTION>_<KEY>` env mapping but never names the
+>   admin-password variable, and this sandbox cannot run the binary to
+>   verify — so `nornicdb.sh` keeps the flag by default, always exports
+>   `NORNICDB_ADMIN_PASSWORD` alongside it, and offers
+>   `LIFEOPS_NORNIC_PASSWORD_VIA_ENV=1` to drop the flag once verified
+>   against a real build. Flipping the default is a one-command check on a
+>   live deployment.
+>
+> **Still open after all three passes:** the documentation corrections list
+> below, the telephony-destination policy decision (SECURITY.md), the
+> live-NornicDB race verification, and the GitHub Actions account repair —
+> tracked in [docs/REMAINING_WORK.md](../REMAINING_WORK.md).
 
 A complete sweep of the repository: LifeOps Core (`core/lifeops/`, ~26k lines),
 the Console (`console/src/`, 77 files), the test suites (~1,200 tests), shell

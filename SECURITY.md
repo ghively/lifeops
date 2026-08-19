@@ -104,8 +104,12 @@ radius.
 | Storage | `secrets.json`, mode 0600, written then renamed | An interrupted write cannot truncate the vault |
 
 Reads return `{"configured": true, "fingerprint": "a1b2c3d4e5f6"}` — never the
-value. The fingerprint is a salted SHA-256 prefix, so a human can confirm *which*
-key is installed without it being readable.
+value. The fingerprint is an HMAC-SHA256 prefix keyed with the master key, so
+a human can confirm *which* key is installed without it being readable — and
+someone holding only `secrets.json` cannot use the fingerprint to confirm
+dictionary guesses of a weak human-chosen password (the earlier fixed-salt
+SHA-256 form allowed exactly that; entries written before the change keep
+their old fingerprint until rewritten).
 
 `rotate_master_key()` re-encrypts every secret under a fresh key.
 

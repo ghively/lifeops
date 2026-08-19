@@ -67,7 +67,13 @@ def config_service(tmp_path: Path) -> ConfigurationService:
 def calendar_service(
     config_service: ConfigurationService, fake_calendar: FakeCalendarProvider
 ) -> CalendarProviderService:
-    config_service.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+    config_service.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
     return CalendarProviderService(
         config=config_service,
         secret_store=InMemorySecretStore(),
@@ -80,7 +86,14 @@ def email_service(
     config_service: ConfigurationService, fake_email: FakeEmailProvider
 ) -> EmailProviderService:
     config_service.update_provider(
-        "email", {"enabled": True, "imap_host": "x", "smtp_host": "x", "username": "u"}
+        "email",
+        {
+            "enabled": True,
+            "imap_host": "x",
+            "smtp_host": "x",
+            "username": "u",
+            "password": "test-password",
+        },
     )
     return EmailProviderService(
         config=config_service,

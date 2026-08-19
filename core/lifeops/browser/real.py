@@ -55,6 +55,7 @@ module needs to change to add one.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from pathlib import Path
@@ -182,6 +183,17 @@ class RealBrowserWorker:
         if self._endpoint:
             browser = await playwright.chromium.connect_over_cdp(self._endpoint)
             context = await browser.new_context()
+            # The CDP connection outlives the context unless something drops
+            # it — this branch used to connect a browser it never closed, a
+            # pre-planted leak for the first site adapter (2026-08-18 audit,
+            # P2). Closing the context is the caller's contract; the browser
+            # connection rides along with it.
+            context.on(
+                "close",
+                lambda _context: asyncio.get_running_loop().create_task(
+                    browser.close()
+                ),
+            )
         else:
             profile_dir = self._profile_root / _profile_dirname(name)
             profile_dir.mkdir(parents=True, exist_ok=True)

@@ -68,9 +68,13 @@ include = ["lifeops*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Metadata only: suite selection is path-based (Makefile/ci.yml name test
+# directories; nothing runs pytest -m). The old descriptions were also
+# misleading — tests/integration/ needs no database; the files that carry
+# these marks live in tests/persistence/ and tests/e2e/.
 markers = [
-    "integration: requires a running NornicDB instance",
-    "persistence: verifies durability across restarts",
+    "integration: exercises a live NornicDB (carried by tests/persistence and tests/e2e)",
+    "persistence: verifies durability across NornicDB restarts",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
 
