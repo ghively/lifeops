@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from lifeops.domain.waiting import ACTIVE_STATUSES, WaitingItem, WaitingStatus
-from lifeops.errors import NotFoundError
+from lifeops.errors import ConcurrentWriteError, NotFoundError
 from lifeops.repositories.nornic.client import NornicClient
 
 _RETURN = """
@@ -194,18 +194,26 @@ class NornicWaitingRepository:
         # Single conditional write, never read-then-write: the WHERE clause
         # is the whole race guard (section 55). A row comes back only when
         # this call is the one that took the lease.
-        rows = await self._client.write(
-            f"""
-            MATCH (w:WaitingItem {{id: $id}})
-            WHERE w.lease_until IS NULL OR w.lease_until <= $now
-            SET w.lease_owner = $owner, w.lease_until = $until
-            RETURN {_RETURN}
-            """,
-            id=waiting_id,
-            owner=owner,
-            until=until,
-            now=now,
-        )
+        try:
+            rows = await self._client.write(
+                f"""
+                MATCH (w:WaitingItem {{id: $id}})
+                WHERE w.lease_until IS NULL OR w.lease_until <= $now
+                SET w.lease_owner = $owner, w.lease_until = $until
+                RETURN {_RETURN}
+                """,
+                id=waiting_id,
+                owner=owner,
+                until=until,
+                now=now,
+            )
+        except ConcurrentWriteError:
+            # NornicDB isolates this correctly and aborts the losing commit,
+            # which reaches us as an exception rather than an empty result.
+            # Losing the race *is* the "another worker holds it" answer this
+            # method documents, so it returns None rather than surfacing a
+            # fault the worker loop would log as a failure.
+            return None
         if not rows:
             return None
         # Built from the write's own returned row, never a follow-up read:

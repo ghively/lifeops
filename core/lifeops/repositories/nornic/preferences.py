@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from lifeops.domain.preferences import Preference, PreferenceSource
+from lifeops.errors import ConcurrentWriteError
 from lifeops.repositories.nornic.client import NornicClient
 
 
@@ -231,12 +232,18 @@ class NornicPreferenceRepository:
         return stored or preference
 
     async def invalidate(self, preference_id: str, *, at: str) -> Preference | None:
-        rows = await self._client.write(
-            f"MATCH (p:Preference {{id: $id}}) WHERE p.valid_to IS NULL "
-            f"SET p.valid_to = $at RETURN {_RETURN}",
-            id=preference_id,
-            at=at,
-        )
+        try:
+            rows = await self._client.write(
+                f"MATCH (p:Preference {{id: $id}}) WHERE p.valid_to IS NULL "
+                f"SET p.valid_to = $at RETURN {_RETURN}",
+                id=preference_id,
+                at=at,
+            )
+        except ConcurrentWriteError:
+            # Another transaction closed this window first. The outcome the
+            # caller asked for already holds, so this is the same None as
+            # "there was nothing open to invalidate".
+            return None
         if rows:
             # The write's own row, not a follow-up read — which can be stale
             # right after an auto-commit write (CLAUDE.md) and report the

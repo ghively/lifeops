@@ -94,6 +94,20 @@ class RepositoryError(LifeOpsError):
     http_status = 503
 
 
+class ConcurrentWriteError(RepositoryError):
+    """Another transaction committed the same rows first.
+
+    Distinct from RepositoryError because it is not a failure: NornicDB uses
+    optimistic concurrency, so the *loser* of a race that the database
+    correctly isolated arrives here. A conditional write whose guard is meant
+    to elect a single winner — a lease claim, spending an approval — must read
+    this as "someone else won", not as a database problem.
+    """
+
+    code = "concurrent_write"
+    http_status = 409
+
+
 class ProviderError(LifeOpsError):
     """An external provider adapter failed (BUILD_SPEC sections 27-28).
 

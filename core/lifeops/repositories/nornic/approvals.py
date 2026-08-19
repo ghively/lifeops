@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from lifeops.domain.approvals import Approval, ApprovalStatus
-from lifeops.errors import NotFoundError
+from lifeops.errors import ConcurrentWriteError, NotFoundError
 from lifeops.repositories.nornic.client import NornicClient
 
 _RETURN = """
@@ -178,16 +178,23 @@ class NornicApprovalRepository:
         # uses for the lease (section 55). A row comes back only when this
         # call is the one that spent the approval; a second concurrent
         # commit matches nothing and gets None.
-        rows = await self._client.write(
-            f"""
-            MATCH (ap:Approval {{id: $id}})
-            WHERE ap.consumed_at IS NULL
-            SET ap.consumed_at = $consumed_at
-            RETURN {_RETURN}
-            """,
-            id=approval_id,
-            consumed_at=consumed_at,
-        )
+        try:
+            rows = await self._client.write(
+                f"""
+                MATCH (ap:Approval {{id: $id}})
+                WHERE ap.consumed_at IS NULL
+                SET ap.consumed_at = $consumed_at
+                RETURN {_RETURN}
+                """,
+                id=approval_id,
+                consumed_at=consumed_at,
+            )
+        except ConcurrentWriteError:
+            # The losing commit of a race NornicDB isolated correctly. An
+            # approval spent by someone else is exactly the None case this
+            # method documents — surfacing an error here would turn "already
+            # committed" into a retryable-looking fault next to a payment.
+            return None
         return _row_to_approval(rows[0]) if rows else None
 
     async def update(self, approval: Approval) -> Approval:

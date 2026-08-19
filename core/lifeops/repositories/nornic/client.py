@@ -16,9 +16,9 @@ import logging
 from typing import Any
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from neo4j.exceptions import Neo4jError, ServiceUnavailable
+from neo4j.exceptions import Neo4jError, ServiceUnavailable, TransientError
 
-from lifeops.errors import RepositoryError
+from lifeops.errors import ConcurrentWriteError, RepositoryError
 from lifeops.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -211,6 +211,10 @@ class NornicClient:
                     if not tx.closed():
                         await tx.rollback()
                     raise
+        except TransientError as exc:
+            raise ConcurrentWriteError(
+                f"NornicDB transaction lost a concurrent write: {exc}"
+            ) from exc
         except (Neo4jError, ServiceUnavailable) as exc:
             raise RepositoryError(f"NornicDB transaction failed: {exc}") from exc
 
@@ -220,6 +224,14 @@ class NornicClient:
             async with driver.session(**self._session_kwargs) as session:
                 result = await session.run(query, **params)
                 return [record.data() async for record in result]
+        except TransientError as exc:
+            # NornicDB uses optimistic concurrency: the loser of a race the
+            # database correctly isolated lands here. Callers whose query is a
+            # conditional write electing one winner treat this as "someone
+            # else won" rather than as a fault.
+            raise ConcurrentWriteError(
+                f"NornicDB query lost a concurrent write: {exc}"
+            ) from exc
         except (Neo4jError, ServiceUnavailable) as exc:
             # Deliberately does not echo the query: it can contain personal
             # values, and RepositoryError is surfaced to API clients.
