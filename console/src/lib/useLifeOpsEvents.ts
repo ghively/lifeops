@@ -55,7 +55,12 @@ function invalidateFor(queryClient: QueryClient, type: string): void {
     case 'config_changed':
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'providers'] })
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system-status'] })
-      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system-config'] })
+      // The actual keys in use: VoiceModeCard reads ['lifeops','system'] and
+      // ['lifeops','voice','mode-status']. The old 'system-config' key
+      // matched no query anywhere, so a safe-mode or voice-mode change made
+      // on another surface never refreshed here (2026-08-18 audit).
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system'] })
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'voice'] })
       break
     case 'memory_changed':
       // Prefix match: covers the list, search results, and history chains.

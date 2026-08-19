@@ -16,9 +16,11 @@ render "NornicDB: unreachable" without first reaching NornicDB.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +105,7 @@ class ConfigurationService:
         clock: Clock | None = None,
     ) -> None:
         self._path = config_dir / "lifeops.config.json"
+        self._lock_path = config_dir / "lifeops.config.lock"
         self._secrets = secret_store
         self._clock = clock or SystemClock()
         self._document: dict[str, Any] | None = None
@@ -110,6 +113,26 @@ class ConfigurationService:
         config_dir.mkdir(parents=True, exist_ok=True)
 
     # --- persistence --------------------------------------------------------
+
+    @contextmanager
+    def _locked(self):
+        """Serialise read-modify-write of the document across processes.
+
+        The HTTP and MCP servers are separate processes over this one file;
+        without the lock, a ``record_health`` in one racing an
+        ``update_provider`` (or a safe-mode flip — ``update_system`` writes
+        the same document) in the other silently discarded one side's write.
+        ``flock`` on a sidecar lock file, because the document itself is
+        replaced atomically by ``os.replace`` and so cannot carry the lock.
+        The stamp-keyed cache makes the ``_load`` inside the lock re-read a
+        peer's fresh write rather than mutating a stale cached copy.
+        """
+        with open(self._lock_path, "w") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
     def _file_stamp(self) -> tuple[int, int] | None:
         try:
@@ -171,6 +194,10 @@ class ConfigurationService:
         return SystemConfig(**self._load()["system"])
 
     def update_system(self, changes: dict[str, Any]) -> SystemConfig:
+        with self._locked():
+            return self._update_system_locked(changes)
+
+    def _update_system_locked(self, changes: dict[str, Any]) -> SystemConfig:
         current = self.get_system().model_dump()
         unknown = set(changes) - set(current)
         if unknown:
@@ -295,22 +322,28 @@ class ConfigurationService:
                     self._secrets.delete(secret_ref(provider.id, field.name))
 
         if validated.settings or validated.secrets:
-            document = dict(self._load())
-            providers = dict(document["providers"])
-            merged = dict(providers.get(provider_id, {}))
-            merged.update(validated.settings)
-            providers[provider_id] = merged
-            document["providers"] = providers
-            # A recorded health verdict describes the *previous*
-            # configuration. Left in place, a Test clicked while the provider
-            # was unconfigured kept reporting UNHEALTHY after the user fixed
-            # the configuration, until they thought to re-test.
-            health = dict(document["health"])
-            if health.pop(provider_id, None) is not None:
-                document["health"] = health
-            self._save(document)
+            with self._locked():
+                self._merge_provider_locked(provider_id, validated.settings)
 
         return self.get_status(provider_id)
+
+    def _merge_provider_locked(
+        self, provider_id: str, settings: dict[str, Any]
+    ) -> None:
+        document = dict(self._load())
+        providers = dict(document["providers"])
+        merged = dict(providers.get(provider_id, {}))
+        merged.update(settings)
+        providers[provider_id] = merged
+        document["providers"] = providers
+        # A recorded health verdict describes the *previous*
+        # configuration. Left in place, a Test clicked while the provider
+        # was unconfigured kept reporting UNHEALTHY after the user fixed
+        # the configuration, until they thought to re-test.
+        health = dict(document["health"])
+        if health.pop(provider_id, None) is not None:
+            document["health"] = health
+        self._save(document)
 
     def get_secret(self, provider_id: str, field_name: str) -> str | None:
         """Read a provider secret.
@@ -334,9 +367,10 @@ class ConfigurationService:
             message=message,
             details=details,
         )
-        document = dict(self._load())
-        health = dict(document["health"])
-        health[provider_id] = report.model_dump()
-        document["health"] = health
-        self._save(document)
+        with self._locked():
+            document = dict(self._load())
+            health = dict(document["health"])
+            health[provider_id] = report.model_dump()
+            document["health"] = health
+            self._save(document)
         return report

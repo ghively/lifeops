@@ -78,7 +78,7 @@ describe('Approvals', () => {
   it('asks LifeOps for pending approvals', async () => {
     renderPage()
     expect((await screen.findAllByText('provider_abc_electric'))[0]).toBeInTheDocument()
-    expect(mockedApprovals.listPending).toHaveBeenCalledWith({ limit: 50 })
+    expect(mockedApprovals.listPending).toHaveBeenCalledWith({ limit: 200 })
   })
 
   it('shows what will happen from the exact payload the server attached', async () => {

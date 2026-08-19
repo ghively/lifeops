@@ -534,6 +534,9 @@ export interface Approval {
   created_at: string
   action_payload: Record<string, unknown>
   action_status: ActionStatus | null
+  /** True when the bound action could not be loaded — the card must not be
+   * decided blind (the server refuses to render its payload as empty). */
+  action_missing: boolean
 }
 
 export interface ApprovalList {

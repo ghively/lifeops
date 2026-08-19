@@ -119,8 +119,13 @@ class TestManifest:
         assert CODING_CLIENT.has(Capability.CREATE_TASK)
 
     def test_only_the_console_administers_configuration(self) -> None:
+        # all_clients(), not a hand-picked tuple: the old loop omitted the
+        # due-work worker, so granting it MANAGE_CONFIGURATION would have
+        # kept this "Console-only" test green (2026-08-18 audit).
         assert CONSOLE.has(Capability.MANAGE_CONFIGURATION)
-        for client in (HERMES, INTERACTIVE_CLIENT, CODING_CLIENT):
+        for client in all_clients():
+            if client.client_id == CONSOLE.client_id:
+                continue
             assert not client.has(Capability.MANAGE_CONFIGURATION), client.client_id
 
     def test_only_the_console_approves_actions(self) -> None:

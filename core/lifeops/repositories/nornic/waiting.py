@@ -195,11 +195,11 @@ class NornicWaitingRepository:
         # is the whole race guard (section 55). A row comes back only when
         # this call is the one that took the lease.
         rows = await self._client.write(
-            """
-            MATCH (w:WaitingItem {id: $id})
+            f"""
+            MATCH (w:WaitingItem {{id: $id}})
             WHERE w.lease_until IS NULL OR w.lease_until <= $now
             SET w.lease_owner = $owner, w.lease_until = $until
-            RETURN w.id AS id
+            RETURN {_RETURN}
             """,
             id=waiting_id,
             owner=owner,
@@ -208,7 +208,11 @@ class NornicWaitingRepository:
         )
         if not rows:
             return None
-        return await self.get(waiting_id)
+        # Built from the write's own returned row, never a follow-up read:
+        # CLAUDE.md's visibility quirk means a read issued straight after
+        # this auto-commit write can be stale, handing the winner an item
+        # whose lease fields are the pre-claim values.
+        return _row_to_item(rows[0])
 
     async def create(self, item: WaitingItem) -> WaitingItem:
         statements: list[tuple[str, dict[str, Any]]] = [(_WRITE, _write_params(item))]
