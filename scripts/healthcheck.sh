@@ -8,6 +8,7 @@ set -uo pipefail
 LIFEOPS_HOME="${LIFEOPS_HOME:-$HOME/.local/share/lifeops}"
 CORE_URL="${LIFEOPS_CORE_URL:-http://127.0.0.1:8080}"
 BOLT_PORT="${LIFEOPS_NORNIC_BOLT_PORT:-7687}"
+NORNIC_HTTP_PORT="${LIFEOPS_NORNIC_HTTP_PORT:-7474}"
 
 failed=0
 
@@ -24,9 +25,18 @@ check() {
 echo "LifeOps health"
 echo
 
-(exec 3<>"/dev/tcp/127.0.0.1/$BOLT_PORT") 2>/dev/null
-check "NornicDB (bolt)" "$?" "127.0.0.1:$BOLT_PORT"
-exec 3>&- 2>/dev/null || true
+# The HTTP /health endpoint proves an actual NornicDB is answering; the old
+# bare TCP connect reported OK for anything listening on the port — a stray
+# instance serving different data, or an unrelated service (2026-08-18
+# audit, P2). The bolt TCP probe stays as a fallback with an honest label.
+if curl -sf --max-time 5 "http://127.0.0.1:$NORNIC_HTTP_PORT/health" >/dev/null 2>&1; then
+  check "NornicDB" "0" "http://127.0.0.1:$NORNIC_HTTP_PORT/health"
+else
+  (exec 3<>"/dev/tcp/127.0.0.1/$BOLT_PORT") 2>/dev/null
+  check "NornicDB (port only)" "$?" \
+    "127.0.0.1:$BOLT_PORT open — /health did not answer; something listens, unverified"
+  exec 3>&- 2>/dev/null || true
+fi
 
 core_body="$(curl -sf --max-time 5 "$CORE_URL/health" 2>/dev/null)"
 check "LifeOps Core" "$?" "$CORE_URL"

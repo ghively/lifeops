@@ -204,7 +204,6 @@ ELEVENLABS = ProviderDefinition(
             "similarity_boost", "Similarity boost", default=0.75, minimum=0, maximum=1, step=0.05
         ),
         NumberField("speed", "Speed", default=1.0, minimum=0.5, maximum=2.0, step=0.05),
-        BooleanField("streaming", "Stream audio", default=True),
     ],
     capabilities=["tts", "streaming_tts", "list_voices", "list_models", "health_check"],
 )
@@ -324,8 +323,10 @@ CALENDAR = ProviderDefinition(
         ),
         UrlField("url", "Server URL", description="CalDAV only."),
         TextField("username", "Username"),
-        SecretField("password", "Password or app token"),
-        SelectField("default_calendar", "Default calendar", options_from="calendars"),
+        # required: a password-less login attempt is LOGIN username "" — it
+        # cannot work, and without the flag the provider read as fully
+        # CONFIGURED anyway (2026-08-18 audit, P2).
+        SecretField("password", "Password or app token", required=True),
     ],
     capabilities=["read_events", "free_busy", "create_hold", "create_event", "health_check"],
 )
@@ -339,11 +340,12 @@ EMAIL = ProviderDefinition(
     fields=[
         _ENABLED,
         TextField("imap_host", "IMAP host", required=True),
-        NumberField("imap_port", "IMAP port", default=993),
+        NumberField("imap_port", "IMAP port", default=993, minimum=1, maximum=65535),
         TextField("smtp_host", "SMTP host", required=True),
-        NumberField("smtp_port", "SMTP port", default=587),
+        NumberField("smtp_port", "SMTP port", default=587, minimum=1, maximum=65535),
         TextField("username", "Username", required=True),
-        SecretField("password", "Password or app token"),
+        # See the calendar password field: an empty credential cannot log in.
+        SecretField("password", "Password or app token", required=True),
         TextField("from_address", "From address"),
     ],
     capabilities=["search", "read_thread", "send", "reply", "health_check"],

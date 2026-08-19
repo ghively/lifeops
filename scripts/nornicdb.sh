@@ -81,13 +81,27 @@ start() {
   # Embeddings stay off in Phase 0: there is nothing to embed until Phase 2,
   # and loading a model would be infrastructure for a problem that does not
   # exist yet (section 105).
+  # --admin-password on argv is readable by every local process via
+  # /proc/*/cmdline for the daemon's lifetime — defeating the 0600 care
+  # taken with nornicdb.env. NornicDB documents a general
+  # NORNICDB_<SECTION>_<KEY> environment mapping, but its docs never name
+  # the admin-password variable, and this sandbox cannot run the binary to
+  # verify — so the flag stays the default and the env path is an explicit
+  # opt-in. Set LIFEOPS_NORNIC_PASSWORD_VIA_ENV=1 once verified against
+  # your build (then the flag is omitted and only the process's own
+  # environment carries the credential).
+  password_args=(--admin-password "$LIFEOPS_NORNIC_PASSWORD")
+  if [[ "${LIFEOPS_NORNIC_PASSWORD_VIA_ENV:-0}" == "1" ]]; then
+    password_args=()
+  fi
+  NORNICDB_ADMIN_PASSWORD="$LIFEOPS_NORNIC_PASSWORD" \
   nohup "$NORNIC_BIN" serve \
     --data-dir "$DATA_DIR" \
     --address 127.0.0.1 \
     --http-port "$HTTP_PORT" \
     --bolt-port "$BOLT_PORT" \
     --headless \
-    --admin-password "$LIFEOPS_NORNIC_PASSWORD" \
+    "${password_args[@]}" \
     >> "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
   wait_for_bolt

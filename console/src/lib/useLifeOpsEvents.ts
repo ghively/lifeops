@@ -62,6 +62,11 @@ function invalidateFor(queryClient: QueryClient, type: string): void {
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'system'] })
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'voice'] })
       break
+    case 'shopping_changed':
+      // Shopping lists project into the world graph; there is no dedicated
+      // shopping screen yet, so the graph is what a change can stale.
+      void queryClient.invalidateQueries({ queryKey: ['lifeops', 'world'] })
+      break
     case 'memory_changed':
       // Prefix match: covers the list, search results, and history chains.
       void queryClient.invalidateQueries({ queryKey: ['lifeops', 'memory'] })

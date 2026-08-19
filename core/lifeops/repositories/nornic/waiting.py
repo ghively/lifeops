@@ -246,6 +246,20 @@ class NornicWaitingRepository:
             if entity_edge is not None:
                 statements.append(entity_edge)
 
+        # And the same again for the owning task's incoming edge: without
+        # this branch, moving an item to another task updated the property
+        # (reads stayed correct — list_for_task uses it) but left the graph
+        # permanently showing the item blocking the old task, with no edge
+        # from the new one (2026-08-18 audit, P2).
+        if existing.task_id != item.task_id:
+            statements.append(
+                (
+                    "MATCH (:Task)-[r:WAITING_ON]->(w:WaitingItem {id: $id}) DELETE r",
+                    {"id": item.id},
+                )
+            )
+            statements.append(_task_edge_statement(item))
+
         await self._client.write_many(statements)
         stored = await self.get(item.id)
         return stored or item

@@ -50,7 +50,24 @@ def _coerce(field_name: str, kind: FieldKind, value: Any) -> Any:
 
     if not isinstance(value, str):
         raise ValidationError(f"{field_name} must be text", field=field_name)
-    return value.strip()
+    stripped = value.strip()
+
+    if kind is FieldKind.URL and stripped:
+        # URL fields used to fall through to the bare-text branch, so
+        # "not a url" (or a javascript: value) validated fine and only
+        # exploded later inside httpx (2026-08-18 audit, P2). Schemes are
+        # the ones adapters actually speak: http(s) for CalDAV/REST, ws(s)
+        # for the remote-browser endpoint.
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(stripped)
+        if parts.scheme not in {"http", "https", "ws", "wss"} or not parts.netloc:
+            raise ValidationError(
+                f"{field_name} must be an http(s):// or ws(s):// URL",
+                field=field_name,
+            )
+
+    return stripped
 
 
 class ValidatedUpdate:

@@ -205,18 +205,17 @@ rule 3).
 A complete code review and audit
 ([docs/audits/2026-08-18-full-codebase-audit.md](audits/2026-08-18-full-codebase-audit.md))
 swept the whole repository. Its eight P0 findings were **fixed the same
-day**, and its P1 backlog was **fixed the day after** — the disposition
-notes at the top of that document record both passes item by item. What
-remains open:
+day**, and its P1 and P2 backlogs were **fixed the day after** — the
+disposition notes at the top of that document record all three passes item
+by item. What remains open:
 
-- **P2 (small fixes, listed in full in the audit):** the WAITING_ON edge
-  repair on task change, the shopping `substitution_allowed` default, the
-  dead `SHOPPING_CHANGED` constant, non-required email/calendar password
-  fields, URL/port validation, the secret-fingerprint dictionary hardening,
-  the lexical Go version compare, the NornicDB password on argv, the bare
-  TCP healthcheck probe, `dev.sh`'s orphaned Vite children, unused pytest
-  markers, the browser CDP-branch leak, the unbounded TTS producer queue,
-  small sync-I/O-in-async spots, and the Console dead-code list.
+- **One qualified P2 remnant:** `nornicdb.sh` still passes the admin
+  password as a flag by default (visible in `/proc/*/cmdline`), because
+  upstream's docs never name the admin-password env var and this sandbox
+  cannot run the binary to verify. The script already exports
+  `NORNICDB_ADMIN_PASSWORD` alongside it — verify one start on a real
+  deployment with `LIFEOPS_NORNIC_PASSWORD_VIA_ENV=1`, then make that the
+  default and mirror it in the systemd unit.
 - **Docs corrections (beyond what the fixes already touched):**
   DATA_MODEL.md's two missing phases of schema (bills/payees, workflow
   templates, shopping items) and stale storage narratives;

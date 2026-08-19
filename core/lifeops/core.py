@@ -190,6 +190,7 @@ from lifeops.events import (
     MEMORY_CHANGED,
     PERSON_CHANGED,
     PREFERENCE_CHANGED,
+    SHOPPING_CHANGED,
     TASK_CHANGED,
     WAITING_CHANGED,
     WORLD_CHANGED,
@@ -1842,8 +1843,15 @@ class LifeOpsCore:
                 shopping=shopping,
                 browser=browser,
                 clock=self._clock,
+                # SHOPPING_CHANGED, not WORLD_CHANGED: the constant existed
+                # since Phase 9 but nothing ever published it, so a Console
+                # subscriber written against the documented name waited
+                # forever (2026-08-18 audit, P2). The Console invalidates
+                # its shopping and world queries on this event.
                 publish=(
-                    lambda entity_id: self._publish(WORLD_CHANGED, entity_id=entity_id)
+                    lambda entity_id: self._publish(
+                        SHOPPING_CHANGED, entity_id=entity_id
+                    )
                 ),
             )
             if shopping is not None and browser is not None
@@ -4285,7 +4293,9 @@ class LifeOpsCore:
             created_at=now_iso(self._clock),
             requested_by=client.client_id,
         )
-        self._write_change_request(request)
+        # File I/O off the event loop — the one blocking write in an async
+        # path the audit flagged (P2).
+        await asyncio.to_thread(self._write_change_request, request)
         await self.audit(
             client,
             result="filed",
@@ -4308,9 +4318,6 @@ class LifeOpsCore:
         path.write_text(json.dumps(request.model_dump(), indent=2), encoding="utf-8")
 
     # --- search -------------------------------------------------------------
-
-
-
 
     async def search(
         self, client: ClientIdentity, *, query: str, limit: int = 10
