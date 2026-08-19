@@ -282,6 +282,11 @@ _FACT_FIELDS: tuple[str, ...] = (
 )
 
 
+# NOTE: the two converters below are no longer the storage path for
+# service requests. That moved to a dedicated repository, and the World screen
+# projects the real record in Cypher (``repositories/nornic/world.py``).
+# They survive because unit tests still exercise the shapes; nothing in
+# production calls them.
 def service_request_to_entity(request: ServiceRequest) -> WorldEntity:
     """Project into the world graph for display (section 15).
 

@@ -372,51 +372,43 @@ honestly rather than faking a working phone line.
 
 ---
 
+`ServiceRequest` has its own repository. `availability` is a native string
+array — NornicDB stores lists, and `Person.aliases` and `Memory.entity_ids`
+have been arrays since Phase 0. It was previously joined with `;` on the
+premise that lists could not be stored, which was untrue and would have
+corrupted the first slot containing a semicolon.
+
+The World screen projects the record (subject, status, provider) rather than
+storing a second copy of it.
+
+
 ## Shopping (Phase 9)
 
 ```
-(:ShoppingList {id, display_name, facts_json, created_at, updated_at,
-                created_by_client})
+(:ShoppingList {id, title, store, task_id, status, cart_reference,
+                order_reference, cart_action_id, checkout_action_id,
+                total_estimate, created_at, updated_at, created_by_client})
+
+(:ShoppingList)-[:CONTAINS]->(:ShoppingItem {position, name, quantity, notes,
+                                             substitution_allowed,
+                                             substituted_with,
+                                             substitution_reason,
+                                             estimated_price})
 ```
 
-Added in Phase 9 (BUILD_SPEC sections 36, 56, 98), projected through the same
-world repository as `Appointment`/`Document` — one more label the `facts_json`
-shape already fit, rather than a dedicated repository. `domain/shopping.py`
-keeps the richer `ShoppingList`/`ShoppingItem` models; the graph node is a
-projection, exactly the pattern `domain/calendar.py` established for
-`Appointment`.
+Items are their own nodes. Phase 9 originally packed them into an
+`items_json` fact on a world node; that round-tripped and made the contents
+unqueryable, so `find_lists_containing("milk")` had no answer. It does now.
 
-`ShoppingList.facts` carries `store`, `task_id`, `status` (`draft` /
-`cart_building` / `cart_built` / `cart_failed` / `submitting` / `submitted` /
-`verified` / `failed` / `cancelled`), `cart_reference`, `order_reference`,
-`cart_action_id`, `checkout_action_id`, `total_estimate`, and `items_json` — a
-JSON-encoded array of `ShoppingItem`, deliberately bypassing `validate_facts`'
-500-character bound the same way `Appointment`'s and `ServiceRequest`'s facts
-already do; a real cart is exactly the structured content that bound exists to
-keep out of the generic facts bag.
+Items carry an explicit `position` because NornicDB returns relationships in
+no guaranteed order, and a list whose lines shuffle between reads is a
+different list to the person holding it. An upsert deletes and rewrites the
+items rather than diffing them: a diff that mis-identifies a line leaves a
+phantom item in someone's cart.
 
-`ShoppingList` is outside `CREATABLE_ENTITY_TYPES` (the generic `POST
-/world/entities` path) for the same reason `Appointment` is: it has a
-dedicated write path (`create_shopping_list`) with its own invariants a bare
-`display_name` + facts bag would bypass. It is in the wider
-`WORLD_MANAGED_ENTITY_TYPES`.
-
-Two Actions drive the lifecycle, both declared in `domain/actions.py` before
-this phase existed: `build_grocery_cart` is R1 (section 56 — "a cart is
-reversible and commits nothing", so no approval) and `submit_grocery_order` is
-R3 (section 56's "Shopping checkout" — always approved). A substitution
-applied to a list with a live checkout Action refreshes that Action's payload
-and its hash (`ActionService.update_payload`), which invalidates any approval
-already granted for the old payload (section 57) — the same "material change
-invalidates approval" arithmetic `TestApprovalBinding` pins for booking,
-mirrored for shopping in `TestSubstitutionInvalidatesApproval`
-(`tests/unit/test_shopping.py`).
-
-The browser worker itself (`browser/provider.py`'s `BrowserWorker` Protocol)
-has no NornicDB presence — it is a runtime capability, not world state, the
-same way the calendar and email providers are not NornicDB nodes either.
-
----
+A shopping list still appears on the World screen, but the graph *projects*
+it — reading `title` and `status` directly — rather than storing a second
+copy in a facts bag. `NornicShoppingRepository` owns the record.
 
 ## Durable work (Phase 4)
 
@@ -462,6 +454,44 @@ append-only is enforced by the absence of the method, not by a rule someone
 has to remember.
 
 ---
+
+## Bills and payees (Phase 10)
+
+```
+(:Payee {id, display_name, provider_entity_id, secret_ref, created_at,
+         approved_at, approved_by, created_by_client})
+
+(:Bill  {id, payee_id, description, amount, currency, due_at, status,
+         action_id, paid_at, external_reference, source_document_id,
+         created_at, updated_at, created_by_client})
+
+(:Bill)-[:OWED_TO]->(:Payee)
+```
+
+`amount` is a validated string, never a number. `89.10` through binary
+floating point is `89.09999999999999`, and that value is hashed into an
+approval a human agreed to; the domain refuses `89.1` for the same reason —
+two spellings of one amount must not produce two hashes.
+
+A `Payee` carries `secret_ref`, a handle into the encrypted secret store, and
+never a credential. BUILD_SPEC section 72 requires that credentials are never
+exposed to Hermes, and the surest way is for them never to enter the graph.
+`approved_at` is preserved across an upsert in Python rather than with
+`coalesce`, which on NornicDB persists its own expression text when the
+parameter is null — that made every new payee read as already approved.
+
+## Workflow templates (Phase 11)
+
+```
+(:WorkflowTemplate {id, name, description, steps_json, trigger, next_run_at,
+                    enabled, created_at, updated_at, created_by_client})
+```
+
+`steps` is a JSON string here, unlike a shopping list's items. The difference
+is that steps are the whole record rather than a field smuggled into a shared
+facts bag, and the domain caps a template at 40 steps — beyond that it is a
+program and belongs in reviewed code. `enabled` lets a routine be paused; it
+travels through the draft so a revision cannot silently resume one.
 
 ## Relationships
 
@@ -530,6 +560,9 @@ CREATE CONSTRAINT lifeops_event_id      FOR (e:Event)       REQUIRE e.id IS UNIQ
 CREATE CONSTRAINT lifeops_document_id   FOR (d:Document)    REQUIRE d.id IS UNIQUE
 CREATE CONSTRAINT lifeops_servicerequest_id FOR (s:ServiceRequest) REQUIRE s.id IS UNIQUE
 CREATE CONSTRAINT lifeops_shopping_list_id FOR (s:ShoppingList) REQUIRE s.id IS UNIQUE
+CREATE CONSTRAINT lifeops_bill_id       FOR (b:Bill)        REQUIRE b.id IS UNIQUE
+CREATE CONSTRAINT lifeops_payee_id      FOR (p:Payee)       REQUIRE p.id IS UNIQUE
+CREATE CONSTRAINT lifeops_workflow_template_id FOR (t:WorkflowTemplate) REQUIRE t.id IS UNIQUE
 
 CREATE INDEX lifeops_preference_subject_key FOR (p:Preference) ON (p.subject_id, p.key)
 CREATE INDEX lifeops_task_state             FOR (t:Task)       ON (t.state)

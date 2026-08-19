@@ -383,6 +383,11 @@ _LIST_SCALAR_FACT_FIELDS: tuple[str, ...] = (
 )
 
 
+# NOTE: the two converters below are no longer the storage path for
+# shopping lists. That moved to a dedicated repository, and the World screen
+# projects the real record in Cypher (``repositories/nornic/world.py``).
+# They survive because unit tests still exercise the shapes; nothing in
+# production calls them.
 def shopping_list_to_entity(shopping_list: ShoppingList) -> WorldEntity:
     import json
 

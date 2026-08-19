@@ -216,9 +216,12 @@ by item. What remains open:
   `NORNICDB_ADMIN_PASSWORD` alongside it — verify one start on a real
   deployment with `LIFEOPS_NORNIC_PASSWORD_VIA_ENV=1`, then make that the
   default and mirror it in the systemd unit.
-- **Docs corrections (beyond what the fixes already touched):**
-  DATA_MODEL.md's two missing phases of schema (bills/payees, workflow
-  templates, shopping items) and stale storage narratives;
+- ~~DATA_MODEL.md's two missing phases of schema and stale storage
+  narratives.~~ **Done:** bills/payees, workflow templates, and shopping
+  items are documented, the shopping and service-request storage narratives
+  now describe the dedicated repositories rather than the abandoned
+  facts-bag blobs, and the constraint list is complete.
+- **Docs corrections still outstanding:**
   HERMES_INTEGRATION.md's stale permission table; ARCHITECTURE.md's
   incomplete capability table; TESTING.md's suite table and stale
   `test-fast` description; OPERATIONS.md's wrong emergency-stop route;
@@ -228,10 +231,16 @@ by item. What remains open:
   write) while calls stay R2 per BUILD_SPEC section 101 — decide between
   accepting, reclassifying, or a number allowlist *before* enabling real
   telephony credentials.
-- **Live-NornicDB verification:** the waiting-lease claim's and approval
-  consume's conditional-write atomicity follow the same pattern, but only a
-  concurrent test against a real NornicDB can prove the isolation
-  semantics; `make test-e2e` plus a purpose-built race test is the way.
+- ~~**Live-NornicDB verification** of the lease claim and approval consume.~~
+  **Done — and it found a real bug.** `tests/persistence/test_concurrency.py`
+  races twelve callers at each. NornicDB isolates them correctly, but the
+  loser arrived as a `TransientError` wrapped into `RepositoryError`, so
+  `claim()` raised where it documents returning `None`; the due-work worker
+  would have logged "another worker got it" as a database failure, and a
+  second concurrent commit would have surfaced a retryable-looking fault next
+  to a payment. `ConcurrentWriteError` now carries that case and the four
+  conditional writes that elect a single winner treat it as their documented
+  `None`.
 - **Operational, outside the repo:** the GitHub Actions runner/billing
   failure — no CI run has ever executed; until that is fixed at the account
   level, `make check` is the only real gate.
