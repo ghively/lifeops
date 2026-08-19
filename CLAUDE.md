@@ -199,6 +199,17 @@ same `write_many`, or make the edge redundant — `Task.related_entity_ids` is
 the source of truth precisely so a dropped `ABOUT` edge degrades instead of
 losing the relationship.
 
+**CONTAINS + ORDER BY + LIMIT in one clause returns duplicate rows on
+NornicDB.** The text-scan path emits one row per index posting rather than
+one per node — a task that had been written to a few times came back seven
+times from universal search (found live, 2026-08-19, deployment audit).
+Neither `DISTINCT` (unreliable on aliased columns here, see
+`shopping.py`) nor ordering by aliases is the fix: sort and limit through a
+`WITH` stage before the projection, and dedupe by id in Python as the
+backstop. `tasks.py`, `preferences.py`, `people.py`, and `memory.py` all do
+this now; `tests/persistence/test_nornic_search.py` pins it. Plain listings
+(no CONTAINS) are unaffected.
+
 **Undirected and variable-length Cypher patterns return phantom rows on
 NornicDB.** Neighbourhood expansion is an explicit breadth-first walk of
 directed single hops for that reason. Only `tests/persistence/` catches a
@@ -237,22 +248,25 @@ real destination number from the target provider's own `phone` fact
 (`_phone_number_for_provider` in `core.py`) before POSTing to Twilio's Calls
 resource with inline TwiML — the call still cannot hold an actual
 conversation without the Voice Bridge (below), but nothing stops it from
-being placed. The browser adapter can launch Chromium and manage isolated
-per-context profiles for real, and now has a retailer chosen for its one
-reviewed site adapter — Instacart, by explicit user decision, deliberately
-narrower than letting an LLM drive checkout live against raw page content
-(the prompt-injection risk that shape would carry) — but `_SITE_ADAPTERS` is
-still empty: this sandbox's Chromium cannot reach any live site at all
-through the network proxy (`net::ERR_CONNECTION_RESET` against
-instacart.com, google.com, and example.com alike, confirmed directly, while
-plain `curl` to the same hosts works), so there is no way to inspect
-Instacart's real rendered DOM or verify any automation logic here. Writing
-selectors blind against that would be exactly the untested, speculative
-scraping this module's own docstring warns against and section 105
-forbids — the user agreed to hold this until it runs somewhere with live
-browser network access, rather than shipping fabricated selectors dressed up
-as real. No payment-provider adapter exists at all — deliberate, not a stub
-(see "Money moves only where a human is present" above).
+being placed. The browser adapter launches Chromium, manages isolated
+per-context profiles, and now has two real site adapters:
+`core/lifeops/browser/sites/` registers Amazon and Instacart into
+`_SITE_ADAPTERS`. Both were driven against the live sites from the deployment
+host on 2026-08-19 — Amazon's search, guest cart, and cart re-confirmation all
+verified end to end; Instacart's search verified, its cart refused because
+Instacart has no guest cart. The earlier claim that this sandbox's Chromium
+"cannot reach any live site at all" was true of the machine it was written on
+and is not true of this one.
+
+**Checkout is deliberately not automated on either.** `submit_order` raises a
+specific error naming what it would need. Selectors for a purchase flow that
+has never been run, sitting next to an action that spends real money, is the
+speculative build section 105 forbids; the failure mode is a wrong order, not
+a red test. Closing it means signing a store profile in once and verifying
+against a real basket.
+
+No payment-provider adapter exists at all — deliberate, not a stub (see
+"Money moves only where a human is present" above).
 
 - **Console.** Every section 10 nav entry now has a real screen — Calendar,
   Hermes, Files, and Knowledge replaced their `ComingInPhasePage` stubs, and
@@ -375,8 +389,9 @@ as real. No payment-provider adapter exists at all — deliberate, not a stub
   test (`test_phase0_exit.py`) — "Both acceptance scenarios pass (sections
   101 and 102)" above undercounts this; 104 passes too, and only 103 is
   genuinely incomplete.
-- Hermes itself has not been attached on this machine — it is not installed
-  here. See [HERMES_INTEGRATION.md](HERMES_INTEGRATION.md).
+- Hermes is attached (2026-08-19, host `gh-ai`): stdio MCP as
+  `hermes-personal`, all 52 tools discovered. The memory-provider plugin is a
+  separate switch and is not flipped.
 
 A consolidated, standalone accounting of every item above — grouped by
 whether it's blocked by this environment, deferred by BUILD_SPEC itself, out

@@ -263,19 +263,40 @@ database are preserved.
 
 | Host | Address | Role |
 |---|---|---|
-| `gh-coder` | `192.168.0.253` | Runs LifeOps Core, NornicDB, and the Console. |
-| `gh-nvidia` | `192.168.0.212` | GPU host. Ollama 0.32.9 — qwen3 (1.7b–14b), qwen2.5vl:7b, mxbai-embed-large. |
+| `gh-ai` | `100.92.162.32` (tailnet) | Runs LifeOps Core, NornicDB, and the Console. |
+| `gh-nvidia-1` | `100.96.94.19` (tailnet) | GPU host. Ollama — LLM and embedding endpoints only. |
 
-`gh-nvidia` does not currently serve LifeOps anything. Ollama exposes LLM and
-embedding endpoints only, and the local voice providers
+Deployed 2026-08-19. All three components run as systemd **user** units
+(`lifeops-nornicdb`, `lifeops-core`, `lifeops-console`) with lingering
+enabled, so they survive logout and reboot.
+
+Everything binds loopback. The Console is published to the tailnet by
+`tailscale serve` at `https://gh-ai.tail58e6a.ts.net:8445`, which terminates
+TLS and proxies in over `127.0.0.1` — no LifeOps process listens on a
+routable interface. Console authentication is **on**; the password is in
+1Password.
+
+Two host-specific settings live in `.env` (never committed):
+
+- `LIFEOPS_HTTP_PORT=8085` — port 8080 is held by an unrelated mail server.
+- Console origin follows, since `console/dist` is served by a private Caddy
+  on `127.0.0.1:5173` that also proxies `/api` to Core, giving the browser
+  one origin.
+
+**NornicDB binds its Prometheus listener on every interface by default.**
+`--address` governs Bolt and HTTP only; telemetry defaults to `:9090`. On a
+host with a public address that publishes the database's metrics to the
+internet. Both `scripts/nornicdb.sh` and the systemd unit now pin
+`NORNICDB_TELEMETRY_LISTEN=127.0.0.1:9090`. Check it after any NornicDB
+upgrade:
+
+```bash
+ss -ltn | grep 9090        # must show 127.0.0.1:9090, never *:9090
+```
+
+`gh-nvidia-1` does not currently serve LifeOps anything. Ollama exposes LLM
+and embedding endpoints only, and the local voice providers
 (`core/lifeops/voice/local.py`) are in-process libraries that would have to
 run on that host rather than call it — see
 [docs/REMAINING_WORK.md](docs/REMAINING_WORK.md) for the three routes and the
 current decision.
-
-It is worth knowing the capacity exists. ARCHITECTURE.md records embeddings as
-deliberately off, on the grounds that BM25 answers the recall queries that
-exist and a model would be capacity held against a problem that has not
-appeared. `mxbai-embed-large` sitting idle on the LAN does not change that
-argument — it only means the day it does appear, the hardware is already
-there.

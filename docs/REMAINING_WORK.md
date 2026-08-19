@@ -24,38 +24,49 @@ snapshot, not a new source of truth.
 
 ## 1. Blocked by this environment
 
-### Instacart site adapter (BUILD_SPEC section 98)
+### ~~Instacart site adapter~~ — done, plus Amazon (BUILD_SPEC section 98)
 
-**Status:** scoped and approved, not built.
+**Status: built and verified live, 2026-08-19**, on the deployment host
+(`gh-ai`), which is not the sandbox the paragraphs below were written in.
 
-The user chose the architecture (one reviewed, deterministic Playwright
-adapter registered in `browser/real.py`'s `_SITE_ADAPTERS`, driven generically
-by `hermes/skills/lifeops/shopping-manager/SKILL.md`) specifically to avoid
-letting an LLM browse and check out live against raw, untrusted page content —
-that shape carries a real prompt-injection risk next to a payment-capable
-action loop. Instacart was named as the retailer.
+The claimed blocker was wrong twice over. Chromium is not missing system
+libraries here — it launches and loads live pages — and outbound network
+works. Both retailers were driven end to end through `RealBrowserWorker`
+against the real sites:
 
-Whether it is blocked depends on the machine, and the earlier claim here was
-wrong about this one. That claim — that Chromium "cannot reach any live
-website through the network proxy at all" — was written in a sandbox. On this
-workstation outbound network works fine: `curl` reaches `instacart.com` with a
-200, and so would a browser.
+| | Amazon | Instacart |
+|---|---|---|
+| `search` | real, verified | real, verified |
+| `build_cart` | real, verified (guest cart) | refuses: no guest cart |
+| `confirm_cart` | real, verified across a browser restart | refuses |
+| `submit_order` | refuses: unverified checkout | refuses |
+| `confirm_order` | refuses: needs sign-in | refuses |
 
-What actually stops Chromium here is five missing system libraries —
-`libatk-1.0`, `libatk-bridge-2.0`, `libXdamage`, `libasound2`, `libatspi` —
-so the binary dies with `error while loading shared libraries` before it ever
-opens a socket. That reads as `TargetClosedError` through Playwright, which
-looks like a code fault and is not one. Installing them needs root:
+Adapters live in `core/lifeops/browser/sites/`, registered through the
+`_SITE_ADAPTERS` extension point the module docstring always pointed at.
+Every selector is recorded in its adapter's docstring with what it returned
+on the day it was read, so a future break reads as "the site changed".
 
-```bash
-sudo .venv/bin/python -m playwright install-deps chromium
-```
+**What is deliberately still open: checkout.** Both `submit_order` methods
+raise a specific error instead of clicking through a purchase. Amazon's needs
+a signed-in session with an address and payment method; Instacart needs an
+account before it will hold a cart at all. Writing those selectors from
+documentation, next to an action that spends real money, is the speculative
+build section 105 forbids — and the failure mode is not a red test but a
+wrong order placed for real. Closing it means signing the per-store profile
+in once (the profile under `profile_root/<store>` persists between calls,
+which is what section 66's persistence is for) and verifying the flow against
+a real basket.
 
-**What unblocks it:** installing those libraries, after which a real Chromium
-can reach `instacart.com` from this machine. No code or
-design work is needed first — `BrowserWorker`, `_SITE_ADAPTERS`, and the
-shopping domain/MCP layer are all already built and waiting for exactly this
-one adapter to register itself.
+Two things worth knowing operationally:
+
+- **Locale follows the browser's apparent location.** From this datacenter
+  host, amazon.com answers in EUR. Prices are passed through verbatim, symbol
+  included, and never parsed into a number.
+- **`tests/unit/test_site_adapters.py` carries opt-in live tests**
+  (`LIFEOPS_LIVE_SITE_TESTS=1`). They are how the recorded selectors get
+  re-verified when a site changes; they stay out of the default suite so a
+  unit run never depends on the public internet.
 
 ### Local voice providers on real hardware
 
@@ -143,34 +154,43 @@ new adapter is additive, the same shape `LocalTTSProvider` already proves.
 
 ### The Voice Bridge (BUILD_SPEC sections 31, 32, 33, 103)
 
-BUILD_SPEC section 32's own diagram places the Voice Bridge between raw
-audio and "the same Hermes runtime" — not LifeOps Core. Combined with this
-repo's standing rule against building a second agent or agent runtime
-(CLAUDE.md rule 4), duplex-audio orchestration (streaming ASR, partial
-transcripts, endpointing, barge-in, phrase-chunked TTS) belongs in Hermes
-itself. This was raised with the user as a design check-in rather than built
-unilaterally in the wrong place, and confirmed.
+BUILD_SPEC section 32's own diagram places the Voice Bridge between raw audio
+and "the same Hermes runtime" — not LifeOps Core. Combined with CLAUDE.md
+rule 4 (do not build a second agent runtime), duplex-audio orchestration
+belongs in Hermes.
 
-What *is* LifeOps Core's job — the swappable ASR/TTS provider layer the
-Bridge would call into — is built (see section 1 above: real, just not run
-on real hardware yet).
+**Finding, 2026-08-19: Hermes already ships most of it, and it works here.**
+This was checked on the deployment host rather than assumed. `~/.hermes/config.yaml`
+carries a configured `tts:` block (provider `elevenlabs`), an `stt:` block
+(enabled, provider `local`, whisper `base`), and a `voice:` block with
+push-to-talk (`record_key: ctrl+b`), silence detection, and `auto_tts`.
+`faster_whisper` 1.2.1 is installed in Hermes's own venv and
+`ELEVENLABS_API_KEY` is present.
 
-Three more items are downstream of the Bridge and have no code because the
-thing that would drive them doesn't exist yet:
+A full round trip was run end to end: text → ElevenLabs synthesis → MP3 →
+faster-whisper transcription → text, and the words came back. So "no duplex
+audio streaming code anywhere, not even scaffolding" is no longer the right
+description of the situation. The path exists; what is missing against
+sections 31-33 specifically is narrower than "the Bridge":
 
-- **RTX 3060 resource-priority scheduling** (section 31) — a scheduling
-  policy for a runtime (the Bridge) that isn't there to schedule.
-- **Voice latency instrumentation** (section 33) — p50/p95/p99 measurements
-  of a request path (mic → Bridge → Hermes → TTS → audio) most of which
-  isn't wired.
-- **The voice acceptance scenario's Console walkthrough** (section 103) —
-  its steps (start a voice session, ask a question, add a task by voice)
-  need a live Voice Bridge session to walk through; section 104's provider-
-  configuration scenario, which doesn't, already passes
-  (`test_phase0_exit.py`).
+- **Duplex/barge-in.** What Hermes has is push-to-talk with silence
+  detection, not full duplex — you cannot interrupt it mid-sentence. That is
+  section 32's remaining gap, and it is a Hermes-side change.
+- **Latency instrumentation (section 33).** Still absent, and now clearly
+  worth having: the round trip above measured **2.6s to transcribe a ~1.5s
+  clip** on this host's CPU, roughly 1.7× real time. That is not
+  conversational latency, and it is the strongest argument yet for section
+  31's GPU routing.
+- **GPU routing (section 31).** `gh-nvidia-1` is reachable on the tailnet
+  (`100.96.94.19`). It serves Ollama only — no ASR/TTS endpoint — so it does
+  not help until something is stood up there. Route 2 from section 1 above (a
+  whisper.cpp or Kokoro HTTP service on that host, plus remote adapters beside
+  the local ones) is what the measurement argues for.
 
-**What unblocks it:** this is a Hermes-side build, not a LifeOps Core one.
-Nothing here changes until that work happens in Hermes's own codebase.
+**What unblocks the rest:** a decision to modify Hermes's own voice loop for
+duplex, and/or standing up an ASR service on `gh-nvidia-1`. Nothing in *this*
+repository blocks either — LifeOps Core's job, the swappable ASR/TTS provider
+layer, is built, and ElevenLabs is now live-configured and healthy here.
 
 ### Payment provider adapter
 
@@ -196,14 +216,15 @@ the Test button, and leave the provider disabled until supplied).
 
 ## 4. Waiting on the user
 
-### Hermes itself is not attached to this machine
+### ~~Hermes itself is not attached to this machine~~ — done
 
-LifeOps Core, the MCP server, and every tool/resource/capability Hermes would
-use are built and pass the Phase 0 exit test over a real MCP subprocess with
-the exact client identity Hermes uses (`hermes-personal`). What hasn't
-happened is Hermes — the user's own assistant, a separate install — actually
-connecting here. See [HERMES_INTEGRATION.md](../HERMES_INTEGRATION.md) for
-the (already-written) steps to do that; nothing in this repository blocks it.
+Attached 2026-08-19 on `gh-ai`. Hermes connects over stdio MCP as
+`hermes-personal` and discovers all 52 tools (`hermes mcp test lifeops`). The
+entry lives in `~/.hermes/config.yaml` under `mcp_servers.lifeops`.
+
+The memory-provider plugin is a separate switch and is **not** flipped:
+`memory.provider` is still Hermes's built-in. Note its default `base_url` is
+`127.0.0.1:8080`, which is not where Core listens on this host.
 
 ### Every disabled provider needing real credentials
 
