@@ -593,6 +593,7 @@ export function BillsPage() {
 
   const payees = payeesQuery.data?.payees ?? []
   const bills = billsQuery.data?.bills ?? []
+  const billsTruncated = bills.length >= 200
   const payeeById = new Map(payees.map((p) => [p.id, p]))
   const openBills = bills.filter((b) => OPEN_STATUSES.includes(b.status))
   const closedBills = bills.filter((b) => !OPEN_STATUSES.includes(b.status))
@@ -613,13 +614,31 @@ export function BillsPage() {
       {preparedNotice && (
         <div className="flex items-center justify-between gap-4 rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
           <span>{preparedNotice}</span>
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/approvals">
-              <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
-              Go to Approvals
-            </Link>
-          </Button>
+          <span className="flex items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/approvals">
+                <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                Go to Approvals
+              </Link>
+            </Button>
+            {/* Nothing else ever cleared this banner — it outlived the
+                approval, the execution, and the decline alike. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Dismiss notice"
+              onClick={() => setPreparedNotice(null)}
+            >
+              Dismiss
+            </Button>
+          </span>
         </div>
+      )}
+
+      {billsTruncated && (
+        <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
+          Showing the first 200 bills — older ones exist beyond this list.
+        </p>
       )}
 
       <section className="space-y-3">

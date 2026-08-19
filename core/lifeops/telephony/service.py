@@ -69,19 +69,43 @@ class TelephonyProviderService:
             "no telephony provider is enabled and fully configured yet"
         )
 
-    async def health(self) -> HealthReport:
+    async def _with_provider(self, call: Callable[[TelephonyProvider], Any]) -> Any:
+        """Build the active provider, run one call, and close its transport.
+
+        The same fix ``calendar/service.py`` and ``voice/service.py`` carry:
+        providers are constructed per call, the Twilio adapter owns an
+        httpx.AsyncClient, and nothing ever closed it — every dial, hangup,
+        and status poll leaked a connection pool (2026-08-18 audit).
+        """
         provider = self._build()
-        healthy, message = await provider.health()
-        return self._config.record_health("telephony", healthy=healthy, message=message)
+        try:
+            return await call(provider)
+        finally:
+            closer = getattr(provider, "aclose", None)
+            if closer is not None:
+                await closer()
+
+    async def health(self) -> HealthReport:
+        async def run(provider: TelephonyProvider) -> HealthReport:
+            healthy, message = await provider.health()
+            return self._config.record_health(
+                "telephony", healthy=healthy, message=message
+            )
+
+        return await self._with_provider(run)
 
     async def dial(self, objective: CallObjective) -> CallResult:
-        return await self._build().dial(objective)
+        return await self._with_provider(lambda provider: provider.dial(objective))
 
     async def hangup(self, external_reference: str) -> None:
-        await self._build().hangup(external_reference)
+        await self._with_provider(lambda provider: provider.hangup(external_reference))
 
     async def send_dtmf(self, external_reference: str, digits: str) -> None:
-        await self._build().send_dtmf(external_reference, digits)
+        await self._with_provider(
+            lambda provider: provider.send_dtmf(external_reference, digits)
+        )
 
     async def get_status(self, external_reference: str) -> CallResult | None:
-        return await self._build().get_status(external_reference)
+        return await self._with_provider(
+            lambda provider: provider.get_status(external_reference)
+        )

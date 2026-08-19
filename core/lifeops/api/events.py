@@ -60,7 +60,14 @@ async def events_stream(websocket: WebSocket) -> None:
                 incoming.result()
             if outgoing in done:
                 await websocket.send_json(outgoing.result())
-    except (WebSocketDisconnect, RuntimeError):
+    except WebSocketDisconnect:
         pass
+    except RuntimeError:
+        # Starlette raises RuntimeError for a receive() issued after the
+        # peer vanished mid-frame — a normal hang-up shape. But a broad
+        # silent catch also swallowed genuine programming errors as if the
+        # client had disconnected, so it is logged before being treated as
+        # an ordinary close (2026-08-18 audit).
+        logger.warning("event stream closed by RuntimeError", exc_info=True)
     finally:
         container.events.unsubscribe(queue)

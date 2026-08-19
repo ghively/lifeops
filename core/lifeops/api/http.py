@@ -121,6 +121,7 @@ from lifeops.domain.bills import Bill, BillDraft, BillStatus, Payee, PayeeDraft
 from lifeops.domain.calendar import (
     Appointment,
     AppointmentHoldDraft,
+    AppointmentStatus,
     CalendarEvent,
     FreeBusyResult,
 )
@@ -267,10 +268,17 @@ async def _approval_out(
         action = await container.core.get_action(client, action_id=approval.action_id)
     except NotFoundError:
         action = None
+    # A missing action is flagged, never silently rendered as an empty
+    # payload: section 58's whole point is that the human sees exactly what
+    # they are approving, and an empty "what will happen" with no error
+    # invited a blind decision (2026-08-18 audit). The payload-hash binding
+    # bounds the damage either way; the flag lets the Console refuse to
+    # present the card as decidable.
     return ApprovalResponse(
         **approval.model_dump(),
         action_payload=action.payload if action is not None else {},
         action_status=action.status if action is not None else None,
+        action_missing=action is None,
     )
 
 
@@ -1122,8 +1130,11 @@ async def list_appointments(
     container: ContainerDep,
     client: ClientDep,
     task_id: Annotated[str | None, Query()] = None,
+    status: Annotated[AppointmentStatus | None, Query()] = None,
 ) -> AppointmentListResponse:
-    appointments = await container.core.list_appointments(client, task_id=task_id)
+    appointments = await container.core.list_appointments(
+        client, task_id=task_id, status=status
+    )
     return AppointmentListResponse(
         appointments=[_appointment_out(a) for a in appointments], total=len(appointments)
     )
@@ -2184,8 +2195,14 @@ async def update_system_config(
 
 
 @router.get("/config/clients", tags=["config"])
-async def list_clients() -> dict[str, Any]:
-    """Client permissions, for the Console's access inspector."""
+async def list_clients(client: ConfiguringClientDep) -> dict[str, Any]:
+    """Client permissions, for the Console's access inspector.
+
+    The data is the non-sensitive table SECURITY.md publishes anyway, but
+    this was the one ``/config`` route with no client dependency at all —
+    guarded now for consistency with every sibling, so the config surface
+    has exactly one authorization story.
+    """
     return {"clients": [CapabilityGrant.of(c).model_dump() for c in all_clients()]}
 
 
