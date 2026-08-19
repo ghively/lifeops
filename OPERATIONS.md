@@ -256,3 +256,26 @@ the real state.
 
 To stop everything, including the process: `make stop`. State, logs, and the
 database are preserved.
+
+---
+
+## Machines in this deployment
+
+| Host | Address | Role |
+|---|---|---|
+| `gh-coder` | `192.168.0.253` | Runs LifeOps Core, NornicDB, and the Console. |
+| `gh-nvidia` | `192.168.0.212` | GPU host. Ollama 0.32.9 — qwen3 (1.7b–14b), qwen2.5vl:7b, mxbai-embed-large. |
+
+`gh-nvidia` does not currently serve LifeOps anything. Ollama exposes LLM and
+embedding endpoints only, and the local voice providers
+(`core/lifeops/voice/local.py`) are in-process libraries that would have to
+run on that host rather than call it — see
+[docs/REMAINING_WORK.md](docs/REMAINING_WORK.md) for the three routes and the
+current decision.
+
+It is worth knowing the capacity exists. ARCHITECTURE.md records embeddings as
+deliberately off, on the grounds that BM25 answers the recall queries that
+exist and a model would be capacity held against a problem that has not
+appeared. `mxbai-embed-large` sitting idle on the LAN does not change that
+argument — it only means the day it does appear, the hardware is already
+there.

@@ -59,24 +59,42 @@ one adapter to register itself.
 
 ### Local voice providers on real hardware
 
-**Status:** code is real and tested against fakes; never run against real
-models or a GPU.
+**Status:** code is real and tested against fakes. **Deferred by decision, not
+blocked** — voice stays on ElevenLabs for now.
 
 `LocalASRProvider` (faster-whisper) and `LocalTTSProvider` (Kokoro) in
-`core/lifeops/voice/local.py` do real transcription/synthesis work, with a
-real Load/Unload lifecycle and an in-process weight cache — but neither
-package is installed by default (both live behind `pyproject.toml`'s
-`voice-local` extra, a deliberate choice per AGENTS.md's dependency
-justification, since it's a GPU-class footprint most deployments never
-touch). This sandbox has no GPU and neither package installed, so
-`health()` correctly reports "not installed" here. `tests/unit/test_voice.py`
-covers the installed code paths only against `sys.modules`-injected fakes.
+`core/lifeops/voice/local.py` do real transcription and synthesis, with a real
+load/unload lifecycle and an in-process weight cache. Neither package is
+installed by default: both sit behind `pyproject.toml`'s `voice-local` extra,
+with the AGENTS.md dependency justification written out, because it is a
+GPU-class footprint most deployments never touch.
 
-**What unblocks it:** installing the `voice-local` extra on a machine with a
-GPU (or CPU inference, slower but functional) and exercising `health()` /a
-real transcribe-then-synthesize round trip.
+The earlier claim here — "this sandbox has no GPU" — was wrong about this
+deployment. There is a GPU host on the LAN: **`gh-nvidia` at
+`192.168.0.212`**, running Ollama 0.32.9 with qwen3 (1.7b–14b), a qwen2.5vl
+vision model, and `mxbai-embed-large`.
 
----
+It does not unblock these two providers, and the reason is architectural
+rather than a missing machine. **Ollama serves LLMs and embeddings; it serves
+no ASR or TTS endpoint.** faster-whisper and Kokoro are in-process Python
+libraries that load weights into the calling process, and LifeOps Core runs on
+`gh-coder`. There is nothing on `gh-nvidia` for them to call.
+
+Three real routes, should this be picked up later:
+
+1. **Run LifeOps Core on `gh-nvidia`.** The providers work exactly as written;
+   no code changes at all.
+2. **Stand up a remote ASR/TTS service there** (a whisper.cpp server, a Kokoro
+   HTTP wrapper) and add remote adapters beside the local ones. This is the
+   shape BUILD_SPEC section 28's provider abstraction exists for — the point
+   of not hardwiring Hermes to one backend.
+3. **Stay on ElevenLabs.** Already built, already tested, ships disabled
+   pending a key.
+
+**Decision (2026-08-19): route 3 for now.** Nothing here is broken or
+half-built; the local path is complete code waiting on a deployment choice
+that has been made the other way for the moment.
+
 
 ## 2. Deferred by BUILD_SPEC itself
 
