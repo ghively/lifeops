@@ -61,6 +61,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from lifeops.browser.sites import SITE_ADAPTERS
 from lifeops.domain.shopping import CartResult, OrderResult, ProductResult, ShoppingItem
 from lifeops.errors import ProviderError
 
@@ -112,7 +113,11 @@ def _profile_dirname(name: str) -> str:
 #: has been chosen yet (see the module docstring's "what this does NOT make
 #: real"). Populate this to make ``search``/``build_cart``/``submit_order``
 #: work for a real store.
-_SITE_ADAPTERS: dict[str, Any] = {}
+#: Populated from ``browser.sites``. Kept as a module-level name because
+#: that is the extension point this module's docstring names and tests
+#: monkeypatch; the adapters themselves live one package down so a retailer's
+#: page structure never mixes with browser-lifecycle code.
+_SITE_ADAPTERS: dict[str, Any] = dict(SITE_ADAPTERS)
 
 
 class RealBrowserWorker:
@@ -205,6 +210,16 @@ class RealBrowserWorker:
         context.set_default_timeout(self._timeout_s * 1000)
         return context
 
+    def _session(self, store: str) -> _BrowserSession:
+        """Playwright + one isolated per-store context, closed on exit.
+
+        Every shopping method needs the identical three-step dance, and each
+        step has a failure mode that leaks a Chromium process if the next one
+        raises. Writing it once means an adapter that throws mid-cart still
+        tears the browser down.
+        """
+        return _BrowserSession(self, store)
+
     def _no_site_adapter_error(self, store: str) -> ProviderError:
         return ProviderError(
             f"no site automation is configured for store {store!r} — LifeOps "
@@ -224,26 +239,77 @@ class RealBrowserWorker:
     ) -> list[ProductResult]:
         if store not in _SITE_ADAPTERS:
             raise self._no_site_adapter_error(store)
-        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
+        async with self._session(store) as context:
+            return await _SITE_ADAPTERS[store].search(context, query, limit=limit)
 
     async def build_cart(self, *, store: str, items: list[ShoppingItem]) -> CartResult:
         if store not in _SITE_ADAPTERS:
             raise self._no_site_adapter_error(store)
-        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
+        async with self._session(store) as context:
+            return await _SITE_ADAPTERS[store].build_cart(context, items)
 
     async def submit_order(
         self, *, store: str, cart_reference: str, items: list[ShoppingItem]
     ) -> OrderResult:
         if store not in _SITE_ADAPTERS:
             raise self._no_site_adapter_error(store)
-        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
+        async with self._session(store) as context:
+            return await _SITE_ADAPTERS[store].submit_order(context, cart_reference, items)
 
     async def confirm_cart(self, *, store: str, cart_reference: str) -> tuple[bool, str]:
         if store not in _SITE_ADAPTERS:
             return False, self._no_site_adapter_message(store)
-        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
+        async with self._session(store) as context:
+            return await _SITE_ADAPTERS[store].confirm_cart(context, cart_reference)
 
     async def confirm_order(self, *, store: str, order_reference: str) -> tuple[bool, str]:
         if store not in _SITE_ADAPTERS:
             return False, self._no_site_adapter_message(store)
-        raise AssertionError("unreachable until a site adapter is registered")  # pragma: no cover
+        async with self._session(store) as context:
+            return await _SITE_ADAPTERS[store].confirm_order(context, order_reference)
+
+
+class _BrowserSession:
+    """Async context manager yielding an isolated context for one store.
+
+    ``async_playwright()`` is itself a context manager whose lifetime must
+    outlive the browser it started, so both are entered here and exited in
+    reverse — closing the context (which, on the CDP path, drags the browser
+    connection with it via the ``close`` handler in ``_open_context``) before
+    stopping Playwright.
+    """
+
+    def __init__(self, worker: RealBrowserWorker, store: str) -> None:
+        self._worker = worker
+        self._store = store
+        self._playwright_cm: Any = None
+        self._context: Any = None
+
+    async def __aenter__(self) -> Any:
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as exc:
+            raise ProviderError(
+                "the playwright package is not installed in this environment "
+                "(pip install playwright)",
+                provider="browser",
+            ) from exc
+        self._playwright_cm = async_playwright()
+        playwright = await self._playwright_cm.__aenter__()
+        try:
+            self._context = await self._worker._open_context(playwright, self._store)
+        except Exception as exc:
+            await self._playwright_cm.__aexit__(type(exc), exc, exc.__traceback__)
+            raise ProviderError(
+                f"chromium could not be started for store {self._store!r}: {exc}",
+                provider="browser",
+            ) from exc
+        return self._context
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        try:
+            if self._context is not None:
+                await self._context.close()
+        finally:
+            if self._playwright_cm is not None:
+                await self._playwright_cm.__aexit__(exc_type, exc, tb)
