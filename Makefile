@@ -9,6 +9,16 @@ NORNIC_ENV := $(LIFEOPS_HOME)/nornicdb.env
 # repository and is never committed.
 WITH_NORNIC = set -a; [ -f $(NORNIC_ENV) ] && . $(NORNIC_ENV); set +a;
 
+# How the restart tests bounce the database. The script is right when the
+# script started it, but a deployment where systemd owns the process has no
+# PID file for the script to find — it then reports "not running", refuses
+# because something already holds Bolt, and six passing tests turn red for a
+# reason that has nothing to do with the code. Overridable so the deployment
+# says how its own database restarts:
+#
+#   make test LIFEOPS_NORNIC_RESTART_CMD="systemctl --user restart lifeops-nornicdb"
+LIFEOPS_NORNIC_RESTART_CMD ?= $(PWD)/scripts/nornicdb.sh restart
+
 .DEFAULT_GOAL := help
 .PHONY: help setup setup-core setup-console nornic-build nornic-start nornic-stop \
         dev stop status health test test-fast test-integration test-e2e \
@@ -72,11 +82,11 @@ test-integration:  ## Repository tests against a live NornicDB
 	@$(WITH_NORNIC) $(PYTEST) tests/persistence -q
 
 test-e2e:  ## Phase 0 exit test
-	@$(WITH_NORNIC) LIFEOPS_NORNIC_RESTART_CMD="$(PWD)/scripts/nornicdb.sh restart" \
+	@$(WITH_NORNIC) LIFEOPS_NORNIC_RESTART_CMD="$(LIFEOPS_NORNIC_RESTART_CMD)" \
 	  $(PYTEST) tests/e2e -q
 
 test:  ## Every Python test
-	@$(WITH_NORNIC) LIFEOPS_NORNIC_RESTART_CMD="$(PWD)/scripts/nornicdb.sh restart" \
+	@$(WITH_NORNIC) LIFEOPS_NORNIC_RESTART_CMD="$(LIFEOPS_NORNIC_RESTART_CMD)" \
 	  $(PYTEST) -q
 
 console-test:  ## Console unit tests

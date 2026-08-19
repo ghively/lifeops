@@ -6,13 +6,21 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=%h/.local/share/lifeops/nornicdb.env
+# The credential travels in the environment, not on argv, where
+# /proc/*/cmdline would expose it to every local process. NORNICDB_AUTH is
+# the variable NornicDB actually reads (verified against v1.2.2); the
+# NORNICDB_ADMIN_PASSWORD this unit's script once set is read by nothing.
+Environment=NORNICDB_AUTH=admin:${LIFEOPS_NORNIC_PASSWORD}
+# --address covers Bolt and HTTP only. The Prometheus listener defaults to
+# :9090 on every interface, which publishes the database's metrics off-host
+# (BUILD_SPEC section 82).
+Environment=NORNICDB_TELEMETRY_LISTEN=127.0.0.1:9090
 ExecStart=%h/.local/lib/lifeops/nornicdb serve \
   --data-dir %h/.local/share/lifeops/nornicdb-data \
   --address 127.0.0.1 \
   --http-port 7474 \
   --bolt-port 7687 \
-  --headless \
-  --admin-password ${LIFEOPS_NORNIC_PASSWORD}
+  --headless
 Restart=on-failure
 RestartSec=5
 

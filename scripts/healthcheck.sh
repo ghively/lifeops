@@ -5,8 +5,17 @@
 # drive a monitor.
 set -uo pipefail
 
+# Deployment settings live in .env (CONFIGURATION.md). Python reads it through
+# pydantic-settings; the shell scripts have to be told. Without this, a host
+# where Core runs on a non-default port has healthcheck probing 8080 — which on
+# a machine with something else there reports OK for the wrong process.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a; . "$REPO_ROOT/.env"; set +a
+fi
+
 LIFEOPS_HOME="${LIFEOPS_HOME:-$HOME/.local/share/lifeops}"
-CORE_URL="${LIFEOPS_CORE_URL:-http://127.0.0.1:8080}"
+CORE_URL="${LIFEOPS_CORE_URL:-http://127.0.0.1:${LIFEOPS_HTTP_PORT:-8080}}"
 BOLT_PORT="${LIFEOPS_NORNIC_BOLT_PORT:-7687}"
 NORNIC_HTTP_PORT="${LIFEOPS_NORNIC_HTTP_PORT:-7474}"
 
