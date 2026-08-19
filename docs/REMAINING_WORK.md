@@ -35,23 +35,24 @@ letting an LLM browse and check out live against raw, untrusted page content —
 that shape carries a real prompt-injection risk next to a payment-capable
 action loop. Instacart was named as the retailer.
 
-Building it hit a hard wall before any Instacart-specific code was written:
-**this sandbox's Chromium cannot reach any live website through the network
-proxy at all.** Confirmed directly — `net::ERR_CONNECTION_RESET` against
-`instacart.com`, `google.com`, and plain `example.com` alike, across several
-proxy configurations, while `curl` to the same hosts works fine. There is no
-way to render Instacart's real DOM, inspect its login/search/cart flow, or
-verify any automation logic in this environment.
+Whether it is blocked depends on the machine, and the earlier claim here was
+wrong about this one. That claim — that Chromium "cannot reach any live
+website through the network proxy at all" — was written in a sandbox. On this
+workstation outbound network works fine: `curl` reaches `instacart.com` with a
+200, and so would a browser.
 
-Writing selectors without ever seeing the real page would be exactly the
-"scraping logic never tested against a live site" anti-pattern
-`browser/real.py`'s own module docstring warns against, and BUILD_SPEC
-section 105 forbids speculative builds like it. Per the user's direction,
-this is recorded as an environment-blocked gap rather than shipped as
-fabricated code.
+What actually stops Chromium here is five missing system libraries —
+`libatk-1.0`, `libatk-bridge-2.0`, `libXdamage`, `libasound2`, `libatspi` —
+so the binary dies with `error while loading shared libraries` before it ever
+opens a socket. That reads as `TargetClosedError` through Playwright, which
+looks like a code fault and is not one. Installing them needs root:
 
-**What unblocks it:** running this work somewhere with live outbound browser
-network access (a real Chromium that can reach `instacart.com`). No code or
+```bash
+sudo .venv/bin/python -m playwright install-deps chromium
+```
+
+**What unblocks it:** installing those libraries, after which a real Chromium
+can reach `instacart.com` from this machine. No code or
 design work is needed first — `BrowserWorker`, `_SITE_ADAPTERS`, and the
 shopping domain/MCP layer are all already built and waiting for exactly this
 one adapter to register itself.
