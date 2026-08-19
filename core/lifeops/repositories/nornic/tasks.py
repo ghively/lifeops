@@ -183,19 +183,35 @@ class NornicTaskRepository:
         return {row["state"]: int(row["total"]) for row in rows if row.get("state")}
 
     async def search(self, query: str, *, limit: int = 25) -> Sequence[Task]:
+        # CONTAINS + ORDER BY + LIMIT in one clause returns one row per text-
+        # index posting on NornicDB, not one per node — a single task came
+        # back seven times (found live, 2026-08-19). Sorting and limiting
+        # through a WITH stage before the projection avoids the broken plan;
+        # DISTINCT is not the fix because this database does not reliably
+        # dedupe aliased columns (see shopping.py's find_lists_containing).
+        # The seen-set is the belt to that suspender: the invariant is one
+        # row per task, and the repository holds it even if the planner
+        # regresses differently next time.
         rows = await self._client.read(
             f"""
             MATCH (t:Task)
             WHERE toLower(t.title) CONTAINS $needle
                OR toLower(coalesce(t.description, '')) CONTAINS $needle
-            RETURN {_RETURN}
+            WITH t
             ORDER BY t.created_at DESC, t.id DESC
             LIMIT $limit
+            RETURN {_RETURN}
             """,
             needle=query.strip().lower(),
             limit=limit,
         )
-        return [_row_to_task(r) for r in rows]
+        seen: set[str] = set()
+        tasks: list[Task] = []
+        for row in rows:
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                tasks.append(_row_to_task(row))
+        return tasks
 
     async def list_related_to_entity(self, entity_id: str) -> builtins.list[Task]:
         """Tasks pointing at the entity, from the property and from ABOUT edges.

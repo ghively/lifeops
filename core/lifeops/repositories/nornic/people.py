@@ -56,18 +56,29 @@ class NornicPersonRepository:
         said ("Gene", "gene hively"), not systems quoting a key.
         """
         needle = name.strip().lower()
+        # CONTAINS + ORDER BY + LIMIT in one clause can return one row per
+        # text-index posting on NornicDB rather than one per node (see
+        # tasks.py's search for the full account). Same WITH restructure,
+        # same seen-set backstop.
         rows = await self._client.read(
             f"""
             MATCH (p:Person)
             WHERE toLower(p.display_name) CONTAINS $needle
                OR any(a IN coalesce(p.aliases, []) WHERE toLower(a) CONTAINS $needle)
-            RETURN {_RETURN}
+            WITH p
             ORDER BY p.display_name ASC
             LIMIT 25
+            RETURN {_RETURN}
             """,
             needle=needle,
         )
-        return [_row_to_person(r) for r in rows]
+        seen: set[str] = set()
+        people: list[Person] = []
+        for row in rows:
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                people.append(_row_to_person(row))
+        return people
 
     async def list_all(self, *, limit: int = 100) -> list[Person]:
         rows = await self._client.read(

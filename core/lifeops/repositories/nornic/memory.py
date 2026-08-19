@@ -273,21 +273,32 @@ class NornicMemoryRepository:
         term_clause = " AND ".join(
             f"toLower(m.content) CONTAINS $term_{i}" for i in range(len(terms))
         )
+        # CONTAINS + ORDER BY + LIMIT in one clause can return one row per
+        # text-index posting on NornicDB rather than one per node (see
+        # tasks.py's search for the full account). Same WITH restructure,
+        # same seen-set backstop.
         rows = await self._client.read(
             f"""
             MATCH (m:Memory)
             WHERE {_filters()}
               AND {term_clause}
-            RETURN {_RETURN}
+            WITH m
             ORDER BY m.importance DESC, m.observed_at DESC, m.id DESC
             LIMIT $limit
+            RETURN {_RETURN}
             """,
             subject_id=subject_id,
             memory_types=[str(t) for t in memory_types] if memory_types else None,
             limit=limit,
             **{f"term_{i}": term for i, term in enumerate(terms)},
         )
-        return [_row_to_memory(r) for r in rows]
+        seen: set[str] = set()
+        memories: list[MemoryRecord] = []
+        for row in rows:
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                memories.append(_row_to_memory(row))
+        return memories
 
     async def list_history(self, memory_id: str) -> list[MemoryRecord]:
         """The whole SUPERSEDES chain a record belongs to, newest first.

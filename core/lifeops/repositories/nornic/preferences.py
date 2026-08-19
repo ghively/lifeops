@@ -153,20 +153,31 @@ class NornicPreferenceRepository:
         return _row_to_preference(rows[0]) if rows else None
 
     async def search(self, query: str, *, limit: int = 25) -> list[Preference]:
+        # CONTAINS + ORDER BY + LIMIT in one clause can return one row per
+        # text-index posting on NornicDB rather than one per node (see
+        # tasks.py's search for the full account). Same WITH restructure,
+        # same seen-set backstop.
         rows = await self._client.read(
             f"""
             MATCH (p:Preference)
             WHERE p.valid_to IS NULL
               AND (toLower(p.key) CONTAINS $needle
                    OR toLower(p.value) CONTAINS $needle)
-            RETURN {_RETURN}
+            WITH p
             ORDER BY p.key ASC
             LIMIT $limit
+            RETURN {_RETURN}
             """,
             needle=query.strip().lower(),
             limit=limit,
         )
-        return [_row_to_preference(r) for r in rows]
+        seen: set[str] = set()
+        found: list[Preference] = []
+        for row in rows:
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                found.append(_row_to_preference(row))
+        return found
 
     async def list_history(self, subject_id: str, key: str) -> list[Preference]:
         rows = await self._client.read(

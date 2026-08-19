@@ -12,7 +12,7 @@ from lifeops.clock import FrozenClock
 from lifeops.core import LifeOpsCore
 from lifeops.domain.people import Person
 from lifeops.domain.preferences import PreferenceDraft
-from lifeops.domain.tasks import TaskDraft
+from lifeops.domain.tasks import TaskDraft, TaskUpdate
 from lifeops.policy import CONSOLE
 from lifeops.repositories.nornic.client import NornicClient
 from lifeops.repositories.nornic.people import NornicPersonRepository
@@ -88,3 +88,33 @@ class TestNornicSearch:
         core, person, label = stack
         results = await core.search(CONSOLE, query=f"searchable {label}")
         assert person.id in {p.id for p in results.people}
+
+    async def test_search_returns_each_match_exactly_once(self, stack) -> None:
+        """One node, one row — even after the node has been written to.
+
+        Found live (2026-08-19, deployment audit): CONTAINS + ORDER BY +
+        LIMIT in a single clause made NornicDB return one row per text-index
+        posting, so a task that had been touched a few times came back seven
+        times from a search that matched it once. The repositories now sort
+        and limit through a WITH stage and dedupe by id; this pins both.
+
+        The task is deliberately written to several times first, because a
+        freshly created node has one posting and never showed the bug —
+        write-count is what "several" stands in for here.
+        """
+        core, person, label = stack
+        task = await core.create_task(
+            CONSOLE,
+            TaskDraft(title=f"Dedupe probe {label}", owner_entity_id=person.id),
+        )
+        for state in ("PLANNED", "READY"):
+            task = await core.update_task(
+                CONSOLE, task_id=task.id, update=TaskUpdate(state=state)
+            )
+
+        for query in (f"dedupe probe {label}", f"DEDUPE {label}", label):
+            results = await core.search(CONSOLE, query=query)
+            ids = [t.id for t in results.tasks]
+            assert len(ids) == len(set(ids)), (
+                f"search({query!r}) returned duplicate task rows: {ids}"
+            )
