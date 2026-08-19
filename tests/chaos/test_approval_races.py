@@ -340,7 +340,13 @@ class TestSafeModeCannotStrandAnAction:
         action in EXECUTING with its approval spent and nothing left able to
         finish it."""
         config = _config(tmp_path)
-        config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
         safe_mode = {"on": False}
 
         class FlippingCalendar(FakeCalendarProvider):

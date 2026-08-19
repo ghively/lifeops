@@ -170,7 +170,13 @@ class TestCrashBetweenCommitAndRecordResult:
             secret_store=InMemorySecretStore(),
             clock=FrozenClock(),
         )
-        config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
         calendar_service = CalendarProviderService(
             config=config,
             secret_store=InMemorySecretStore(),
@@ -255,7 +261,13 @@ class TestRecordActionResultRetry:
             secret_store=InMemorySecretStore(),
             clock=FrozenClock(),
         )
-        config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
         calendar_service = CalendarProviderService(
             config=config,
             secret_store=InMemorySecretStore(),
@@ -324,7 +336,13 @@ class TestRecordActionResultRetry:
             secret_store=InMemorySecretStore(),
             clock=FrozenClock(),
         )
-        config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
         calendar_service = CalendarProviderService(
             config=config,
             secret_store=InMemorySecretStore(),
@@ -521,7 +539,13 @@ class TestCalendarProviderFailure:
             secret_store=InMemorySecretStore(),
             clock=FrozenClock(),
         )
-        config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
         calendar_service = CalendarProviderService(
             config=config,
             secret_store=InMemorySecretStore(),
@@ -569,7 +593,14 @@ class TestEmailProviderFailure:
             clock=FrozenClock(),
         )
         config.update_provider(
-            "email", {"enabled": True, "imap_host": "x", "smtp_host": "x", "username": "u"}
+            "email",
+        {
+            "enabled": True,
+            "imap_host": "x",
+            "smtp_host": "x",
+            "username": "u",
+            "password": "test-password",
+        },
         )
         email_service = EmailProviderService(
             config=config,
@@ -680,7 +711,13 @@ class TestVerificationTemporarilyUnavailable:
             secret_store=InMemorySecretStore(),
             clock=FrozenClock(),
         )
-        config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
         calendar_service = CalendarProviderService(
             config=config,
             secret_store=InMemorySecretStore(),

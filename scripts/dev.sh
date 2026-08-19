@@ -88,15 +88,39 @@ start() {
         >> "$LOG_DIR/lifeops-console.log" 2>&1
     ) &
     echo $! > "$CONSOLE_PID"
-    echo "LifeOps Console starting (pid $(cat "$CONSOLE_PID")) — http://127.0.0.1:$CONSOLE_PORT"
+    # Wait for the port like the Core launch above does — otherwise a console
+    # that died binding its port still reported "starting" and status kept
+    # saying "running" (2026-08-18 audit, P2).
+    for _ in $(seq 1 30); do
+      port_busy "$CONSOLE_PORT" && break
+      alive "$CONSOLE_PID" || break
+      sleep 1
+    done
+    if port_busy "$CONSOLE_PORT"; then
+      echo "LifeOps Console started (pid $(cat "$CONSOLE_PID")) — http://127.0.0.1:$CONSOLE_PORT"
+    else
+      rm -f "$CONSOLE_PID"
+      echo "LifeOps Console failed to start. See $LOG_DIR/lifeops-console.log" >&2
+      exit 1
+    fi
   fi
+}
+
+# Depth-first kill of a whole process tree. pkill -P is single-level: it
+# killed vite (npm's child) but orphaned vite's own esbuild workers
+# (2026-08-18 audit, P2).
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
 }
 
 stop() {
   for pidfile in "$CONSOLE_PID" "$CORE_PID"; do
     if alive "$pidfile"; then
-      pkill -P "$(cat "$pidfile")" 2>/dev/null || true
-      kill "$(cat "$pidfile")" 2>/dev/null || true
+      kill_tree "$(cat "$pidfile")"
     fi
     rm -f "$pidfile"
   done

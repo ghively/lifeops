@@ -58,7 +58,15 @@ def _row_to_item(row: dict[str, Any]) -> ShoppingItem:
         name=row["name"],
         quantity=row.get("quantity") or "1",
         notes=row.get("notes") or "",
-        substitution_allowed=bool(row.get("substitution_allowed", True)),
+        # The alias is always present in record.data() — as None when the
+        # property is absent — so a dict-level default never applies, and
+        # bool(None) inverted the domain default to "no substitutions"
+        # (2026-08-18 audit, P2). None means "not recorded": default True.
+        substitution_allowed=(
+            True
+            if row.get("substitution_allowed") is None
+            else bool(row["substitution_allowed"])
+        ),
         substituted_with=row.get("substituted_with"),
         substitution_reason=row.get("substitution_reason"),
         estimated_price=row.get("estimated_price"),
