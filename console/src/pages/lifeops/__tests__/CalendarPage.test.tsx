@@ -19,6 +19,7 @@ import {
   calendarApi,
   type Appointment,
   type CalendarEvent,
+  type LifeOpsAction,
 } from '@/services/lifeops'
 
 vi.mock('@/services/lifeops', async () => {
@@ -99,6 +100,26 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+function makeAction(id: string): LifeOpsAction {
+  return {
+    id,
+    type: 'book_appointment',
+    status: 'prepared',
+    idempotency_key: 'book_appointment:hash',
+    payload_hash: 'hash',
+    payload: {},
+    task_id: null,
+    target_entity_id: null,
+    created_at: '2026-08-18T00:00:00Z',
+    attempt_count: 0,
+    last_attempt_at: null,
+    external_reference: null,
+    verification_state: 'pending',
+    failure_reason: null,
+    created_by_client: 'lifeops-console',
+  }
+}
+
 describe('Calendar', () => {
   it('shows appointments LifeOps is holding or has booked', async () => {
     renderPage()
@@ -112,11 +133,7 @@ describe('Calendar', () => {
   })
 
   it('requests a booking for a held appointment', async () => {
-    mockedCalendar.book.mockResolvedValue({
-      id: 'action_01',
-      type: 'BOOK_APPOINTMENT',
-      state: 'prepared',
-    } as never)
+    mockedCalendar.book.mockResolvedValue(makeAction('action_01'))
     renderPage()
     await screen.findByText('Electrician visit')
 
@@ -127,11 +144,7 @@ describe('Calendar', () => {
   })
 
   it('cancels an appointment', async () => {
-    mockedCalendar.cancel.mockResolvedValue({
-      id: 'action_02',
-      type: 'BOOK_APPOINTMENT',
-      state: 'prepared',
-    } as never)
+    mockedCalendar.cancel.mockResolvedValue(makeAction('action_02'))
     renderPage()
     await screen.findByText('Electrician visit')
 
@@ -166,9 +179,14 @@ describe('Calendar', () => {
     await userEvent.click(screen.getByRole('button', { name: /^hold$/i }))
 
     await waitFor(() => expect(mockedCalendar.hold).toHaveBeenCalled())
-    expect(mockedCalendar.hold).toHaveBeenCalledWith(
-      expect.objectContaining({ subject: 'Plumber' }),
-    )
+    // The timestamps matter as much as the subject: the audit's
+    // datetime-local bug shipped precisely because this assertion stopped
+    // at the subject. The local input value converts to ISO at submit.
+    expect(mockedCalendar.hold).toHaveBeenCalledWith({
+      subject: 'Plumber',
+      start_at: new Date('2026-08-20T10:00').toISOString(),
+      end_at: new Date('2026-08-20T11:00').toISOString(),
+    })
   })
 
   it('treats no configured calendar provider as absent, not broken', async () => {

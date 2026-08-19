@@ -60,6 +60,16 @@ function ApprovalCard({
         {approval.target_entity_id ?? actionTypeLabel(approval.action_type)}
       </p>
 
+      {approval.action_missing && (
+        <p
+          role="alert"
+          className="mt-3 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300"
+        >
+          The action this approval binds to could not be loaded, so what it
+          would authorise cannot be shown. Do not decide it blind.
+        </p>
+      )}
+
       {payloadEntries.length > 0 && (
         <dl className="mt-3 space-y-1">
           {payloadEntries.map(([key, value]) => (
@@ -108,12 +118,15 @@ function ApprovalCard({
       <div className="mt-4 flex justify-between gap-3">
         <Button
           variant="outline"
-          disabled={pendingDecision}
+          disabled={pendingDecision || approval.action_missing}
           onClick={() => onDecide(false)}
         >
           Decline
         </Button>
-        <Button disabled={pendingDecision} onClick={() => onDecide(true)}>
+        <Button
+          disabled={pendingDecision || approval.action_missing}
+          onClick={() => onDecide(true)}
+        >
           {pendingDecision && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
           Approve
         </Button>
@@ -127,7 +140,7 @@ export function ApprovalsPage() {
 
   const approvalsQuery = useQuery({
     queryKey: ['lifeops', 'approvals'],
-    queryFn: () => approvalsApi.listPending({ limit: 50 }),
+    queryFn: () => approvalsApi.listPending({ limit: 200 }),
     refetchInterval: 15_000,
   })
 
@@ -192,12 +205,18 @@ export function ApprovalsPage() {
         </p>
       ) : (
         <div className="space-y-4">
+          {approvals.length >= 200 && (
+            <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
+              Showing the first 200 pending approvals — older ones exist beyond
+              this list. Decide these to surface the rest.
+            </p>
+          )}
           {approvals.map((approval) => (
             <ApprovalCard
               key={approval.id}
               approval={approval}
               onDecide={(approved) => decide.mutate({ id: approval.id, approved })}
-              pendingDecision={decide.isPending && decide.variables?.id === approval.id}
+              pendingDecision={decide.isPending}
             />
           ))}
         </div>

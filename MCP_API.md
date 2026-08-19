@@ -4,12 +4,27 @@ The portable agent interface. Hermes is the primary consumer; any trusted MCP
 client can connect to the same server and operate on the same personal state,
 subject to its own permissions.
 
-**The server exposes thirty-four tools and three resources.** Phases 0-4
+**The server exposes fifty-two tools and eight resources** (the authoritative
+list is `test_exactly_the_sanctioned_tools` in
+`tests/e2e/test_phase0_exit.py`, which pins the surface exactly). Phases 0-4
 shipped the set documented in detail below: the Phase 0 tools (BUILD_SPEC
 section 49), the memory tools of section 91, the world-graph reads of section
 92, and the durable-work tools of section 51. Phases 7-9 added calendar,
 email, telephony, service-request, and shopping tools, summarised in
-"Phase 7-9 tools" at the end of this document.
+"Phase 7-9 tools" at the end of this document. The self-configuration pass
+(sections 73-76) added `save_workflow_template`, `list_workflow_templates`,
+`due_routines`, `delete_workflow_template`, and `propose_self_change` — the
+first two of which write durable routine state; `propose_self_change` and
+`request_code_change` are pure gates that write nothing themselves. The
+2026-08-18 audit follow-up added the shopping read-back pair
+(`list_shopping_lists`, `get_shopping_list`) and the section-50 read tools,
+and gave `remember` (`entity_ids`, `source_id`), `create_task`/`update_task`
+(`related_entity_ids`), `save_preference` (`importance`),
+`create_calendar_hold` (`hold_minutes`), `search_memory` (`memory_types`),
+and `list_bills` (`statuses`) the parameters their HTTP counterparts already
+had. Beyond the three resources documented below, the server also serves
+`lifeops://household`, `lifeops://approvals`, `lifeops://entity/{id}`,
+`lifeops://task/{id}`, and `lifeops://provider/{id}`.
 
 World writes over MCP are narrow and named: `record_provider`,
 `record_asset`, and `create_service_request` are the only tools that spend

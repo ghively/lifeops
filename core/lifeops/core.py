@@ -40,7 +40,6 @@ from lifeops.domain.approvals import (
     ApprovalStatus,
     authorises,
 )
-from lifeops.domain.approvals import consume as consume_approval
 from lifeops.domain.approvals import decide as decide_approval
 from lifeops.domain.approvals import request as request_approval
 from lifeops.domain.audit import AuditRecord
@@ -191,6 +190,7 @@ from lifeops.events import (
     MEMORY_CHANGED,
     PERSON_CHANGED,
     PREFERENCE_CHANGED,
+    SHOPPING_CHANGED,
     TASK_CHANGED,
     WAITING_CHANGED,
     WORLD_CHANGED,
@@ -869,8 +869,43 @@ class ActionService:
         candidate = prepare_action(draft, now=now, client_id=client_id)
 
         existing = await self._actions.get_by_idempotency_key(candidate.idempotency_key)
-        if existing is not None and existing.is_live:
-            return existing
+        if existing is not None:
+            if existing.is_live:
+                return existing
+            if existing.status in (
+                ActionStatus.EXECUTING,
+                ActionStatus.EXECUTED,
+                ActionStatus.VERIFIED,
+            ):
+                # The external commitment already happened (or is in flight)
+                # for this exact intent. Section 61: a blind retry gets the
+                # record of what happened, never a second chance to commit.
+                return existing
+            # FAILED or CANCELLED: a fresh attempt at the same intent
+            # re-opens the SAME outbox record — ``attempt_count`` exists for
+            # exactly this — rather than minting a second Action under one
+            # idempotency key, which NornicDB's uniqueness constraint (the
+            # section 61 backstop) refuses. The fake refuses it too now, so
+            # this path is what every retry-after-failure flow exercises.
+            revived = existing.model_copy(deep=True)
+            revived.status = candidate.status
+            revived.failure_reason = None
+            revived.external_reference = None
+            with operation(
+                "action.prepare",
+                action_id=revived.id,
+                action_type=str(revived.type),
+                client_id=client_id,
+            ):
+                saved = await self._actions.update(revived)
+            if saved.status is ActionStatus.NEEDS_APPROVAL:
+                # Any earlier approval was consumed, declined, or superseded;
+                # a re-opened intent needs a fresh, decidable card.
+                approval = request_approval(saved, now=now, requested_by=client_id)
+                await self._approvals.create(approval)
+                self._notify(APPROVAL_CHANGED, approval.id)
+            self._notify(ACTION_CHANGED, saved.id)
+            return saved
 
         with operation(
             "action.prepare",
@@ -878,7 +913,19 @@ class ActionService:
             action_type=str(candidate.type),
             client_id=client_id,
         ):
-            created = await self._actions.create(candidate)
+            try:
+                created = await self._actions.create(candidate)
+            except RepositoryError:
+                # The uniqueness constraint fired anyway: a concurrent
+                # prepare of the same intent won the race between our
+                # pre-check and this write. Converge on the winner's record
+                # rather than surfacing a storage error.
+                raced = await self._actions.get_by_idempotency_key(
+                    candidate.idempotency_key
+                )
+                if raced is None:
+                    raise
+                return raced
 
         if created.status is ActionStatus.NEEDS_APPROVAL:
             approval = request_approval(created, now=now, requested_by=client_id)
@@ -909,6 +956,43 @@ class ActionService:
                 f"no such approval: {approval_id}", approval_id=approval_id
             )
         now = now_iso(self._clock)
+
+        action = await self._actions.get(approval.action_id)
+        if action is not None and approval.status is ApprovalStatus.PENDING:
+            # Both guards run BEFORE the decision is persisted, so a refusal
+            # leaves nothing half-recorded.
+            #
+            # A card whose hash no longer matches the action's payload is a
+            # stale card: ``update_payload`` supersedes the old card when it
+            # issues a new one, but a card written before that rule (or by a
+            # racing process) must still be undecidable — approving it would
+            # move the action on the strength of a payload the human was
+            # never shown, and declining it would cancel an action whose
+            # *current* card the human may be about to approve.
+            if approval.payload_hash != action.payload_hash:
+                raise ConflictError(
+                    f"approval {approval.id} was superseded by a payload "
+                    "change; decide the action's current approval instead",
+                    approval_id=approval.id,
+                    action_id=action.id,
+                    reason="approval_superseded",
+                )
+            # And a decision may only move an action that is actually
+            # awaiting one. Without this, approving a leftover card
+            # resurrected a CANCELLED action back to APPROVED — an explicit
+            # decline undone by a second click on a different card.
+            if (
+                approval.expires_at > now
+                and action.status is not ActionStatus.NEEDS_APPROVAL
+            ):
+                raise ConflictError(
+                    f"action {action.id} is {action.status}; deciding this "
+                    "approval can no longer move it",
+                    approval_id=approval.id,
+                    action_id=action.id,
+                    reason="action_not_awaiting_approval",
+                )
+
         decided = decide_approval(approval, approved=approved, by=by, now=now)
 
         with operation(
@@ -963,7 +1047,21 @@ class ActionService:
                     action_id=action.id,
                     reason="approval_required",
                 )
-            await self._approvals.update(consume_approval(approval, now=now))
+            # Spend the approval with a conditional write, not a blind update:
+            # two concurrent commits (Console double-click, an HTTP retry, the
+            # Console and the MCP process racing) both pass ``authorises``
+            # above, but only one wins this compare-and-set — the loser gets
+            # None here and must not reach the external call. This is what
+            # makes section 57's "an approval authorises exactly one commit"
+            # true under concurrency, not just sequentially.
+            consumed = await self._approvals.consume(approval.id, consumed_at=now)
+            if consumed is None:
+                raise ConflictError(
+                    f"the approval for action {action.id} was already spent "
+                    "by a concurrent commit",
+                    action_id=action.id,
+                    reason="approval_already_consumed",
+                )
             self._notify(APPROVAL_CHANGED, approval.id)
 
         with operation(
@@ -1012,6 +1110,18 @@ class ActionService:
         action.idempotency_key = make_idempotency_key(action.type, payload)
         if action.type in ACTIONS_REQUIRING_APPROVAL:
             action.status = ActionStatus.NEEDS_APPROVAL
+            # The card for the *old* payload must stop being decidable the
+            # moment a new one exists — otherwise the Approvals screen shows
+            # two live cards for one action, and declining the stale one
+            # cancels an action whose current card the human may approve a
+            # moment later (which used to resurrect it). EXPIRED is the
+            # honest status: nobody decided it; it aged out of relevance.
+            previous = await self._approvals.get_for_action(action.id)
+            if previous is not None and previous.status is ApprovalStatus.PENDING:
+                superseded = previous.model_copy(deep=True)
+                superseded.status = ApprovalStatus.EXPIRED
+                await self._approvals.update(superseded)
+                self._notify(APPROVAL_CHANGED, superseded.id)
             approval = request_approval(action, now=now, requested_by=client_id)
             await self._approvals.create(approval)
             self._notify(APPROVAL_CHANGED, approval.id)
@@ -1032,6 +1142,18 @@ class ActionService:
     ) -> Action:
         """Persist what the external system said (section 60 step 3)."""
         action = await self.get(action_id)
+        if action.status is not ActionStatus.EXECUTING:
+            # The same discipline every other status change already has
+            # (record_attempt via may_execute, verify via its own check): a
+            # result can only be recorded for an attempt in flight. Without
+            # this, a stray call could rewrite a CANCELLED or VERIFIED
+            # action's record of what actually happened.
+            raise ConflictError(
+                f"action {action.id} is {action.status}; only an EXECUTING "
+                "action can have a result recorded",
+                action_id=action.id,
+                reason="not_executing",
+            )
         action.status = ActionStatus.EXECUTED if succeeded else ActionStatus.FAILED
         action.external_reference = external_reference
         action.failure_reason = failure_reason
@@ -1721,8 +1843,15 @@ class LifeOpsCore:
                 shopping=shopping,
                 browser=browser,
                 clock=self._clock,
+                # SHOPPING_CHANGED, not WORLD_CHANGED: the constant existed
+                # since Phase 9 but nothing ever published it, so a Console
+                # subscriber written against the documented name waited
+                # forever (2026-08-18 audit, P2). The Console invalidates
+                # its shopping and world queries on this event.
                 publish=(
-                    lambda entity_id: self._publish(WORLD_CHANGED, entity_id=entity_id)
+                    lambda entity_id: self._publish(
+                        SHOPPING_CHANGED, entity_id=entity_id
+                    )
                 ),
             )
             if shopping is not None and browser is not None
@@ -2713,20 +2842,46 @@ class LifeOpsCore:
         # Without this, approving the card left the payee unusable and the
         # Bills screen's button left the card pending forever: two halves of
         # one gate that never spoke (section 72).
-        if approval.status is ApprovalStatus.APPROVED:
+        # From here on the decision is already persisted, so nothing below may
+        # turn into an error response: the Console would see a failure for a
+        # decision that actually landed. ``ActionService.get`` raises for a
+        # missing action (it never returns None — the old ``is not None``
+        # guards were dead code), so catch it and log instead.
+        try:
             action = await self._actions().get(approval.action_id)
+        except NotFoundError:
+            logger.warning(
+                "approval %s was decided but its action %s no longer exists",
+                approval.id,
+                approval.action_id,
+            )
+            action = None
+        if approval.status is ApprovalStatus.APPROVED:
             if action is not None and action.type is ActionType.ADD_PAYEE:
                 await self._complete_payee_approval(client, action)
-        elif approval.status is ApprovalStatus.DECLINED:
-            action = await self._actions().get(approval.action_id)
-            if action is not None and action.type is ActionType.SUBMIT_GROCERY_ORDER:
-                # The cart still exists; only the order was refused. Without
-                # this the list stayed SUBMITTING forever — every operation
-                # refuses that state and nothing else exits it.
-                list_id = action.payload.get("shopping_list_id")
-                if list_id:
+        elif (
+            approval.status is ApprovalStatus.DECLINED
+            and action is not None
+            and action.type is ActionType.SUBMIT_GROCERY_ORDER
+        ):
+            # The cart still exists; only the order was refused. Without
+            # this the list stayed SUBMITTING forever — every operation
+            # refuses that state and nothing else exits it. Guarded: if
+            # the browser provider was unconfigured between prepare and
+            # decline, the revert is impossible bookkeeping, not a reason
+            # to report the recorded decline as failed.
+            list_id = action.payload.get("shopping_list_id")
+            if list_id:
+                try:
                     await self._shopping().revert_submitting(
                         str(list_id), now=now_iso(self._clock)
+                    )
+                except ConfigurationError as exc:
+                    logger.warning(
+                        "declined order %s recorded, but the cart revert "
+                        "failed: %s",
+                        action.id,
+                        exc,
                     )
         return approval
 
@@ -2797,7 +2952,14 @@ class LifeOpsCore:
     ) -> Action:
         """Persist what the external system returned (section 60 step 3)."""
         action = await self._actions().get(action_id)
-        self._require(client, capability_for_action(str(action.type)))
+        # Deliberately exempt from safe mode: this is the bookkeeping write
+        # for an effect that has already happened outside. Safe mode exists
+        # to stop NEW effects; refusing this write cannot un-send the email —
+        # it can only strand the action in EXECUTING with its approval spent
+        # and no surface left to finish it. The capability check itself
+        # stays: only a client entitled to the action type may write its
+        # outcome.
+        require(client, capability_for_action(str(action.type)), safe_mode=False)
         saved = await self._record_result_with_retry(
             action_id,
             succeeded=succeeded,
@@ -2949,15 +3111,33 @@ class LifeOpsCore:
         """
         objective = objective_from_payload(action.payload)
         result = await self._telephony().dial(objective)
+        # The external effect has happened the moment ``dial`` returns. From
+        # here on, nothing may raise past this frame: a bookkeeping failure
+        # (say, the service request went terminal while the call was being
+        # placed and its state machine refuses the update) must degrade to a
+        # note, not bubble into execute_action's failure path — which would
+        # record a call that WAS placed as FAILED, discard the provider's
+        # call reference, and invite a retry that dials the provider twice.
+        bookkeeping_note = ""
         service_request_id = action.payload.get("service_request_id")
         if service_request_id:
-            await self._apply_call_result(client, str(service_request_id), result)
+            try:
+                await self._apply_call_result(client, str(service_request_id), result)
+            except LifeOpsError as exc:
+                logger.warning(
+                    "call %s placed but its service-request bookkeeping failed: %s",
+                    result.external_reference,
+                    exc,
+                )
+                bookkeeping_note = (
+                    f"; service-request update failed after the call: {exc}"
+                )
         # Only the provider's reference is an external reference. Substituting
         # the idempotency key wrote an internal identifier into the outbox as
         # if the outside world had confirmed something.
         message = (
             f"call {'connected' if result.connected else 'did not connect'}; "
-            f"objective_met={result.objective_met}"
+            f"objective_met={result.objective_met}{bookkeeping_note}"
         )
         return result.external_reference, message
 
@@ -3279,6 +3459,19 @@ class LifeOpsCore:
         # a phone number on file) leaked by a read that ran before the check.
         self._require(client, capability_for_action(str(action_type)))
         request = await self._service_requests().get(service_request_id)
+        # Dry-run the state transition BEFORE preparing the executable action.
+        # PLACE_PHONE_CALL is R2 — prepared means dialable — so a refusal
+        # below must leave nothing behind: preparing first meant a request in
+        # the wrong state got a 422 while an orphan, executable call action
+        # sat live in the outbox, unreferenced by the request that would have
+        # received its result. The result of this call is discarded; the real
+        # advance happens in record_contact once the action exists.
+        record_service_contact(
+            request,
+            action_id="transition-validation",
+            provider_entity_id=provider_entity_id,
+            now=now_iso(self._clock),
+        )
         to_number = await self._phone_number_for_provider(provider_entity_id)
         call_objective = build_call_objective(
             objective=objective,
@@ -3953,6 +4146,18 @@ class LifeOpsCore:
                 bill_id=bill_id,
             )
         bill = await self.get_bill(client, bill_id=bill_id)
+        if not bill.is_payable:
+            # ``may_pay`` guards preparing a payment; settling needs the same
+            # gate. Re-settling a PAID bill silently replaced ``paid_at`` and
+            # the provider confirmation — evidence, per section 53 — and
+            # settling a DISPUTED bill is exactly the "user silently paying
+            # something they meant to challenge" that status exists to stop.
+            raise ConflictError(
+                f"bill {bill.id} is {bill.status} and cannot be settled",
+                bill_id=bill.id,
+                status=str(bill.status),
+                reason="bill_not_payable",
+            )
         bill.status = BillStatus.PAID
         bill.paid_at = now_iso(self._clock)
         bill.external_reference = external_reference
@@ -4088,7 +4293,9 @@ class LifeOpsCore:
             created_at=now_iso(self._clock),
             requested_by=client.client_id,
         )
-        self._write_change_request(request)
+        # File I/O off the event loop — the one blocking write in an async
+        # path the audit flagged (P2).
+        await asyncio.to_thread(self._write_change_request, request)
         await self.audit(
             client,
             result="filed",
@@ -4111,9 +4318,6 @@ class LifeOpsCore:
         path.write_text(json.dumps(request.model_dump(), indent=2), encoding="utf-8")
 
     # --- search -------------------------------------------------------------
-
-
-
 
     async def search(
         self, client: ClientIdentity, *, query: str, limit: int = 10

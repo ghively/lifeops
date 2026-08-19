@@ -416,11 +416,18 @@ class NornicMemoryRepository:
     async def invalidate(
         self, memory_id: str, *, at: str, reason: str | None = None
     ) -> MemoryRecord | None:
-        await self._client.write(
-            "MATCH (m:Memory {id: $id}) WHERE m.valid_to IS NULL "
-            "SET m.valid_to = $at, m.invalidation_reason = $reason",
+        rows = await self._client.write(
+            f"MATCH (m:Memory {{id: $id}}) WHERE m.valid_to IS NULL "
+            f"SET m.valid_to = $at, m.invalidation_reason = $reason "
+            f"RETURN {_RETURN}",
             id=memory_id,
             at=at,
             reason=reason,
         )
+        if rows:
+            # The write's own row, not a follow-up read — which can be stale
+            # right after an auto-commit write (CLAUDE.md) and report the
+            # record still valid after a successful invalidation.
+            return _row_to_memory(rows[0])
+        # Nothing matched: already invalidated, or missing. The read answers.
         return await self.get(memory_id)

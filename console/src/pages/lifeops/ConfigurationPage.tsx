@@ -647,7 +647,12 @@ function VoiceModeCard() {
     },
   })
 
-  const current = save.variables ?? systemQuery.data?.voice_mode ?? 'quick_cloud'
+  // Optimistic only while the save is actually in flight: after onError,
+  // save.variables persists, so using it unconditionally kept rendering the
+  // rejected mode as active with no error shown (2026-08-18 audit).
+  const current = (save.isPending ? save.variables : undefined)
+    ?? systemQuery.data?.voice_mode
+    ?? 'quick_cloud'
   const status = statusQuery.data
 
   return (
@@ -674,6 +679,12 @@ function VoiceModeCard() {
           </button>
         ))}
       </div>
+      {save.isError && (
+        <p className="text-xs text-destructive" role="alert">
+          The voice mode was not changed:{' '}
+          {save.error instanceof Error ? save.error.message : 'the server refused it.'}
+        </p>
+      )}
       {status && (
         <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
           <p>

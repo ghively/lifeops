@@ -104,11 +104,26 @@ class StubContainer:
         )
 
     def enable_calendar(self) -> None:
-        self.config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        self.config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
 
     def enable_email(self) -> None:
         self.config.update_provider(
-            "email", {"enabled": True, "imap_host": "x", "smtp_host": "x", "username": "u"}
+            "email",
+            {
+                "enabled": True,
+                "imap_host": "x",
+                "smtp_host": "x",
+                "username": "u",
+                # required secret since the 2026-08-18 audit's P2 pass — an
+                # empty credential cannot log in.
+                "password": "test-password",
+            },
         )
 
     async def startup(self) -> None:

@@ -200,6 +200,44 @@ rule 3).
 
 ---
 
+## 5. The 2026-08-18 full-audit backlog
+
+A complete code review and audit
+([docs/audits/2026-08-18-full-codebase-audit.md](audits/2026-08-18-full-codebase-audit.md))
+swept the whole repository. Its eight P0 findings were **fixed the same
+day**, and its P1 and P2 backlogs were **fixed the day after** — the
+disposition notes at the top of that document record all three passes item
+by item. What remains open:
+
+- **One qualified P2 remnant:** `nornicdb.sh` still passes the admin
+  password as a flag by default (visible in `/proc/*/cmdline`), because
+  upstream's docs never name the admin-password env var and this sandbox
+  cannot run the binary to verify. The script already exports
+  `NORNICDB_ADMIN_PASSWORD` alongside it — verify one start on a real
+  deployment with `LIFEOPS_NORNIC_PASSWORD_VIA_ENV=1`, then make that the
+  default and mirror it in the systemd unit.
+- **Docs corrections (beyond what the fixes already touched):**
+  DATA_MODEL.md's two missing phases of schema (bills/payees, workflow
+  templates, shopping items) and stale storage narratives;
+  HERMES_INTEGRATION.md's stale permission table; ARCHITECTURE.md's
+  incomplete capability table; TESTING.md's suite table and stale
+  `test-fast` description; OPERATIONS.md's wrong emergency-stop route;
+  CONFIGURATION.md's stale fresh-deployment states.
+- **One deliberate policy decision, parked in SECURITY.md:** phone-call
+  destinations are model-influenced (a provider `phone` fact Hermes can
+  write) while calls stay R2 per BUILD_SPEC section 101 — decide between
+  accepting, reclassifying, or a number allowlist *before* enabling real
+  telephony credentials.
+- **Live-NornicDB verification:** the waiting-lease claim's and approval
+  consume's conditional-write atomicity follow the same pattern, but only a
+  concurrent test against a real NornicDB can prove the isolation
+  semantics; `make test-e2e` plus a purpose-built race test is the way.
+- **Operational, outside the repo:** the GitHub Actions runner/billing
+  failure — no CI run has ever executed; until that is fixed at the account
+  level, `make check` is the only real gate.
+
+---
+
 ## What is *not* on this list
 
 Everything else BUILD_SPEC describes — the eleven phases, the MCP surface,

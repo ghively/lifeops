@@ -109,7 +109,13 @@ class StubContainer:
         )
 
     def enable_calendar(self) -> None:
-        self.config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+        self.config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
 
     def enable_telephony(self) -> None:
         # account_sid/from_number/auth_token are now required fields

@@ -29,7 +29,17 @@ _AUTHORITY: dict[PreferenceSource, int] = {
 
 
 def authority_of(source: PreferenceSource) -> int:
-    return _AUTHORITY.get(source, 0)
+    """The rank of a source. Unknown sources raise rather than defaulting:
+    the old ``.get(source, 0)`` silently ranked a future enum member below
+    AGENT *and* let two of them supersede each other (0 >= 0) — a quiet
+    landing on the permissive side, which is exactly what
+    ``risk_for_action`` refuses for the same reason."""
+    try:
+        return _AUTHORITY[source]
+    except KeyError:
+        raise ValueError(
+            f"no authority declared for preference source {source!r}"
+        ) from None
 
 
 def may_supersede(

@@ -195,11 +195,11 @@ class NornicWaitingRepository:
         # is the whole race guard (section 55). A row comes back only when
         # this call is the one that took the lease.
         rows = await self._client.write(
-            """
-            MATCH (w:WaitingItem {id: $id})
+            f"""
+            MATCH (w:WaitingItem {{id: $id}})
             WHERE w.lease_until IS NULL OR w.lease_until <= $now
             SET w.lease_owner = $owner, w.lease_until = $until
-            RETURN w.id AS id
+            RETURN {_RETURN}
             """,
             id=waiting_id,
             owner=owner,
@@ -208,7 +208,11 @@ class NornicWaitingRepository:
         )
         if not rows:
             return None
-        return await self.get(waiting_id)
+        # Built from the write's own returned row, never a follow-up read:
+        # CLAUDE.md's visibility quirk means a read issued straight after
+        # this auto-commit write can be stale, handing the winner an item
+        # whose lease fields are the pre-claim values.
+        return _row_to_item(rows[0])
 
     async def create(self, item: WaitingItem) -> WaitingItem:
         statements: list[tuple[str, dict[str, Any]]] = [(_WRITE, _write_params(item))]
@@ -241,6 +245,20 @@ class NornicWaitingRepository:
             entity_edge = _entity_edge_statement(item)
             if entity_edge is not None:
                 statements.append(entity_edge)
+
+        # And the same again for the owning task's incoming edge: without
+        # this branch, moving an item to another task updated the property
+        # (reads stayed correct — list_for_task uses it) but left the graph
+        # permanently showing the item blocking the old task, with no edge
+        # from the new one (2026-08-18 audit, P2).
+        if existing.task_id != item.task_id:
+            statements.append(
+                (
+                    "MATCH (:Task)-[r:WAITING_ON]->(w:WaitingItem {id: $id}) DELETE r",
+                    {"id": item.id},
+                )
+            )
+            statements.append(_task_edge_statement(item))
 
         await self._client.write_many(statements)
         stored = await self.get(item.id)

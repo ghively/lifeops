@@ -109,6 +109,10 @@ export function SearchPage() {
         </p>
       ) : results ? (
         <div className="space-y-6">
+          <p className="text-xs text-muted-foreground">
+            Each category shows its top 10 matches — refine the query if what
+            you need is not here.
+          </p>
           {results.people.length > 0 && (
             <section className="space-y-2">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
