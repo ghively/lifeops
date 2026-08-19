@@ -1,9 +1,10 @@
 /**
  * LifeOps Console navigation (BUILD_SPEC section 10).
  *
- * The section structure is fixed by the spec. Entries whose phase has not
- * shipped are shown dimmed with their phase number rather than hidden, so the
- * shape of the Console stays stable as phases land.
+ * The section structure is fixed by the spec. Every entry is live: all
+ * eleven phases shipped, so the phase-gating this component once carried
+ * (dimmed entries with a phase badge) is gone — it was still telling users
+ * that working screens had not arrived (2026-08-18 audit).
  */
 
 import { Link, useLocation } from 'react-router-dom'
@@ -35,8 +36,6 @@ interface NavItem {
   label: string
   href: string
   icon: typeof Home
-  /** The phase that makes this entry functional. 0 means it works now. */
-  phase: number
 }
 
 interface NavSection {
@@ -48,44 +47,44 @@ const SECTIONS: NavSection[] = [
   {
     label: null,
     items: [
-      { label: 'Today', href: '/', icon: Home, phase: 0 },
-      { label: 'Needs Attention', href: '/needs-attention', icon: AlertCircle, phase: 0 },
-      { label: 'Approvals', href: '/approvals', icon: ShieldCheck, phase: 0 },
-      { label: 'Actions', href: '/actions', icon: Send, phase: 0 },
-      { label: 'Waiting', href: '/waiting', icon: Clock, phase: 0 },
-      { label: 'Search', href: '/search', icon: Search, phase: 0 },
+      { label: 'Today', href: '/', icon: Home },
+      { label: 'Needs Attention', href: '/needs-attention', icon: AlertCircle },
+      { label: 'Approvals', href: '/approvals', icon: ShieldCheck },
+      { label: 'Actions', href: '/actions', icon: Send },
+      { label: 'Waiting', href: '/waiting', icon: Clock },
+      { label: 'Search', href: '/search', icon: Search },
     ],
   },
   {
     label: 'Life',
     items: [
-      { label: 'Tasks', href: '/tasks', icon: CheckSquare, phase: 0 },
-      { label: 'Bills', href: '/bills', icon: Receipt, phase: 0 },
-      { label: 'Calendar', href: '/calendar', icon: Calendar, phase: 7 },
+      { label: 'Tasks', href: '/tasks', icon: CheckSquare },
+      { label: 'Bills', href: '/bills', icon: Receipt },
+      { label: 'Calendar', href: '/calendar', icon: Calendar },
     ],
   },
   {
     label: 'World',
     items: [
-      { label: 'World', href: '/world', icon: Globe, phase: 3 },
-      { label: 'Knowledge', href: '/knowledge', icon: FileText, phase: 1 },
-      { label: 'Files', href: '/files', icon: Folder, phase: 1 },
-      { label: 'Memory', href: '/memory', icon: Brain, phase: 0 },
+      { label: 'World', href: '/world', icon: Globe },
+      { label: 'Knowledge', href: '/knowledge', icon: FileText },
+      { label: 'Files', href: '/files', icon: Folder },
+      { label: 'Memory', href: '/memory', icon: Brain },
     ],
   },
   {
     label: 'Hermes',
     items: [
-      { label: 'Hermes', href: '/hermes', icon: Bot, phase: 1 },
-      { label: 'Routines', href: '/routines', icon: Repeat, phase: 0 },
-      { label: 'Activity', href: '/activity', icon: Activity, phase: 0 },
+      { label: 'Hermes', href: '/hermes', icon: Bot },
+      { label: 'Routines', href: '/routines', icon: Repeat },
+      { label: 'Activity', href: '/activity', icon: Activity },
     ],
   },
   {
     label: 'System',
     items: [
-      { label: 'Configuration', href: '/configuration', icon: Settings2, phase: 0 },
-      { label: 'System', href: '/system', icon: Settings, phase: 0 },
+      { label: 'Configuration', href: '/configuration', icon: Settings2 },
+      { label: 'System', href: '/system', icon: Settings },
     ],
   },
 ]
@@ -129,33 +128,22 @@ export function LifeOpsSidebar({
               )}
               {section.items.map((item) => {
                 const active = isActive(pathname, item.href)
-                const pending = item.phase > 0
                 const Icon = item.icon
                 return (
                   <Link
                     key={item.href}
                     to={item.href}
                     onClick={onNavigate}
-                    title={
-                      pending
-                        ? `${item.label} — arrives in phase ${item.phase}`
-                        : item.label
-                    }
+                    title={item.label}
                     className={cn(
                       'flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors',
                       active
                         ? 'bg-muted font-medium text-foreground'
                         : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
-                      pending && !active && 'opacity-50',
                     )}
                   >
                     <Icon className="h-4 w-4 shrink-0" />
                     {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
-                    {!collapsed && pending && (
-                      <span className="text-[10px] tabular-nums text-muted-foreground">
-                        P{item.phase}
-                      </span>
-                    )}
                   </Link>
                 )
               })}
@@ -166,7 +154,7 @@ export function LifeOpsSidebar({
 
       {!collapsed && (
         <div className="border-t border-border/60 px-4 py-3 text-[11px] text-muted-foreground">
-          Phase 1 · Console foundation
+          All phases complete
         </div>
       )}
     </nav>

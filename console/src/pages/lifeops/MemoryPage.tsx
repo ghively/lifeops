@@ -610,8 +610,13 @@ export function MemoryPage() {
   const trimmedQuery = query.trim()
   // Preferences have no search integration here (they have no search
   // endpoint of their own in this screen) — free text only ever narrows the
-  // memory views, so it's disabled while "Preferences" is active.
-  const searching = trimmedQuery.length > 0 && view !== 'preferences'
+  // memory views, so it's disabled while "Preferences" is active. The
+  // invalidated view never switches to server search either: recall covers
+  // *current* records only, so searching there showed current memories
+  // under the "Invalidated" chip — the opposite of what the view promises
+  // (2026-08-18 audit). It filters the listed history locally instead.
+  const searching =
+    trimmedQuery.length > 0 && view !== 'preferences' && view !== 'invalidated'
 
   const listQuery = useQuery({
     queryKey: ['lifeops', 'memory', 'list', view],
@@ -637,12 +642,24 @@ export function MemoryPage() {
   })
 
   const activeQuery = view === 'preferences' ? preferencesQuery : searching ? searchQuery : listQuery
+  const viewType = VIEW_MEMORY_TYPE[view] as MemoryType | undefined
   const memories =
     view === 'preferences'
       ? []
-      : ((searching ? searchQuery.data?.memories : listQuery.data?.memories) ?? []).filter(
-          (memory) => sourceFilter === 'all' || memory.source_type === sourceFilter,
-        )
+      : ((searching ? searchQuery.data?.memories : listQuery.data?.memories) ?? [])
+          // Server search has no type filter, so a typed view (Episodic,
+          // Procedures, …) applies its type to the results here — results
+          // from other types no longer appear under the active chip.
+          .filter((memory) => !searching || !viewType || memory.type === viewType)
+          .filter(
+            (memory) =>
+              view !== 'invalidated' ||
+              !trimmedQuery ||
+              memory.content.toLowerCase().includes(trimmedQuery.toLowerCase()),
+          )
+          .filter(
+            (memory) => sourceFilter === 'all' || memory.source_type === sourceFilter,
+          )
   const preferences =
     view === 'preferences'
       ? (preferencesQuery.data?.preferences ?? []).filter(
@@ -687,6 +704,12 @@ export function MemoryPage() {
             className="pl-8"
             disabled={view === 'preferences'}
           />
+          {view === 'invalidated' && trimmedQuery.length > 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Filtering the invalidated history locally — server search covers
+              current memories only.
+            </p>
+          )}
         </div>
         <select
           className="rounded-md border border-border bg-background px-2 py-1 text-sm"

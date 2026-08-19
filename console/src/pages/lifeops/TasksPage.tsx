@@ -177,6 +177,10 @@ export function LifeOpsTasksPage() {
   })
 
   const tasks = tasksQuery.data?.tasks ?? []
+  // The server's total counts every task; the list is capped at 200. Items
+  // past the cap were silently invisible with no cue (2026-08-18 audit).
+  const totalTasks = tasksQuery.data?.total ?? tasks.length
+  const truncated = totalTasks > tasks.length
 
   const visible = useMemo(() => {
     const active = FILTERS.find((f) => f.id === filter)
@@ -258,6 +262,13 @@ export function LifeOpsTasksPage() {
           </button>
         ))}
       </div>
+
+      {truncated && (
+        <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
+          Showing {tasks.length} of {totalTasks} tasks — the rest exist but are
+          beyond this page&apos;s cap.
+        </p>
+      )}
 
       {tasksQuery.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

@@ -179,7 +179,17 @@ class LocalASRProvider:
             return cached
         from faster_whisper import WhisperModel
 
-        model = WhisperModel(self._model, device=self._device)
+        # faster-whisper/CTranslate2 accept device in {"cpu","cuda","auto"}
+        # with the GPU ordinal as a separate device_index — the registry's
+        # "cuda:0"/"cuda:1" options (torch's spelling, which the Kokoro TTS
+        # provider normalizes via _kokoro_device) raise if passed through
+        # verbatim, so the default GPU selection could never load.
+        device, _, index = (self._device or "auto").partition(":")
+        model = WhisperModel(
+            self._model,
+            device=device or "auto",
+            device_index=int(index) if index.isdigit() else 0,
+        )
         with _ASR_CACHE_LOCK:
             _ASR_MODEL_CACHE[key] = model
         return model
@@ -354,31 +364,58 @@ class LocalTTSProvider:
         voice = options.voice_id or self._voice or _DEFAULT_KOKORO_VOICE
         speed = options.speed if options.speed is not None else self._speed
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[Any] = asyncio.Queue()
+        # Bounded, with real backpressure: the old unbounded put_nowait let
+        # the worker synthesize the whole text at generation speed into
+        # memory, and an abandoned consumer left the thread running to the
+        # end regardless (2026-08-18 audit, P2). The worker now blocks on
+        # queue.put until the consumer drains, and ``stop`` ends it early
+        # when the consumer walks away.
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=4)
         sentinel = object()
+        stop = threading.Event()
+
+        def _put(item: Any) -> bool:
+            try:
+                asyncio.run_coroutine_threadsafe(queue.put(item), loop).result(
+                    timeout=60
+                )
+                return True
+            except Exception:
+                return False
 
         def _produce() -> None:
             try:
                 pipeline = self._load_pipeline_sync()
                 for _graphemes, _phonemes, audio in pipeline(text, voice=voice, speed=speed):
+                    if stop.is_set():
+                        return
                     wav_bytes = _encode_wav(_to_numpy_audio(audio), _KOKORO_SAMPLE_RATE_HZ)
-                    loop.call_soon_threadsafe(queue.put_nowait, wav_bytes)
+                    if stop.is_set() or not _put(wav_bytes):
+                        return
             except Exception as exc:
-                loop.call_soon_threadsafe(queue.put_nowait, exc)
+                if not stop.is_set():
+                    _put(exc)
             finally:
-                loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+                if not stop.is_set():
+                    _put(sentinel)
 
         thread = threading.Thread(target=_produce, daemon=True)
         thread.start()
-        while True:
-            item = await queue.get()
-            if item is sentinel:
-                break
-            if isinstance(item, Exception):
-                raise ProviderError(
-                    f"local TTS streaming failed: {item}", provider="local_tts"
-                ) from item
-            yield item
+        try:
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                if isinstance(item, Exception):
+                    raise ProviderError(
+                        f"local TTS streaming failed: {item}", provider="local_tts"
+                    ) from item
+                yield item
+        finally:
+            stop.set()
+            # Wake a producer blocked mid-put so it can see the stop flag.
+            while not queue.empty():
+                queue.get_nowait()
 
     async def list_voices(self) -> list[Voice]:
         healthy, _ = await self.health()

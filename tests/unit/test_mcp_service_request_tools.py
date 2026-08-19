@@ -118,7 +118,13 @@ def telephony_service(
 @pytest.fixture
 def calendar_service(config_service: ConfigurationService) -> CalendarProviderService:
     fake_calendar = FakeCalendarProvider()
-    config_service.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+    config_service.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
     return CalendarProviderService(
         config=config_service,
         secret_store=InMemorySecretStore(),

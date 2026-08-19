@@ -172,6 +172,24 @@ class NornicApprovalRepository:
         stored = await self.get(approval.id)
         return stored or approval
 
+    async def consume(self, approval_id: str, *, consumed_at: str) -> Approval | None:
+        # Single conditional write, never read-then-write: the WHERE clause
+        # is the whole race guard, exactly the shape waiting.py's claim()
+        # uses for the lease (section 55). A row comes back only when this
+        # call is the one that spent the approval; a second concurrent
+        # commit matches nothing and gets None.
+        rows = await self._client.write(
+            f"""
+            MATCH (ap:Approval {{id: $id}})
+            WHERE ap.consumed_at IS NULL
+            SET ap.consumed_at = $consumed_at
+            RETURN {_RETURN}
+            """,
+            id=approval_id,
+            consumed_at=consumed_at,
+        )
+        return _row_to_approval(rows[0]) if rows else None
+
     async def update(self, approval: Approval) -> Approval:
         existing = await self.get(approval.id)
         if existing is None:

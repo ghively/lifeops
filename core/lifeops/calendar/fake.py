@@ -13,7 +13,7 @@ from __future__ import annotations
 import itertools
 
 from lifeops.domain.calendar import CalendarEvent, FreeBusySlot
-from lifeops.errors import NotFoundError
+from lifeops.errors import ProviderError
 
 
 class FakeCalendarProvider:
@@ -45,7 +45,20 @@ class FakeCalendarProvider:
     async def create_hold(
         self, *, subject: str, start_at: str, end_at: str, notes: str = ""
     ) -> str:
-        return f"hold-{next(self._counter)}"
+        # The real adapter PUTs a genuine VEVENT for a hold, so the slot
+        # reads busy in free_busy and the hold is fetchable by uid. Storing
+        # nothing here let "a hold blocks double-booking" tests pass against
+        # semantics production does not have (2026-08-18 audit).
+        external_id = f"hold-{next(self._counter)}"
+        self._events[external_id] = CalendarEvent(
+            id=CalendarEvent.make_id("fake", external_id),
+            external_event_id=external_id,
+            calendar_provider_id="fake",
+            title=f"[LifeOps hold] {subject}",
+            start_at=start_at,
+            end_at=end_at,
+        )
+        return external_id
 
     async def create_event(
         self,
@@ -57,7 +70,9 @@ class FakeCalendarProvider:
         notes: str = "",
         hold_reference: str | None = None,
     ) -> str:
-        external_id = f"event-{next(self._counter)}"
+        # Like the real adapter: confirming a hold reuses the hold's uid, so
+        # the hold upgrades in place instead of coexisting with the booking.
+        external_id = hold_reference or f"event-{next(self._counter)}"
         self._events[external_id] = CalendarEvent(
             id=CalendarEvent.make_id("fake", external_id),
             external_event_id=external_id,
@@ -84,9 +99,11 @@ class FakeCalendarProvider:
     ) -> None:
         existing = self._events.get(external_event_id)
         if existing is None:
-            raise NotFoundError(
-                f"no such calendar event: {external_event_id}",
-                external_event_id=external_event_id,
+            # Same error type as the real adapter (caldav.py raises
+            # ProviderError here) — tests asserting the exception must see
+            # production's type.
+            raise ProviderError(
+                f"no such calendar event: {external_event_id}", provider="fake"
             )
         updated = existing.model_copy(
             update={

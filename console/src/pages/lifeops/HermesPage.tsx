@@ -290,9 +290,12 @@ export function HermesPage() {
               Skills
             </h2>
             <p className="rounded-lg border border-dashed border-border/60 px-4 py-6 text-center text-sm text-muted-foreground">
-              No skills instantiated yet. Hermes self-configuration has no
-              save/apply path for skill content yet — see the Known gaps in
-              CLAUDE.md.
+              Nine LifeOps skills ship in this repository under
+              hermes/skills/lifeops/ (personal-core, daily-brief,
+              weekly-review, and more) and are installed with Hermes itself —
+              see HERMES_INTEGRATION.md. Skill *content* is written there,
+              not from this screen: over MCP, propose_self_change only files
+              a request for review.
             </p>
           </section>
 

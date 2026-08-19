@@ -64,12 +64,10 @@ export function WorldPage() {
   const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null)
   const [expansions, setExpansions] = useState<Record<string, WorldGraph>>({})
   const [dialog, setDialog] = useState<'none' | 'create' | 'link'>('none')
-  // Section 15's temporal/current toggle. Only preferences carry real
-  // supersession history (BUILD_SPEC section 40) — generic world-entity
-  // facts are overwritten in place with no validity window, so "history"
-  // mode changes what the inspector shows for a Preference node rather than
-  // pretending the graph can time-travel for entities that have no history
-  // to travel through.
+  // Section 15's temporal/current toggle. Preferences carry supersession
+  // history (section 40), and since the EntityFact work every world entity
+  // carries per-fact history too (section 16) — "history" mode switches the
+  // inspector to that view for whichever node is selected.
   const [viewMode, setViewMode] = useState<'current' | 'history'>('current')
 
   const graphQuery = useQuery({
@@ -109,14 +107,27 @@ export function WorldPage() {
     [graph],
   )
 
+  const trimmedSearch = search.trim()
+  // Server-side match, not a scan of the loaded window: with more entities
+  // than GRAPH_LIMIT, anything the truncated base graph omitted was simply
+  // unfindable from here (2026-08-18 audit).
+  const searchQuery = useQuery({
+    queryKey: ['lifeops', 'world', 'search', trimmedSearch],
+    queryFn: () => worldApi.graph({ query: trimmedSearch, limit: 25 }),
+    enabled: trimmedSearch.length > 0,
+  })
+
   const searchMatches = useMemo(() => {
-    const query = search.trim().toLowerCase()
+    const query = trimmedSearch.toLowerCase()
     if (!query) return []
-    return graph.nodes
-      .filter((node) => node.label.toLowerCase().includes(query))
+    const local = graph.nodes.filter((node) => node.label.toLowerCase().includes(query))
+    const remote = searchQuery.data?.nodes ?? []
+    const seen = new Map<string, WorldGraphNode>()
+    for (const node of [...local, ...remote]) seen.set(node.id, node)
+    return [...seen.values()]
       .sort((a, b) => a.label.localeCompare(b.label))
       .slice(0, 8)
-  }, [graph, search])
+  }, [graph, trimmedSearch, searchQuery.data])
 
   /** A world holding only the primary person is an honest empty state. */
   const worldIsOnlyYou = (base?.nodes.length ?? 0) <= 1 && Object.keys(expansions).length === 0
@@ -137,7 +148,10 @@ export function WorldPage() {
       return
     }
     selectEntity(id)
-    if (!expansions[id] && !expand.isPending) {
+    // No isPending gate: clicking node B while node A's neighborhood loads
+    // used to silently drop B's expansion with no feedback and no retry.
+    // Concurrent expansions are safe — each merges under its own key.
+    if (!expansions[id]) {
       expand.mutate(id)
     }
   }
@@ -220,7 +234,7 @@ export function WorldPage() {
                   ? 'bg-foreground text-background'
                   : 'text-muted-foreground hover:bg-muted',
               )}
-              title="Preferences show their full history; other entities are current-only (BUILD_SPEC section 40)"
+              title="Every entity shows its per-fact supersession history (BUILD_SPEC sections 16, 40)"
             >
               <Clock3 className="h-3 w-3" />
               History

@@ -69,13 +69,23 @@ from pydantic import Field
 from pydantic import ValidationError as PydanticValidationError
 
 from lifeops.container import Container
-from lifeops.domain.calendar import AppointmentHoldDraft, AppointmentStatus
+from lifeops.domain.bills import BillStatus
+from lifeops.domain.calendar import (
+    DEFAULT_HOLD_MINUTES,
+    AppointmentHoldDraft,
+    AppointmentStatus,
+)
 from lifeops.domain.email import EmailSendDraft
 from lifeops.domain.memory import MemoryDraft, MemoryRecord, MemoryType
 from lifeops.domain.preferences import PreferenceDraft, PreferenceSource
 from lifeops.domain.self_config import SelfConfigProposal, SelfConfigTarget
 from lifeops.domain.service_request import ServiceRequestDraft
-from lifeops.domain.shopping import ShoppingItem, ShoppingListDraft, SubstitutionDraft
+from lifeops.domain.shopping import (
+    ShoppingItem,
+    ShoppingListDraft,
+    ShoppingListStatus,
+    SubstitutionDraft,
+)
 from lifeops.domain.tasks import TaskDraft, TaskPriority, TaskState, TaskUpdate
 from lifeops.domain.waiting import DEFAULT_MAX_FOLLOWUPS, WaitingDraft, WaitingStatus
 from lifeops.domain.workflow_templates import TriggerKind, WorkflowStep, WorkflowTemplateDraft
@@ -266,12 +276,24 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             str | None, Field(description="Filter to tasks owned by this person.")
         ] = None,
         limit: Annotated[int, Field(ge=1, le=200, description="Maximum results.")] = 50,
+        offset: Annotated[
+            int, Field(ge=0, description="Skip this many results, for paging.")
+        ] = 0,
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
                 tasks = await container.core.list_tasks(
-                    client, states=state, owner_entity_id=owner_entity_id, limit=limit
+                    client,
+                    states=state,
+                    owner_entity_id=owner_entity_id,
+                    limit=limit,
+                    offset=offset,
                 )
+                # Same semantics as the HTTP surface: ``total`` is the full
+                # count across all states, not the size of this page — the
+                # same field name meaning two different things per adapter
+                # was a contract trap (2026-08-18 audit).
+                by_state = await container.core.count_tasks_by_state(client)
                 return {
                     "ok": True,
                     "tasks": [
@@ -286,7 +308,8 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         }
                         for t in tasks
                     ],
-                    "total": len(tasks),
+                    "total": sum(by_state.values()),
+                    "returned": len(tasks),
                 }
             except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
@@ -330,6 +353,10 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
         confidence: Annotated[
             float, Field(ge=0.0, le=1.0, description="Certainty, 0 to 1.")
         ] = 1.0,
+        importance: Annotated[
+            float,
+            Field(ge=0.0, le=1.0, description="How much this matters, 0 to 1."),
+        ] = 0.5,
         notes: Annotated[str | None, Field(description="Optional context.")] = None,
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
@@ -342,6 +369,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         subject_id=subject_id,
                         source_type=source_type,
                         confidence=confidence,
+                        importance=importance,
                         notes=notes,
                     ),
                 )
@@ -390,6 +418,16 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                 )
             ),
         ] = False,
+        related_entity_ids: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "World entities this task is about (providers, assets, "
+                    "people) — e.g. the provider you just recorded with "
+                    "record_provider. Binds the task into the world graph."
+                )
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
@@ -402,6 +440,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         due_at=due_at,
                         owner_entity_id=owner_entity_id,
                         verification_required=verification_required,
+                        related_entity_ids=related_entity_ids or [],
                         source=f"mcp:{client.client_id}",
                     ),
                 )
@@ -659,6 +698,15 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                 )
             ),
         ] = None,
+        related_entity_ids: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Replace the world entities this task is about. Omit to "
+                    "leave the existing links unchanged."
+                )
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
@@ -674,6 +722,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         owner_entity_id=owner_entity_id,
                         current_action=current_action,
                         verification_evidence=verification_evidence,
+                        related_entity_ids=related_entity_ids,
                     ),
                 )
                 return {
@@ -719,12 +768,20 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             str | None,
             Field(description="Whose memories. Defaults to the primary user."),
         ] = None,
+        memory_types: Annotated[
+            list[MemoryType] | None,
+            Field(description="Filter to these memory types. Omit for all."),
+        ] = None,
         limit: Annotated[int, Field(ge=1, le=100, description="Maximum results.")] = 10,
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
                 memories = await container.core.recall(
-                    client, query=query, subject_id=subject_id, limit=limit
+                    client,
+                    query=query,
+                    subject_id=subject_id,
+                    memory_types=memory_types,
+                    limit=limit,
                 )
                 return {
                     "ok": True,
@@ -785,6 +842,26 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
             float,
             Field(ge=0.0, le=1.0, description="How much this matters long-term, 0 to 1."),
         ] = 0.5,
+        entity_ids: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "World entities this memory is about (providers, assets, "
+                    "people), so it surfaces in their history and inspector "
+                    "panels. Without this the memory never links to the "
+                    "entity it describes."
+                )
+            ),
+        ] = None,
+        source_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Identifier of the source artifact, e.g. an email "
+                    "message id, for provenance."
+                )
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
@@ -797,6 +874,8 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         source_type=source_type,
                         confidence=confidence,
                         importance=importance,
+                        entity_ids=entity_ids or [],
+                        source_id=source_id,
                     ),
                 )
                 return {"ok": True, "memory": _memory_view(memory)}
@@ -1180,17 +1259,19 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
     )
     async def list_appointments(
         status: Annotated[
-            str | None, Field(description="Filter to this appointment status. Omit for all.")
+            AppointmentStatus | None,
+            Field(description="Filter to this appointment status. Omit for all."),
         ] = None,
         task_id: Annotated[
             str | None, Field(description="Filter to appointments for this task.")
         ] = None,
     ) -> dict[str, Any]:
+        # Enum-typed like every sibling filter, so a bad value is refused at
+        # the schema as validation_error — the old str form reported it as
+        # not_found, which the error table defines as "no such entity", and
+        # a model reasonably concluded the appointment store was empty.
         with trace_context(client_id=client.client_id):
-            try:
-                parsed_status = AppointmentStatus(status) if status else None
-            except ValueError:
-                return _fail(NotFoundError(f"unknown appointment status: {status!r}"))
+            parsed_status = status
             try:
                 found = await container.core.list_appointments(
                     client, status=parsed_status, task_id=task_id
@@ -1228,11 +1309,17 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
         ),
     )
     async def list_bills(
+        statuses: Annotated[
+            list[BillStatus] | None,
+            Field(description="Filter to these statuses (e.g. due, overdue). Omit for all."),
+        ] = None,
         limit: Annotated[int, Field(ge=1, le=200, description="Maximum results.")] = 100,
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
-                found = await container.core.list_bills(client, limit=limit)
+                found = await container.core.list_bills(
+                    client, statuses=statuses, limit=limit
+                )
                 return {
                     "ok": True,
                     "bills": [b.model_dump(mode="json") for b in found],
@@ -1361,6 +1448,17 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
         ] = None,
         location: Annotated[str, Field(description="Where, if relevant.")] = "",
         notes: Annotated[str, Field(description="Anything worth recording about it.")] = "",
+        hold_minutes: Annotated[
+            int,
+            Field(
+                ge=1,
+                le=24 * 60,
+                description=(
+                    "How long the hold stays valid before it expires — e.g. "
+                    "longer when a provider promised to confirm by tomorrow."
+                ),
+            ),
+        ] = DEFAULT_HOLD_MINUTES,
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):
             try:
@@ -1374,6 +1472,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                         task_id=task_id,
                         location=location,
                         notes=notes,
+                        hold_minutes=hold_minutes,
                     ),
                 )
                 return {"ok": True, "appointment": appointment.model_dump(mode="json")}
@@ -1712,6 +1811,62 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
                     "results": [r.model_dump(mode="json") for r in results],
                     "total": len(results),
                 }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="list_shopping_lists",
+        title="List shopping lists",
+        description=(
+            "The user's shopping lists with their current status. The "
+            "read-back half of the shopping surface: without it, a list "
+            "created in an earlier conversation was invisible here, and the "
+            "only recourse was guessing or creating a duplicate "
+            "(2026-08-18 audit)."
+        ),
+    )
+    async def list_shopping_lists(
+        status: Annotated[
+            ShoppingListStatus | None,
+            Field(description="Filter to lists in this status. Omit for all."),
+        ] = None,
+        task_id: Annotated[
+            str | None, Field(description="Filter to lists for this task.")
+        ] = None,
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                lists = await container.core.list_shopping_lists(
+                    client, status=status, task_id=task_id
+                )
+                return {
+                    "ok": True,
+                    "lists": [entry.model_dump(mode="json") for entry in lists],
+                    "total": len(lists),
+                }
+            except (LifeOpsError, PydanticValidationError) as exc:
+                return _fail(exc)
+
+    @server.tool(
+        name="get_shopping_list",
+        title="Get shopping list",
+        description=(
+            "One shopping list in full: items, status, cart reference, and "
+            "the checkout action id — everything needed to decide whether to "
+            "substitute, resubmit, or leave it alone."
+        ),
+    )
+    async def get_shopping_list(
+        list_id: Annotated[
+            str, Field(description="The list to read, e.g. shoppinglist_01j...")
+        ],
+    ) -> dict[str, Any]:
+        with trace_context(client_id=client.client_id):
+            try:
+                shopping_list = await container.core.get_shopping_list(
+                    client, list_id=list_id
+                )
+                return {"ok": True, "list": shopping_list.model_dump(mode="json")}
             except (LifeOpsError, PydanticValidationError) as exc:
                 return _fail(exc)
 

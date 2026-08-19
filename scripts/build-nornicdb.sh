@@ -20,9 +20,17 @@ mkdir -p "$WORK_DIR" "$INSTALL_DIR"
 
 # --- Go toolchain -----------------------------------------------------------
 # NornicDB requires Go >= 1.26. A system Go that is older would fail deep in the
-# build, so it is checked up front.
-if command -v go >/dev/null 2>&1 && \
-   [[ "$(go env GOVERSION 2>/dev/null)" > "go1.26" ]]; then
+# build, so it is checked up front. The comparison is numeric on the minor
+# version — the old lexical string compare let go1.5 pass ("5" > "2") and
+# would force a needless download for a future go1.100.
+go_minor_version() {
+  local v
+  v="$(go env GOVERSION 2>/dev/null)" || return 1
+  v="${v#go1.}"
+  echo "${v%%[!0-9]*}"
+}
+GO_MINOR="$(go_minor_version || true)"
+if command -v go >/dev/null 2>&1 && [[ "$GO_MINOR" =~ ^[0-9]+$ ]] && (( GO_MINOR >= 26 )); then
   GO_BIN="$(command -v go)"
 else
   GO_ROOT="$WORK_DIR/go"

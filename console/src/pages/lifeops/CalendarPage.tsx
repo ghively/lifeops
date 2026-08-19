@@ -155,7 +155,12 @@ export function CalendarPage() {
     queryClient.invalidateQueries({ queryKey: ['lifeops', 'appointments'] })
 
   const hold = useMutation({
-    mutationFn: () => calendarApi.hold({ subject, start_at: startAt, end_at: endAt }),
+    mutationFn: () =>
+      calendarApi.hold({
+        subject,
+        start_at: new Date(startAt).toISOString(),
+        end_at: new Date(endAt).toISOString(),
+      }),
     onSuccess: () => {
       setHoldOpen(false)
       setSubject('')
@@ -247,17 +252,23 @@ export function CalendarPage() {
                 disabled={hold.isPending}
               />
               <div className="flex gap-2">
+                {/* State stays in the input's own YYYY-MM-DDTHH:mm form and
+                    converts to ISO only at submit. Feeding an ISO string back
+                    as the controlled value blanked the field (invalid for
+                    datetime-local), and converting inside onChange threw on a
+                    cleared/partial value — leaving stale hidden state that
+                    submitted the previous time (2026-08-18 audit). */}
                 <Input
                   type="datetime-local"
                   value={startAt}
-                  onChange={(event) => setStartAt(new Date(event.target.value).toISOString())}
+                  onChange={(event) => setStartAt(event.target.value)}
                   aria-label="Hold start"
                   disabled={hold.isPending}
                 />
                 <Input
                   type="datetime-local"
                   value={endAt}
-                  onChange={(event) => setEndAt(new Date(event.target.value).toISOString())}
+                  onChange={(event) => setEndAt(event.target.value)}
                   aria-label="Hold end"
                   disabled={hold.isPending}
                 />

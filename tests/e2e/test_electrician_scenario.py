@@ -106,7 +106,13 @@ async def scenario(nornic_client: NornicClient, test_label: str, tmp_path: Path)
         config_dir=tmp_path / "config", secret_store=InMemorySecretStore(), clock=FrozenClock()
     )
     fake_calendar = FakeCalendarProvider()
-    config.update_provider("calendar", {"enabled": True, "backend": "caldav"})
+    config.update_provider(
+            "calendar",
+            # password is a required secret now (an empty credential cannot
+            # log in); the fake never reads it, but the configured/enabled
+            # gate is the same one production applies.
+            {"enabled": True, "backend": "caldav", "password": "test-password"},
+        )
     calendar = CalendarProviderService(
         config=config,
         secret_store=InMemorySecretStore(),

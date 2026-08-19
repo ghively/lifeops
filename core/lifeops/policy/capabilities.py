@@ -277,6 +277,15 @@ def resolve_client(
 ) -> ClientIdentity:
     """Map a declared client_id to its identity."""
     if not client_id:
+        # Under DENY a *missing* identity is refused exactly like a wrong
+        # one: an MCP server launched with neither --client nor its env var
+        # must fail loudly, not silently become the default identity.
+        # SECURITY.md promises "a missing identity is refused, never
+        # defaulted" — this branch is where that promise is kept.
+        if unknown is UnknownClientPolicy.DENY:
+            raise CapabilityDeniedError(
+                "no client identity was provided", client_id=""
+            )
         return _REGISTRY[DEFAULT_CLIENT_ID]
 
     identity = _REGISTRY.get(client_id.strip().lower())

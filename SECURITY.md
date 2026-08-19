@@ -104,8 +104,12 @@ radius.
 | Storage | `secrets.json`, mode 0600, written then renamed | An interrupted write cannot truncate the vault |
 
 Reads return `{"configured": true, "fingerprint": "a1b2c3d4e5f6"}` — never the
-value. The fingerprint is a salted SHA-256 prefix, so a human can confirm *which*
-key is installed without it being readable.
+value. The fingerprint is an HMAC-SHA256 prefix keyed with the master key, so
+a human can confirm *which* key is installed without it being readable — and
+someone holding only `secrets.json` cannot use the fingerprint to confirm
+dictionary guesses of a weak human-chosen password (the earlier fixed-salt
+SHA-256 form allowed exactly that; entries written before the change keep
+their old fingerprint until rewritten).
 
 `rotate_master_key()` re-encrypts every secret under a fresh key.
 
@@ -240,6 +244,23 @@ buys: HTTP identity is a self-declared header (see Identity above), so with
 auth disabled a local process can still claim the Console's identity — the
 capability check removes the accidental paths, the console password removes
 the deliberate ones. Set the password.
+
+### Phone-call destinations are model-influenced (dormant; decide before enabling telephony)
+
+`place_phone_call` and `request_quote` are R2 — policy-controlled, not
+approval-gated — because BUILD_SPEC section 101's acceptance scenario has
+Hermes call the electrician on its own. The destination number is resolved
+from the target provider entity's `phone` fact, and Hermes can write that
+fact through `record_provider`. So once telephony credentials exist, a
+model-authored fact chooses where an autonomous call is placed (the call's
+*authority* stays hard-bounded — section 97: no charge, no repairs — but the
+number itself is model data). Today this is dormant: telephony ships
+disabled, and nothing here can dial. Before enabling real credentials,
+decide deliberately between accepting this as-is, reclassifying the two
+action types as R3 (which changes section 101's autonomous flow), or gating
+dialable numbers behind a payee-style human confirmation. Recorded by the
+2026-08-18 audit; deliberately not changed unilaterally because either code
+change alters BUILD_SPEC-specified behavior.
 
 ### WebSocket events carry no payload beyond the type (accepted)
 

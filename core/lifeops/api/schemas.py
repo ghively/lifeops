@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from lifeops.domain.actions import ActionStatus, ActionType
 from lifeops.domain.approvals import ApprovalStatus
@@ -203,7 +203,20 @@ class CreateTaskRequest(BaseModel):
     owner_entity_id: str | None = None
     related_entity_ids: list[str] = Field(default_factory=list)
     verification_required: bool = False
+    #: Display metadata only — real provenance is ``created_by_client``,
+    #: stamped by the server from the resolved identity. The one reserved
+    #: shape is ``mcp:*``, which the MCP adapter stamps itself; accepting it
+    #: here would let an HTTP caller dress a task up as agent-created.
     source: str | None = None
+
+    @field_validator("source")
+    @classmethod
+    def _source_may_not_impersonate_mcp(cls, value: str | None) -> str | None:
+        if value is not None and value.startswith("mcp:"):
+            raise ValueError(
+                "the mcp: source prefix is stamped by the MCP adapter itself"
+            )
+        return value
 
 
 class UpdateTaskRequest(BaseModel):
@@ -809,6 +822,10 @@ class ApprovalResponse(BaseModel):
     created_at: str
     action_payload: dict[str, Any] = Field(default_factory=dict)
     action_status: ActionStatus | None = None
+    #: True when the action this approval binds to could not be loaded — the
+    #: Console must flag the card rather than render an empty payload as if
+    #: "what will happen" were nothing.
+    action_missing: bool = False
 
 
 class ApprovalListResponse(BaseModel):

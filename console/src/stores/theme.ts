@@ -11,15 +11,24 @@ export interface ThemeState {
   density: DensityName
   showGrain: boolean
   serifTitles: boolean
-  tweaksOpen: boolean
 
   setTheme: (theme: ThemeName) => void
   setAccent: (accent: AccentName) => void
   setDensity: (density: DensityName) => void
   setShowGrain: (v: boolean) => void
   setSerifTitles: (v: boolean) => void
-  toggleTweaks: () => void
-  setTweaksOpen: (v: boolean) => void
+}
+
+// One-time migration: settings persisted under the pre-fork key move to the
+// new one, then the old key is removed.
+if (typeof localStorage !== 'undefined') {
+  const legacy = localStorage.getItem('knowledge-os:theme')
+  if (legacy !== null && localStorage.getItem('lifeops:theme') === null) {
+    localStorage.setItem('lifeops:theme', legacy)
+  }
+  if (legacy !== null) {
+    localStorage.removeItem('knowledge-os:theme')
+  }
 }
 
 export const useThemeStore = create<ThemeState>()(
@@ -30,18 +39,18 @@ export const useThemeStore = create<ThemeState>()(
       density: 'cozy',
       showGrain: true,
       serifTitles: true,
-      tweaksOpen: false,
 
       setTheme: (theme) => set({ theme }),
       setAccent: (accent) => set({ accent }),
       setDensity: (density) => set({ density }),
       setShowGrain: (showGrain) => set({ showGrain }),
       setSerifTitles: (serifTitles) => set({ serifTitles }),
-      toggleTweaks: () => set((s) => ({ tweaksOpen: !s.tweaksOpen })),
-      setTweaksOpen: (tweaksOpen) => set({ tweaksOpen }),
     }),
     {
-      name: 'knowledge-os:theme',
+      // Renamed from the pre-fork 'knowledge-os:theme'; the one-time
+      // migration below carries an existing choice across so nobody's
+      // theme resets.
+      name: 'lifeops:theme',
       partialize: (s) => ({
         theme: s.theme,
         accent: s.accent,

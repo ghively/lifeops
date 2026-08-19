@@ -128,6 +128,17 @@ class TestTrustHierarchy:
             PreferenceSource.USER_EXPLICIT, PreferenceSource.USER_EXPLICIT
         )
 
+    def test_every_source_has_a_declared_authority(self) -> None:
+        """Exhaustiveness pin, the same discipline test_emergency_stop applies
+        to ActionType: a future PreferenceSource member with no _AUTHORITY
+        entry used to silently rank at 0 — below AGENT, and self-superseding
+        (0 >= 0). authority_of now raises for an unmapped member; this test
+        makes sure the map keeps up with the enum instead."""
+        from lifeops.policy.trust import authority_of
+
+        for source in PreferenceSource:
+            assert authority_of(source) > 0, source
+
     def test_website_cannot_override_a_calendar_fact(self) -> None:
         assert not may_supersede(PreferenceSource.WEBSITE, PreferenceSource.CALENDAR)
 
