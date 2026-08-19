@@ -102,15 +102,45 @@ _PREFERENCE_RETURN = """
 #: Only current preferences are world nodes (section 15's current view). A
 #: superseded one keeps its PREFERS edge, and graph assembly drops that edge
 #: once the node is gone.
+#: Shopping lists and service requests own their storage (see
+#: ``repositories/nornic/shopping.py`` and ``service_requests.py``), so their
+#: nodes carry no ``display_name`` or ``facts_json``. Projecting them for the
+#: World screen means reading the fields they *do* have — without this they
+#: render as a bare id with no facts, which is what happened when their
+#: storage moved.
+_SHOPPING_RETURN = """
+    n.id AS id,
+    n.title AS display_name,
+    n.status AS row_status,
+    n.store AS row_store,
+    n.created_at AS created_at,
+    n.updated_at AS updated_at,
+    n.created_by_client AS created_by_client
+"""
+
+_SERVICE_REQUEST_RETURN = """
+    n.id AS id,
+    n.subject AS display_name,
+    n.status AS row_status,
+    n.provider_entity_id AS row_provider,
+    n.created_at AS created_at,
+    n.updated_at AS updated_at,
+    n.created_by_client AS created_by_client
+"""
+
 _CURRENT_ONLY: dict[WorldEntityType, str] = {
     WorldEntityType.PREFERENCE: "WHERE n.valid_to IS NULL",
 }
 
+_PROJECTED_RETURNS: dict[WorldEntityType, str] = {
+    WorldEntityType.PREFERENCE: _PREFERENCE_RETURN,
+    WorldEntityType.SHOPPING_LIST: _SHOPPING_RETURN,
+    WorldEntityType.SERVICE_REQUEST: _SERVICE_REQUEST_RETURN,
+}
+
 
 def _returns_for(entity_type: WorldEntityType) -> str:
-    if entity_type is WorldEntityType.PREFERENCE:
-        return _PREFERENCE_RETURN
-    return _ENTITY_RETURN
+    return _PROJECTED_RETURNS.get(entity_type, _ENTITY_RETURN)
 
 
 def _row_to_entity(row: dict[str, Any]) -> WorldEntity:
@@ -123,6 +153,21 @@ def _row_to_entity(row: dict[str, Any]) -> WorldEntity:
         if confidence is not None:
             facts["confidence"] = str(confidence)
         facts = {k: v for k, v in facts.items() if v}
+    elif entity_type in (
+        WorldEntityType.SHOPPING_LIST,
+        WorldEntityType.SERVICE_REQUEST,
+    ):
+        # A few fields worth seeing on the graph, from records whose real
+        # shape lives in their own repository.
+        facts = {
+            key: str(row[column])
+            for key, column in (
+                ("status", "row_status"),
+                ("store", "row_store"),
+                ("provider", "row_provider"),
+            )
+            if row.get(column)
+        }
     else:
         facts_raw = row.get("facts_json")
         loaded = json.loads(facts_raw) if facts_raw else {}
