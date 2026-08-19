@@ -11,6 +11,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Same reason as healthcheck.sh: .env is the deployment-settings file, and the
+# ports it sets have to reach the launcher too, not only the Python process.
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a; . "$REPO_ROOT/.env"; set +a
+fi
 LIFEOPS_HOME="${LIFEOPS_HOME:-$HOME/.local/share/lifeops}"
 LOG_DIR="$LIFEOPS_HOME/logs"
 CORE_PID="$LIFEOPS_HOME/lifeops-core.pid"

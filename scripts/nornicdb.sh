@@ -82,26 +82,34 @@ start() {
   # and loading a model would be infrastructure for a problem that does not
   # exist yet (section 105).
   # --admin-password on argv is readable by every local process via
-  # /proc/*/cmdline for the daemon's lifetime — defeating the 0600 care
-  # taken with nornicdb.env. NornicDB documents a general
-  # NORNICDB_<SECTION>_<KEY> environment mapping, but its docs never name
-  # the admin-password variable, and this sandbox cannot run the binary to
-  # verify — so the flag stays the default and the env path is an explicit
-  # opt-in. Set LIFEOPS_NORNIC_PASSWORD_VIA_ENV=1 once verified against
-  # your build (then the flag is omitted and only the process's own
-  # environment carries the credential).
-  password_args=(--admin-password "$LIFEOPS_NORNIC_PASSWORD")
-  if [[ "${LIFEOPS_NORNIC_PASSWORD_VIA_ENV:-0}" == "1" ]]; then
-    password_args=()
-  fi
-  NORNICDB_ADMIN_PASSWORD="$LIFEOPS_NORNIC_PASSWORD" \
+  # /proc/*/cmdline for the daemon's lifetime, which defeats the 0600 care
+  # taken with nornicdb.env. The credential now travels in the environment
+  # instead, verified against NornicDB v1.2.2 on a real deployment
+  # (2026-08-19) rather than assumed:
+  #
+  #   NORNICDB_AUTH="user:password"   pkg/config/config.go applyEnvVars()
+  #
+  # NORNICDB_ADMIN_PASSWORD, which this script used to set, is read by
+  # nothing. It appeared to work only because the flag beside it did — and
+  # on a *fresh* data directory it would have silently initialised the
+  # database with upstream's default password of "password". Both halves
+  # were checked directly: with NORNICDB_AUTH alone on an empty data
+  # directory, the intended password authenticates and "password" is
+  # refused.
+  #
+  # NORNICDB_TELEMETRY_LISTEN is set for a separate reason. --address
+  # governs only Bolt and HTTP; the Prometheus listener defaults to :9090,
+  # meaning *every* interface. On a host with a public address that
+  # published the database's metrics to the internet, which BUILD_SPEC
+  # section 82 does not allow. It is pinned to loopback here.
+  NORNICDB_AUTH="${LIFEOPS_NORNIC_USER:-admin}:$LIFEOPS_NORNIC_PASSWORD" \
+  NORNICDB_TELEMETRY_LISTEN="${LIFEOPS_NORNIC_TELEMETRY_LISTEN:-127.0.0.1:9090}" \
   nohup "$NORNIC_BIN" serve \
     --data-dir "$DATA_DIR" \
     --address 127.0.0.1 \
     --http-port "$HTTP_PORT" \
     --bolt-port "$BOLT_PORT" \
     --headless \
-    "${password_args[@]}" \
     >> "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
   wait_for_bolt
