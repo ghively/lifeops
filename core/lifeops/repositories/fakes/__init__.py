@@ -37,7 +37,7 @@ from lifeops.domain.world import (
     entity_type_for_id,
     is_world_entity_id,
 )
-from lifeops.errors import NotFoundError
+from lifeops.errors import NotFoundError, RepositoryError
 
 
 class FakePersonRepository:
@@ -56,12 +56,17 @@ class FakePersonRepository:
 
     async def find_by_name(self, name: str) -> list[Person]:
         needle = name.strip().lower()
-        return [
-            copy.deepcopy(p)
+        matches = [
+            p
             for p in self._people.values()
             if needle in p.display_name.lower()
             or any(needle in alias.lower() for alias in p.aliases)
         ]
+        # Same ordering and cap as the real query (ORDER BY p.display_name
+        # ASC LIMIT 25) — dict-insertion order made "the first match" mean
+        # different people in fake-backed tests and production.
+        matches.sort(key=lambda p: p.display_name)
+        return [copy.deepcopy(p) for p in matches[:25]]
 
     async def list_all(self, *, limit: int = 100) -> list[Person]:
         ordered = sorted(self._people.values(), key=lambda p: p.display_name)
@@ -72,8 +77,15 @@ class FakePersonRepository:
             for other in self._people.values():
                 if other.id != person.id:
                     other.is_primary = False
-        self._people[person.id] = copy.deepcopy(person)
-        return copy.deepcopy(person)
+        stored = copy.deepcopy(person)
+        existing = self._people.get(person.id)
+        if existing is not None:
+            # The real repository's MERGE sets created_at only ON CREATE; an
+            # update keeps the original. Without this, get_primary()'s
+            # created_at ordering diverged between fake and real.
+            stored.created_at = existing.created_at
+        self._people[person.id] = stored
+        return copy.deepcopy(stored)
 
 
 class FakePreferenceRepository:
@@ -114,7 +126,10 @@ class FakePreferenceRepository:
         ]
         if not matches:
             return None
-        matches.sort(key=lambda p: p.valid_from, reverse=True)
+        # Real query tiebreaks ORDER BY p.valid_from DESC, p.id DESC — under
+        # FrozenClock two records share valid_from, and without the tiebreak
+        # the fake resolved to insertion order instead.
+        matches.sort(key=lambda p: (p.valid_from, p.id), reverse=True)
         return copy.deepcopy(matches[0])
 
     async def search(self, query: str, *, limit: int = 25) -> list[Preference]:
@@ -134,7 +149,7 @@ class FakePreferenceRepository:
             for p in self._prefs.values()
             if p.subject_id == subject_id and p.key == key
         ]
-        matches.sort(key=lambda p: p.valid_from, reverse=True)
+        matches.sort(key=lambda p: (p.valid_from, p.id), reverse=True)
         return [copy.deepcopy(p) for p in matches]
 
     async def save_superseding(
@@ -281,8 +296,10 @@ class FakeMemoryRepository:
     ) -> list[MemoryRecord]:
         # All-terms substring match: the fake mirrors the repository's
         # fallback ranking, not the fulltext scoring (which is persistence's
-        # job to prove).
-        terms = query.strip().lower().split()
+        # job to prove). The 8-term cap mirrors _FALLBACK_MAX_TERMS in the
+        # real fallback — without it, a 10-term query matched differently
+        # in fake-backed tests and production.
+        terms = query.strip().lower().split()[:8]
         if not terms:
             return []
         matches = [
@@ -444,8 +461,18 @@ class FakeWorldRepository:
                 self._preference_entity(p)
                 for p in await self._preferences.list_all_current()
             )
-        matches.sort(key=lambda e: e.id)
-        return [copy.deepcopy(e) for e in matches[:limit]]
+        # The real query applies LIMIT per label and then truncates the
+        # combined result; a single global cap made the surviving set differ
+        # once one type alone exceeded the limit.
+        by_type: dict[WorldEntityType, list[WorldEntity]] = {}
+        for entity in matches:
+            by_type.setdefault(entity.entity_type, []).append(entity)
+        capped: list[WorldEntity] = []
+        for group in by_type.values():
+            group.sort(key=lambda e: e.id)
+            capped.extend(group[:limit])
+        capped.sort(key=lambda e: e.id)
+        return [copy.deepcopy(e) for e in capped[:limit]]
 
     async def list_edges(
         self,
@@ -510,7 +537,20 @@ class FakeWorldRepository:
     async def link(
         self, source_id: str, target_id: str, rel_type: WorldRelationship
     ) -> WorldEdge:
-        self._edges.add((source_id, target_id, rel_type))
+        # The real repository's MATCH..MATCH..MERGE silently writes nothing
+        # when an endpoint is missing (and still returns the edge object —
+        # that shape is mirrored here). Recording the edge unconditionally
+        # let fake-backed tests see phantom edges production never stores.
+        # Only world-entity ids are checked: a task_ endpoint (ASSIGNED_TO,
+        # ABOUT) lives in the task repository, which the real MATCH-by-id
+        # sees and this fake cannot.
+        async def _endpoint_ok(entity_id: str) -> bool:
+            if not is_world_entity_id(entity_id):
+                return True
+            return await self.exists(entity_id)
+
+        if await _endpoint_ok(source_id) and await _endpoint_ok(target_id):
+            self._edges.add((source_id, target_id, rel_type))
         return WorldEdge(source=source_id, target=target_id, type=rel_type)
 
     async def unlink(
@@ -577,7 +617,9 @@ class FakeWaitingRepository:
 
     async def list_for_task(self, task_id: str) -> list[WaitingItem]:
         matches = [i for i in self._items.values() if i.task_id == task_id]
-        matches.sort(key=lambda i: i.waiting_since, reverse=True)
+        # id tiebreak, matching the real ORDER BY w.waiting_since DESC,
+        # w.id DESC — FrozenClock makes waiting_since collide.
+        matches.sort(key=lambda i: (i.waiting_since, i.id), reverse=True)
         return [copy.deepcopy(i) for i in matches]
 
     async def list_by_status(
@@ -659,6 +701,20 @@ class FakeActionRepository:
         return [copy.deepcopy(a) for a in matches[:limit]]
 
     async def create(self, action: Action) -> Action:
+        # Mirror NornicDB's uniqueness constraint on idempotency_key
+        # (client.py, section 61's backstop). Without this, a core-logic bug
+        # that skipped the dedup pre-check passed every fake-backed test
+        # while production raised at commit — the 2026-08-18 audit's
+        # fake-drift finding.
+        for other in self._actions.values():
+            if (
+                other.id != action.id
+                and other.idempotency_key == action.idempotency_key
+            ):
+                raise RepositoryError(
+                    "idempotency_key already exists: "
+                    f"{action.idempotency_key!r} (held by {other.id})"
+                )
         self._actions[action.id] = copy.deepcopy(action)
         return copy.deepcopy(action)
 

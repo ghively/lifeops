@@ -34,10 +34,75 @@
 > - **P0-8** — IMAP and SMTP now use `ssl.create_default_context()`;
 >   certificates are verified before a credential is sent.
 >
-> **P1, P2, and the documentation corrections are deliberately not fixed
-> here.** They are recorded below and referenced from
-> [docs/REMAINING_WORK.md](../REMAINING_WORK.md) as the follow-up backlog,
-> per the user's instruction to fix P0 and document the rest.
+> **P1 disposition (2026-08-19, same branch): all P1 findings are fixed**,
+> with one deliberate exception. In brief:
+>
+> - *Core*: `record_result` requires EXECUTING; `settle_bill` refuses
+>   non-payable bills; `_prepare_provider_contact` dry-runs the transition
+>   before preparing the dialable action; `decide_approval`'s post-decision
+>   work can no longer fail a persisted decision (dead guards removed, cart
+>   revert guarded); `prepare` handles the idempotency-key constraint — and
+>   enforcing that constraint in the fake exposed a real production bug the
+>   audit had only half-seen: every retry-after-failure flow re-prepared the
+>   same payload and would have hit the uniqueness constraint as a 503.
+>   Retry now re-opens the same outbox record (`attempt_count`'s design),
+>   with EXECUTED/VERIFIED intents returning their record instead of a
+>   second chance to commit.
+> - *Concurrency*: the config document takes an `flock` around every
+>   read-modify-write (HTTP and MCP are separate processes); the waiting
+>   lease claim and preference/memory invalidation build their results from
+>   the conditional write's own returned row instead of a follow-up read
+>   the visibility quirk can make stale.
+> - *Calendar*: TZID/floating/all-day parsing (zoneinfo, never raw), line
+>   unfolding, XML entity decoding, server-side `<C:expand>` recurrence,
+>   per-occurrence ids, DESCRIPTION preserved on update, an injectable
+>   httpx client, and fake alignment (holds occupy the calendar,
+>   `hold_reference` upgrades in place, `ProviderError` parity) — pinned by
+>   a new `tests/unit/test_calendar_caldav.py`.
+> - *Email*: `confirm_sent` works (best-effort APPEND after send, quoted
+>   folder names, `[Gmail]/Sent Mail` probed); SEARCH is escaped, covers
+>   body via `TEXT`, and sends non-ASCII as a UTF-8 literal; raw imaplib
+>   errors wrap in `ProviderError`; port 465 uses `SMTP_SSL`; bogus
+>   charsets no longer crash a search; `received_at` is sortable ISO UTC —
+>   pinned by a new `tests/unit/test_email_imap_smtp.py`.
+> - *Voice/telephony*: the Twilio connection pool closes per call
+>   (`_with_provider`, the calendar/voice pattern); `transcribe_stream`
+>   closes its provider; faster-whisper receives `device`/`device_index`
+>   instead of the fatal `cuda:0`. The **one deliberate non-fix**:
+>   model-influenced call destinations stay R2, because both proposed
+>   remedies change BUILD_SPEC-specified behavior (section 101's autonomous
+>   call); the decision is recorded in SECURITY.md's known gaps for the
+>   moment telephony credentials are considered.
+> - *MCP/HTTP*: `remember` carries `entity_ids`/`source_id`, tasks carry
+>   `related_entity_ids`, `save_preference` carries `importance`,
+>   `search_memory` filters by type, `list_tasks` pages and reports the
+>   same `total` HTTP does, `list_bills` filters by status,
+>   `list_appointments` is enum-typed, `create_calendar_hold` takes
+>   `hold_minutes`, and the shopping read-back pair
+>   (`list_shopping_lists`/`get_shopping_list`) exists — the exit-test pin
+>   now holds 52 tools and MCP_API.md's headline is corrected. HTTP gained
+>   the appointments `status` filter, an `action_missing` flag on approvals
+>   (no more silently-empty "what will happen"), refusal of forged `mcp:`
+>   task sources, a guard on `/config/clients`, and a logged (not silent)
+>   RuntimeError path in the event stream.
+> - *Console*: the calendar hold form keeps `datetime-local` state in input
+>   form (no more RangeError/blank-field, and its test now asserts the
+>   timestamps); Approvals caps at 200 with a truncation notice, freezes
+>   all cards during a decision, and refuses to decide a missing-action
+>   card; the sidebar's false phase-gating is gone; VoiceModeCard shows
+>   save errors instead of the rejected mode; MemoryPage search respects
+>   the active view; `config_changed` invalidates the real query keys;
+>   WorldPage no longer drops expansion clicks, searches server-side past
+>   the 500-node window, and its history tooltip tells the truth;
+>   HermesPage names the nine shipped skills; the Bills banner dismisses;
+>   Tasks/Today/Bills/Search surface their caps; Actions freezes buttons
+>   during execution; the wrong-shape `as never` test fixtures are gone.
+> - *Test hardening*: `authority_of` raises on an unmapped source (with an
+>   enum-exhaustiveness pin), and the MANAGE_CONFIGURATION denial loop
+>   covers `all_clients()`.
+>
+> **P2 and the remaining documentation corrections stay open**, recorded
+> below and in [docs/REMAINING_WORK.md](../REMAINING_WORK.md).
 
 A complete sweep of the repository: LifeOps Core (`core/lifeops/`, ~26k lines),
 the Console (`console/src/`, 77 files), the test suites (~1,200 tests), shell

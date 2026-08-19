@@ -241,6 +241,23 @@ auth disabled a local process can still claim the Console's identity — the
 capability check removes the accidental paths, the console password removes
 the deliberate ones. Set the password.
 
+### Phone-call destinations are model-influenced (dormant; decide before enabling telephony)
+
+`place_phone_call` and `request_quote` are R2 — policy-controlled, not
+approval-gated — because BUILD_SPEC section 101's acceptance scenario has
+Hermes call the electrician on its own. The destination number is resolved
+from the target provider entity's `phone` fact, and Hermes can write that
+fact through `record_provider`. So once telephony credentials exist, a
+model-authored fact chooses where an autonomous call is placed (the call's
+*authority* stays hard-bounded — section 97: no charge, no repairs — but the
+number itself is model data). Today this is dormant: telephony ships
+disabled, and nothing here can dial. Before enabling real credentials,
+decide deliberately between accepting this as-is, reclassifying the two
+action types as R3 (which changes section 101's autonomous flow), or gating
+dialable numbers behind a payee-style human confirmation. Recorded by the
+2026-08-18 audit; deliberately not changed unilaterally because either code
+change alters BUILD_SPEC-specified behavior.
+
 ### WebSocket events carry no payload beyond the type (accepted)
 
 `/api/v1/events` publishes change notifications (`task_changed`,

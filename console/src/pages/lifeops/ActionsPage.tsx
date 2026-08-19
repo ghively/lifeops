@@ -189,10 +189,7 @@ export function ActionsPage() {
             <ActionCard
               key={action.id}
               action={action}
-              busy={
-                (execute.isPending && execute.variables === action.id) ||
-                (verify.isPending && verify.variables === action.id)
-              }
+              busy={execute.isPending || verify.isPending}
               onExecute={() => execute.mutate(action.id)}
               onVerify={() => verify.mutate(action.id)}
             />

@@ -200,37 +200,39 @@ rule 3).
 
 ---
 
-## 5. The 2026-08-18 full-audit backlog (P1/P2)
+## 5. The 2026-08-18 full-audit backlog
 
 A complete code review and audit
 ([docs/audits/2026-08-18-full-codebase-audit.md](audits/2026-08-18-full-codebase-audit.md))
-swept the whole repository. Its eight P0 findings — the approval-race and
-resurrection bugs, the broken exit-test pin, the CI gaps, the identity
-defaulting, the unverified email TLS — were **fixed the same day** (see the
-disposition note at the top of that document). What remains open, by
-explicit decision, is its P1 and P2 backlog and the documentation
-corrections, all recorded there in full. The headline items a future
-session should start from:
+swept the whole repository. Its eight P0 findings were **fixed the same
+day**, and its P1 backlog was **fixed the day after** — the disposition
+notes at the top of that document record both passes item by item. What
+remains open:
 
-- **Before enabling providers:** the CalDAV adapter's TZID/all-day/recurrence
-  handling and DESCRIPTION erasure; the email adapter's `confirm_sent`,
-  SEARCH escaping/body matching, error wrapping, and port-465 gap; the
-  Twilio connection-pool leak; the faster-whisper `cuda:0` device shape;
-  the model-influenced telephony destination (needs an allowlist or an
-  approval gate before real credentials).
-- **Core hardening:** status guards on `record_result` and `settle_bill`;
-  prepare-before-validate in `_prepare_provider_contact`; the config
-  service's unlocked cross-process read-modify-write; the waiting-lease
-  claim's atomicity (needs a live concurrent test against NornicDB).
-- **Surface parity:** `entity_ids`/`related_entity_ids` missing from the MCP
-  `remember`/task tools; shopping read-back over MCP; assorted filter and
-  error-code parity holes.
-- **Console:** the CalendarPage `datetime-local` handling; the Approvals
-  screen's silent 50-item cap; the stale phase-gated sidebar; the
-  MemoryPage search filter drop; the wrong `config_changed` query keys.
-- **Docs:** MCP_API.md's tool/resource counts, DATA_MODEL.md's two missing
-  phases of schema, HERMES_INTEGRATION.md's stale permission table,
-  TESTING.md's suite table, OPERATIONS.md's wrong emergency-stop route.
+- **P2 (small fixes, listed in full in the audit):** the WAITING_ON edge
+  repair on task change, the shopping `substitution_allowed` default, the
+  dead `SHOPPING_CHANGED` constant, non-required email/calendar password
+  fields, URL/port validation, the secret-fingerprint dictionary hardening,
+  the lexical Go version compare, the NornicDB password on argv, the bare
+  TCP healthcheck probe, `dev.sh`'s orphaned Vite children, unused pytest
+  markers, the browser CDP-branch leak, the unbounded TTS producer queue,
+  small sync-I/O-in-async spots, and the Console dead-code list.
+- **Docs corrections (beyond what the fixes already touched):**
+  DATA_MODEL.md's two missing phases of schema (bills/payees, workflow
+  templates, shopping items) and stale storage narratives;
+  HERMES_INTEGRATION.md's stale permission table; ARCHITECTURE.md's
+  incomplete capability table; TESTING.md's suite table and stale
+  `test-fast` description; OPERATIONS.md's wrong emergency-stop route;
+  CONFIGURATION.md's stale fresh-deployment states.
+- **One deliberate policy decision, parked in SECURITY.md:** phone-call
+  destinations are model-influenced (a provider `phone` fact Hermes can
+  write) while calls stay R2 per BUILD_SPEC section 101 — decide between
+  accepting, reclassifying, or a number allowlist *before* enabling real
+  telephony credentials.
+- **Live-NornicDB verification:** the waiting-lease claim's and approval
+  consume's conditional-write atomicity follow the same pattern, but only a
+  concurrent test against a real NornicDB can prove the isolation
+  semantics; `make test-e2e` plus a purpose-built race test is the way.
 - **Operational, outside the repo:** the GitHub Actions runner/billing
   failure — no CI run has ever executed; until that is fixed at the account
   level, `make check` is the only real gate.

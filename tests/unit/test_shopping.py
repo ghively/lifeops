@@ -454,10 +454,18 @@ class TestSubmittingIsRecoverable:
         recovered = await core.get_shopping_list(HERMES, list_id=built.id)
         assert recovered.status is ShoppingListStatus.CART_BUILT
         # And the checkout can genuinely be retried, producing a fresh
-        # decidable card rather than dedup-pinning to the cancelled action.
+        # decidable card. The retry re-opens the SAME outbox record — the
+        # idempotency-key uniqueness constraint (section 61's backstop, now
+        # enforced by the fake too) forbids a second Action under one key,
+        # and minting one was exactly two chances to submit one order. The
+        # old expectation of a fresh id only ever passed against the
+        # unconstrained fake; production would have refused the insert.
         retry = await core.submit_grocery_order(HERMES, list_id=built.id)
-        assert retry.id != action.id
+        assert retry.id == action.id
         assert retry.status is ActionStatus.NEEDS_APPROVAL
+        assert retry.failure_reason is None
+        fresh_cards = await core.list_pending_approvals(CONSOLE)
+        assert [a.action_id for a in fresh_cards] == [retry.id]
 
     async def test_a_failed_checkout_execution_returns_the_list_to_cart_built(
         self, core: LifeOpsCore, fake_browser: FakeBrowser

@@ -346,7 +346,19 @@ class VoiceService:
         self, audio_stream: AsyncIterator[bytes]
     ) -> AsyncIterator[TranscriptionResult]:
         _, provider = self._build_asr()
-        return provider.stream(audio_stream)
+
+        # Same discipline as the TTS stream above: the provider is built per
+        # call, so its transport must be closed when the stream ends —
+        # harmless for today's local ASR, a leak for any future adapter that
+        # owns a connection.
+        async def _piped() -> AsyncIterator[TranscriptionResult]:
+            try:
+                async for result in provider.stream(audio_stream):
+                    yield result
+            finally:
+                await _close_provider(provider)
+
+        return _piped()
 
     # --- load / unload (local providers) ------------------------------------
 

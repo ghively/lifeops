@@ -243,9 +243,9 @@ describe('Hermes', () => {
     expect(await screen.findByText('No routines yet.')).toBeInTheDocument()
   })
 
-  it('shows an honest empty state for skills — none are instantiated', async () => {
+  it('points at the shipped skills instead of claiming none exist', async () => {
     renderPage()
-    expect(await screen.findByText(/no skills instantiated yet/i)).toBeInTheDocument()
+    expect(await screen.findByText(/nine lifeops skills ship/i)).toBeInTheDocument()
   })
 
   it('shows recent actions attributed to Hermes from the audit log', async () => {

@@ -207,6 +207,8 @@ export function TodayPage() {
   }
 
   const tasks = tasksQuery.data?.tasks ?? []
+  const totalTasks = tasksQuery.data?.total ?? tasks.length
+  const tasksTruncated = totalTasks > tasks.length
   const needsAttention = tasks.filter((t) => ATTENTION_STATES.has(t.state))
   const inProgress = tasks.filter((t) => ACTIVE_STATES.has(t.state))
   const captured = tasks.filter(
@@ -223,6 +225,12 @@ export function TodayPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-10 p-8">
+      {tasksTruncated && (
+        <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
+          This overview reads the first {tasks.length} of {totalTasks} tasks —
+          see the Tasks screen for the rest.
+        </p>
+      )}
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Today</h1>
         <p className="mt-1 text-sm text-muted-foreground">

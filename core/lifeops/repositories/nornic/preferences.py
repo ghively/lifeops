@@ -231,10 +231,16 @@ class NornicPreferenceRepository:
         return stored or preference
 
     async def invalidate(self, preference_id: str, *, at: str) -> Preference | None:
-        await self._client.write(
-            "MATCH (p:Preference {id: $id}) WHERE p.valid_to IS NULL "
-            "SET p.valid_to = $at",
+        rows = await self._client.write(
+            f"MATCH (p:Preference {{id: $id}}) WHERE p.valid_to IS NULL "
+            f"SET p.valid_to = $at RETURN {_RETURN}",
             id=preference_id,
             at=at,
         )
+        if rows:
+            # The write's own row, not a follow-up read — which can be stale
+            # right after an auto-commit write (CLAUDE.md) and report the
+            # record still open after a successful invalidation.
+            return _row_to_preference(rows[0])
+        # Nothing matched: already closed, or missing. The read answers which.
         return await self.get(preference_id)

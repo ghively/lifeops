@@ -179,7 +179,17 @@ class LocalASRProvider:
             return cached
         from faster_whisper import WhisperModel
 
-        model = WhisperModel(self._model, device=self._device)
+        # faster-whisper/CTranslate2 accept device in {"cpu","cuda","auto"}
+        # with the GPU ordinal as a separate device_index — the registry's
+        # "cuda:0"/"cuda:1" options (torch's spelling, which the Kokoro TTS
+        # provider normalizes via _kokoro_device) raise if passed through
+        # verbatim, so the default GPU selection could never load.
+        device, _, index = (self._device or "auto").partition(":")
+        model = WhisperModel(
+            self._model,
+            device=device or "auto",
+            device_index=int(index) if index.isdigit() else 0,
+        )
         with _ASR_CACHE_LOCK:
             _ASR_MODEL_CACHE[key] = model
         return model
