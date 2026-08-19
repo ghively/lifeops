@@ -212,6 +212,51 @@ class TestElevenLabsTTSProvider:
         assert "API key" in message
         await provider.aclose()
 
+    async def test_a_scoped_key_reports_healthy_and_names_the_limit(self) -> None:
+        """A key scoped to synthesis alone still synthesises.
+
+        Live deployment, 2026-08-19: an ElevenLabs key restricted to
+        text-to-speech returned a valid MP3 while ``/v1/user`` answered 401,
+        and the Console reported "ElevenLabs rejected the API key" for a
+        provider that demonstrably worked. ElevenLabs marks this case
+        ``missing_permissions``; a bad key carries no such marker.
+        """
+        body = {
+            "detail": {
+                "type": "authentication_error",
+                "code": "unauthorized",
+                "status": "missing_permissions",
+                "message": (
+                    "The API key you used is missing the permission "
+                    "voices_read to execute this operation."
+                ),
+            }
+        }
+        client = _mock_transport(lambda request: httpx.Response(401, json=body))
+        provider = ElevenLabsTTSProvider(api_key="scoped", client=client)
+        healthy, message = await provider.health()
+        assert healthy is True
+        assert "voices_read" in message
+        # It must not claim full health silently — the Console needs to know
+        # discovery will come back empty and the voice must be set by hand.
+        assert "discovery" in message
+        await provider.aclose()
+
+    async def test_a_401_without_the_marker_is_still_a_bad_key(self) -> None:
+        """The permissions carve-out must not swallow real auth failures."""
+        for response in (
+            httpx.Response(401),
+            httpx.Response(401, text="not json"),
+            httpx.Response(401, json={"detail": "flat string"}),
+            httpx.Response(401, json={"detail": {"status": "invalid_api_key"}}),
+        ):
+            client = _mock_transport(lambda request, r=response: r)
+            provider = ElevenLabsTTSProvider(api_key="wrong", client=client)
+            healthy, message = await provider.health()
+            assert healthy is False
+            assert "API key" in message
+            await provider.aclose()
+
     async def test_failed_request_raises_provider_error(self) -> None:
         client = _mock_transport(lambda request: httpx.Response(500))
         provider = ElevenLabsTTSProvider(api_key="k", voice_id="v1", client=client)
