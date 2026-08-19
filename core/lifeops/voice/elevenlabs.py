@@ -157,6 +157,28 @@ class ElevenLabsTTSProvider:
         ]
 
     async def health(self) -> tuple[bool, str]:
+        """Is this key usable *for what this provider does* — synthesis?
+
+        The probe is ``/v1/user`` because it is free and side-effect-free;
+        a real synthesis call would spend the user's credits every time the
+        System screen refreshed. But the question the probe stands in for is
+        "can this key synthesise", and those two come apart for a
+        permission-scoped key.
+
+        ElevenLabs answers a scoped key with 401 and a body saying
+        ``status: missing_permissions``, naming the permission — distinct
+        from a genuinely bad key, which has no such marker. Treating both as
+        rejection reported a *working* TTS key as unusable: found on a live
+        deployment (2026-08-19) with a key scoped to text-to-speech alone,
+        where synthesis returned a valid MP3 while the Console showed
+        "ElevenLabs rejected the API key" and the provider stayed unhealthy.
+
+        That is the same dishonesty BUILD_SPEC section 88's never-fake-success
+        rule guards against, pointed the other way — reporting an absent
+        capability that is really present. So a missing permission reports
+        healthy and names the limitation, rather than denying the provider
+        works.
+        """
         try:
             response = await self._client.get("/v1/user", headers=self._headers())
         except httpx.HTTPError as exc:
@@ -164,8 +186,41 @@ class ElevenLabsTTSProvider:
         if response.status_code == 200:
             return True, "connected"
         if response.status_code == 401:
+            missing = _missing_permission(response)
+            if missing is not None:
+                return True, (
+                    "connected — this key is scoped and cannot read account "
+                    f"details ({missing}). Synthesis works; voice and model "
+                    "discovery will be empty, so set them by hand."
+                )
             return False, "ElevenLabs rejected the API key"
         return False, f"ElevenLabs returned HTTP {response.status_code}"
+
+
+def _missing_permission(response: httpx.Response) -> str | None:
+    """The permission name when ElevenLabs refused for scope rather than
+    for a bad key, else ``None``.
+
+    Shape (observed live, 2026-08-19)::
+
+        {"detail": {"status": "missing_permissions",
+                    "message": "The API key you used is missing the
+                                permission voices_read to execute this
+                                operation."}}
+
+    Anything unparseable is treated as a genuine rejection: a malformed
+    body is not evidence the key is fine.
+    """
+    try:
+        detail = response.json().get("detail")
+    except ValueError:
+        return None
+    if not isinstance(detail, dict):
+        return None
+    if detail.get("status") != "missing_permissions":
+        return None
+    message = detail.get("message")
+    return message if isinstance(message, str) and message else "permission scope"
 
 
 def _transport_error(exc: httpx.HTTPError) -> ProviderError:
