@@ -41,23 +41,54 @@ if [[ -e "$DEST" ]]; then
 fi
 mkdir -p "$DEST"
 
-was_running=0
+# How is the database being run? The PID file only knows about instances this
+# repository's script started. A systemd-managed deployment has no PID file,
+# so the original check concluded "not running" and copied the data directory
+# hot, mid-write — the exact inconsistency the stop exists to prevent, found
+# on the first systemd deployment (2026-08-19 audit). Detection is by
+# manager, and an instance held by something this script cannot stop is a
+# refusal, not a hot copy.
+manager="none"
 if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-  was_running=1
+  manager="script"
+elif systemctl --user is-active --quiet lifeops-nornicdb 2>/dev/null; then
+  manager="systemd"
+elif (exec 3<>"/dev/tcp/127.0.0.1/${LIFEOPS_NORNIC_BOLT_PORT:-7687}") 2>/dev/null; then
+  exec 3>&-
+  echo "Something is serving Bolt on port ${LIFEOPS_NORNIC_BOLT_PORT:-7687}, but it is" >&2
+  echo "neither this repository's script nor the lifeops-nornicdb systemd unit." >&2
+  echo "Refusing to copy the data directory out from under a running database" >&2
+  echo "this script cannot stop. Stop it yourself, then re-run the backup." >&2
+  exit 1
 fi
 
 # Stop NornicDB before copying its data directory, so the copy is not taken
-# mid-write (OPERATIONS.md). Restarted below on exit, if it was running.
-if [[ "$was_running" -eq 1 ]]; then
-  echo "Stopping NornicDB for a consistent copy..."
-  LIFEOPS_HOME="$LIFEOPS_HOME" LIFEOPS_NORNIC_DATA_DIR="$DATA_DIR" "$NORNIC_CTL" stop
-fi
+# mid-write (OPERATIONS.md). Restarted below on exit, however it is managed.
+case "$manager" in
+  script)
+    echo "Stopping NornicDB (script-managed) for a consistent copy..."
+    LIFEOPS_HOME="$LIFEOPS_HOME" LIFEOPS_NORNIC_DATA_DIR="$DATA_DIR" "$NORNIC_CTL" stop
+    ;;
+  systemd)
+    echo "Stopping lifeops-nornicdb (systemd-managed) for a consistent copy..."
+    # Stopping the database also stops lifeops-core (Requires=), and starting
+    # the database again does not bring core back — systemd dependencies
+    # propagate stops, not starts. Both are restarted below.
+    systemctl --user stop lifeops-nornicdb
+    ;;
+esac
 
 restart_if_needed() {
-  if [[ "$was_running" -eq 1 ]]; then
-    echo "Restarting NornicDB..."
-    LIFEOPS_HOME="$LIFEOPS_HOME" LIFEOPS_NORNIC_DATA_DIR="$DATA_DIR" "$NORNIC_CTL" start
-  fi
+  case "$manager" in
+    script)
+      echo "Restarting NornicDB..."
+      LIFEOPS_HOME="$LIFEOPS_HOME" LIFEOPS_NORNIC_DATA_DIR="$DATA_DIR" "$NORNIC_CTL" start
+      ;;
+    systemd)
+      echo "Restarting lifeops-nornicdb and lifeops-core..."
+      systemctl --user start lifeops-nornicdb lifeops-core
+      ;;
+  esac
 }
 trap restart_if_needed EXIT
 
