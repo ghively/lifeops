@@ -432,7 +432,15 @@ class TestWaitingWhenNecessary:
         created_ids.append(task.id)
         provider = await core.create_entity(
             HERMES,
-            EntityDraft(entity_type=WorldEntityType.PROVIDER, display_name="ABC HVAC"),
+            # A phone fact is required before a call can be requested —
+            # LifeOps resolves a real destination rather than dialling a
+            # placeholder. This scenario is about the *waiting* path, so the
+            # provider has to be dialable to reach it.
+            EntityDraft(
+                entity_type=WorldEntityType.PROVIDER,
+                display_name="ABC HVAC",
+                facts={"phone": "555-0199"},
+            ),
         )
         created_ids.append(provider.id)
         service_request = await core.create_service_request(
