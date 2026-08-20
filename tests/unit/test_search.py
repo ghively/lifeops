@@ -50,7 +50,7 @@ NO_ACCESS = ClientIdentity(
 
 
 async def _seed(core: LifeOpsCore) -> None:
-    await core.create_person(CONSOLE, PersonDraft(display_name="Alex Example"))
+    await core.create_person(CONSOLE, PersonDraft(display_name="Alex Rivera"))
     await core.save_preference(
         CONSOLE, PreferenceDraft(key="coffee.roast", value="light roast")
     )
@@ -64,7 +64,7 @@ class TestSearch:
         await _seed(core)
 
         by_name = await core.search(CONSOLE, query="alex")
-        assert [p.display_name for p in by_name.people] == ["Alex Example"]
+        assert [p.display_name for p in by_name.people] == ["Alex Rivera"]
         assert [t.title for t in by_name.tasks] == ["Repair living room outlet"]
         assert by_name.preferences == []
 
@@ -99,10 +99,10 @@ class TestSearch:
 
     async def test_people_search_matches_aliases(self, core: LifeOpsCore) -> None:
         await core.create_person(
-            CONSOLE, PersonDraft(display_name="Alex Example", aliases=["AJ"])
+            CONSOLE, PersonDraft(display_name="Alex Rivera", aliases=["AR"])
         )
         results = await core.search(CONSOLE, query="tj")
-        assert [p.display_name for p in results.people] == ["Alex Example"]
+        assert [p.display_name for p in results.people] == ["Alex Rivera"]
 
 
 @pytest.fixture
