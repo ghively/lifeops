@@ -13,6 +13,10 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+coverage/
+
+# Editor/agent tooling state — never part of the product
+.claude/
 
 # Secrets — these must never be committed.
 # The real ones live outside the repository under ~/.local/share/lifeops,
