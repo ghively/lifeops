@@ -1,7 +1,7 @@
-# 2026-08-19 — Live deployment audit (gh-ai)
+# 2026-08-19 — Live deployment audit (host-a)
 
 The first audit of LifeOps running as a real deployment rather than a
-checkout: systemd user units on `gh-ai`, Console published to the tailnet,
+checkout: systemd user units on `host-a`, Console published to the tailnet,
 Hermes attached over MCP, ElevenLabs live. Eight passes; every claim below
 was exercised against the running system, not read from code.
 

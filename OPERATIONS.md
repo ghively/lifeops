@@ -263,15 +263,15 @@ database are preserved.
 
 | Host | Address | Role |
 |---|---|---|
-| `gh-ai` | `100.92.162.32` (tailnet) | Runs LifeOps Core, NornicDB, and the Console. |
-| `gh-nvidia-1` | `100.96.94.19` (tailnet) | GPU host. Ollama — LLM and embedding endpoints only. |
+| `host-a` | `100.x.x.x` (tailnet) | Runs LifeOps Core, NornicDB, and the Console. |
+| `host-b` | `100.x.x.x` (tailnet) | GPU host. Ollama — LLM and embedding endpoints only. |
 
 Deployed 2026-08-19. All three components run as systemd **user** units
 (`lifeops-nornicdb`, `lifeops-core`, `lifeops-console`) with lingering
 enabled, so they survive logout and reboot.
 
 Everything binds loopback. The Console is published to the tailnet by
-`tailscale serve` at `https://gh-ai.tail58e6a.ts.net:8445`, which terminates
+`tailscale serve` at `https://host-a.<tailnet>.ts.net:8445`, which terminates
 TLS and proxies in over `127.0.0.1` — no LifeOps process listens on a
 routable interface. Console authentication is **on**; the password is in
 1Password.
@@ -294,7 +294,7 @@ upgrade:
 ss -ltn | grep 9090        # must show 127.0.0.1:9090, never *:9090
 ```
 
-`gh-nvidia-1` does not currently serve LifeOps anything. Ollama exposes LLM
+`host-b` does not currently serve LifeOps anything. Ollama exposes LLM
 and embedding endpoints only, and the local voice providers
 (`core/lifeops/voice/local.py`) are in-process libraries that would have to
 run on that host rather than call it — see

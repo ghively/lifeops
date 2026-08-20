@@ -27,7 +27,7 @@ snapshot, not a new source of truth.
 ### ~~Instacart site adapter~~ — done, plus Amazon (BUILD_SPEC section 98)
 
 **Status: built and verified live, 2026-08-19**, on the deployment host
-(`gh-ai`), which is not the sandbox the paragraphs below were written in.
+(`host-a`), which is not the sandbox the paragraphs below were written in.
 
 The claimed blocker was wrong twice over. Chromium is not missing system
 libraries here — it launches and loads live pages — and outbound network
@@ -81,19 +81,19 @@ with the AGENTS.md dependency justification written out, because it is a
 GPU-class footprint most deployments never touch.
 
 The earlier claim here — "this sandbox has no GPU" — was wrong about this
-deployment. There is a GPU host on the LAN: **`gh-nvidia` at
-`192.168.0.212`**, running Ollama 0.32.9 with qwen3 (1.7b–14b), a qwen2.5vl
+deployment. There is a GPU host on the LAN: **`host-b` at
+`10.0.0.x`**, running Ollama 0.32.9 with qwen3 (1.7b–14b), a qwen2.5vl
 vision model, and `mxbai-embed-large`.
 
 It does not unblock these two providers, and the reason is architectural
 rather than a missing machine. **Ollama serves LLMs and embeddings; it serves
 no ASR or TTS endpoint.** faster-whisper and Kokoro are in-process Python
 libraries that load weights into the calling process, and LifeOps Core runs on
-`gh-coder`. There is nothing on `gh-nvidia` for them to call.
+`host-c`. There is nothing on `host-b` for them to call.
 
 Three real routes, should this be picked up later:
 
-1. **Run LifeOps Core on `gh-nvidia`.** The providers work exactly as written;
+1. **Run LifeOps Core on `host-b`.** The providers work exactly as written;
    no code changes at all.
 2. **Stand up a remote ASR/TTS service there** (a whisper.cpp server, a Kokoro
    HTTP wrapper) and add remote adapters beside the local ones. This is the
@@ -181,14 +181,14 @@ sections 31-33 specifically is narrower than "the Bridge":
   clip** on this host's CPU, roughly 1.7× real time. That is not
   conversational latency, and it is the strongest argument yet for section
   31's GPU routing.
-- **GPU routing (section 31).** `gh-nvidia-1` is reachable on the tailnet
-  (`100.96.94.19`). It serves Ollama only — no ASR/TTS endpoint — so it does
+- **GPU routing (section 31).** `host-b` is reachable on the tailnet
+  (`100.x.x.x`). It serves Ollama only — no ASR/TTS endpoint — so it does
   not help until something is stood up there. Route 2 from section 1 above (a
   whisper.cpp or Kokoro HTTP service on that host, plus remote adapters beside
   the local ones) is what the measurement argues for.
 
 **What unblocks the rest:** a decision to modify Hermes's own voice loop for
-duplex, and/or standing up an ASR service on `gh-nvidia-1`. Nothing in *this*
+duplex, and/or standing up an ASR service on `host-b`. Nothing in *this*
 repository blocks either — LifeOps Core's job, the swappable ASR/TTS provider
 layer, is built, and ElevenLabs is now live-configured and healthy here.
 
@@ -218,7 +218,7 @@ the Test button, and leave the provider disabled until supplied).
 
 ### ~~Hermes itself is not attached to this machine~~ — done
 
-Attached 2026-08-19 on `gh-ai`. Hermes connects over stdio MCP as
+Attached 2026-08-19 on `host-a`. Hermes connects over stdio MCP as
 `hermes-personal` and discovers all 52 tools (`hermes mcp test lifeops`). The
 entry lives in `~/.hermes/config.yaml` under `mcp_servers.lifeops`.
 

@@ -389,7 +389,7 @@ No payment-provider adapter exists at all — deliberate, not a stub (see
   test (`test_phase0_exit.py`) — "Both acceptance scenarios pass (sections
   101 and 102)" above undercounts this; 104 passes too, and only 103 is
   genuinely incomplete.
-- Hermes is attached (2026-08-19, host `gh-ai`): stdio MCP as
+- Hermes is attached (2026-08-19, host `host-a`): stdio MCP as
   `hermes-personal`, all 52 tools discovered. The memory-provider plugin is a
   separate switch and is not flipped.
 
