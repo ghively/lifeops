@@ -53,7 +53,7 @@ class NornicPersonRepository:
         """Case-insensitive match on display name or alias.
 
         Substring rather than exact: callers are agents relaying what a human
-        said ("Gene", "gene hively"), not systems quoting a key.
+        said ("Jordan", "jordan blake"), not systems quoting a key.
         """
         needle = name.strip().lower()
         # CONTAINS + ORDER BY + LIMIT in one clause can return one row per

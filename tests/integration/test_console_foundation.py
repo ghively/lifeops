@@ -319,7 +319,7 @@ class TestTransitions:
 
 class TestSearch:
     async def test_groups_results_by_domain(self, client: httpx.AsyncClient) -> None:
-        await client.post(f"{API}/people", json={"display_name": "Tori Hively"})
+        await client.post(f"{API}/people", json={"display_name": "Alex Rivera"})
         await client.post(
             f"{API}/preferences", json={"key": "coffee.roast", "value": "light roast"}
         )
@@ -330,7 +330,7 @@ class TestSearch:
         assert body["people"] == [] and body["tasks"] == []
 
         body = (await client.get(f"{API}/search", params={"q": "tori"})).json()
-        assert [p["display_name"] for p in body["people"]] == ["Tori Hively"]
+        assert [p["display_name"] for p in body["people"]] == ["Alex Rivera"]
 
         body = (await client.get(f"{API}/search", params={"q": "outlet"})).json()
         assert [t["title"] for t in body["tasks"]] == ["Repair living room outlet"]

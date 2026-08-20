@@ -328,7 +328,7 @@ of a duplicate.
 
 | Argument | Type | Default | Notes |
 |---|---|---|---|
-| `name` | string | — | Display name or alias, e.g. `Tori` |
+| `name` | string | — | Display name or alias, e.g. `Alex` |
 
 Returns `{ok, people[], total}`. No match is an empty list, not an error.
 For the primary user, no-argument `get_person` is cheaper.

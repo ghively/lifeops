@@ -127,7 +127,7 @@ def _memory(memory_id: str, content: str, **overrides: Any) -> MemoryRecord:
 async def core(clock: FrozenClock) -> LifeOpsCore:
     """A LifeOpsCore over a small, fully-populated world.
 
-        Test User ─MEMBER_OF→ Household ←MEMBER_OF─ Tori
+        Test User ─MEMBER_OF→ Household ←MEMBER_OF─ Alex
                                   │
                             USES_PROVIDER
                                   ↓
@@ -139,7 +139,7 @@ async def core(clock: FrozenClock) -> LifeOpsCore:
 
     for person_id, name, aliases in (
         (PRIMARY_PERSON_ID, "Test User", []),
-        ("person_tori", "Tori", ["Vicky"]),
+        ("person_alex", "Alex", ["AR"]),
     ):
         await people.upsert(
             Person(
@@ -160,7 +160,7 @@ async def core(clock: FrozenClock) -> LifeOpsCore:
     world.seed(_entity("provider_abc_gas", WorldEntityType.PROVIDER, "ABC Gas"))
 
     await world.link(PRIMARY_PERSON_ID, HOUSEHOLD_ID, WorldRelationship.MEMBER_OF)
-    await world.link("person_tori", HOUSEHOLD_ID, WorldRelationship.MEMBER_OF)
+    await world.link("person_alex", HOUSEHOLD_ID, WorldRelationship.MEMBER_OF)
     await world.link(HOUSEHOLD_ID, PROVIDER_ID, WorldRelationship.USES_PROVIDER)
 
     # One closed memory and one current, both about the provider: entity
@@ -208,19 +208,19 @@ class TestToolListing:
 
 class TestFindPerson:
     async def test_finds_a_person_by_display_name(self, server: MCPServer) -> None:
-        payload = await _call(server, "find_person", {"name": "Tori"})
+        payload = await _call(server, "find_person", {"name": "Alex"})
 
         assert payload["ok"] is True
         assert payload["total"] == 1
         (person,) = payload["people"]
-        assert person["id"] == "person_tori"
-        assert person["display_name"] == "Tori"
+        assert person["id"] == "person_alex"
+        assert person["display_name"] == "Alex"
 
     async def test_finds_a_person_by_alias(self, server: MCPServer) -> None:
-        payload = await _call(server, "find_person", {"name": "Vicky"})
+        payload = await _call(server, "find_person", {"name": "AR"})
 
         assert payload["ok"] is True
-        assert [p["id"] for p in payload["people"]] == ["person_tori"]
+        assert [p["id"] for p in payload["people"]] == ["person_alex"]
 
     async def test_no_match_is_an_empty_list_not_an_error(
         self, server: MCPServer
@@ -277,7 +277,7 @@ class TestGetRelatedEntities:
         assert payload["ok"] is True
         neighbourhood = payload["neighborhood"]
         node_ids = {node["id"] for node in neighbourhood["nodes"]}
-        assert node_ids == {HOUSEHOLD_ID, PRIMARY_PERSON_ID, "person_tori", PROVIDER_ID}
+        assert node_ids == {HOUSEHOLD_ID, PRIMARY_PERSON_ID, "person_alex", PROVIDER_ID}
         edge_types = {edge["type"] for edge in neighbourhood["edges"]}
         assert edge_types == {"MEMBER_OF", "USES_PROVIDER"}
 
@@ -355,7 +355,7 @@ class TestCapabilityDenial:
     @pytest.mark.parametrize(
         ("tool", "arguments"),
         [
-            ("find_person", {"name": "Tori"}),
+            ("find_person", {"name": "Alex"}),
             ("get_provider", {"name_or_id": PROVIDER_ID}),
             ("get_related_entities", {"entity_id": HOUSEHOLD_ID}),
             ("get_entity_history", {"entity_id": PROVIDER_ID}),

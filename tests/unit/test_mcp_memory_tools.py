@@ -156,14 +156,14 @@ class TestToolListing:
 
 class TestSearchMemory:
     async def test_recalls_a_stored_memory(self, server: MCPServer) -> None:
-        stored = await _remember(server, "Tori's dog is called Biscuit.")
+        stored = await _remember(server, "Alex's dog is called Mochi.")
 
-        payload = await _call(server, "search_memory", {"query": "Biscuit"})
+        payload = await _call(server, "search_memory", {"query": "Mochi"})
 
         assert payload["ok"] is True
         assert payload["total"] >= 1
         (hit,) = [m for m in payload["memories"] if m["id"] == stored["id"]]
-        assert hit["content"] == "Tori's dog is called Biscuit."
+        assert hit["content"] == "Alex's dog is called Mochi."
         assert hit["type"] == "semantic"
         assert hit["subject_id"] == PRIMARY_PERSON_ID
 

@@ -921,7 +921,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
         title="Find person",
         description=(
             "Locate a person in the user's world by display name or alias, "
-            "e.g. 'Tori' or 'Dr. Reeves'. Call this before creating or linking "
+            "e.g. 'Alex' or 'Dr. Reeves'. Call this before creating or linking "
             "anything about a person, so you attach it to the canonical "
             "record instead of inventing a duplicate. Returns every match "
             "with its canonical ID.\n\n"
@@ -931,7 +931,7 @@ def build_server(container: Container, client: ClientIdentity) -> MCPServer:
     )
     async def find_person(
         name: Annotated[
-            str, Field(description="Display name or alias to search for, e.g. 'Tori'.")
+            str, Field(description="Display name or alias to search for, e.g. 'Alex'.")
         ],
     ) -> dict[str, Any]:
         with trace_context(client_id=client.client_id):

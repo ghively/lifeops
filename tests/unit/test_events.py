@@ -95,7 +95,7 @@ class TestCorePublishes:
         from lifeops.domain.people import PersonDraft
 
         wired, _, queue = await _core_with_bus(core, clock)
-        person = await wired.create_person(CONSOLE, PersonDraft(display_name="Tori"))
+        person = await wired.create_person(CONSOLE, PersonDraft(display_name="Alex"))
         assert queue.get_nowait() == {"type": PERSON_CHANGED, "person_id": person.id}
 
     async def test_core_without_a_bus_still_works(self, core) -> None:

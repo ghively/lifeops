@@ -49,8 +49,8 @@ const EMPTY_RESULTS: SearchResults = {
 
 function makePerson(overrides: Partial<Person> = {}): Person {
   return {
-    id: 'person_gene',
-    display_name: 'Gene Hively',
+    id: 'person_jordan',
+    display_name: 'Jordan Blake',
     is_primary: true,
     aliases: [],
     timezone: 'America/Chicago',
@@ -63,7 +63,7 @@ function makePerson(overrides: Partial<Person> = {}): Person {
 function makePreference(overrides: Partial<Preference> = {}): Preference {
   return {
     id: 'pref_01',
-    subject_id: 'person_gene',
+    subject_id: 'person_jordan',
     key: 'coffee',
     value: 'black, no sugar',
     source_type: 'stated',
@@ -92,7 +92,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     created_at: '2026-08-16T10:00:00Z',
     updated_at: '2026-08-16T10:00:00Z',
     due_at: null,
-    owner_entity_id: 'person_gene',
+    owner_entity_id: 'person_jordan',
     assigned_client: null,
     current_action: null,
     waiting_item_id: null,
@@ -150,7 +150,7 @@ describe('Search', () => {
   it('groups results into people, preferences, and tasks', async () => {
     mockedSearch.search.mockResolvedValue({
       ...EMPTY_RESULTS,
-      people: [makePerson({ aliases: ['Gene'] })],
+      people: [makePerson({ aliases: ['Jordan'] })],
       preferences: [makePreference()],
       tasks: [makeTask()],
     })
@@ -164,8 +164,8 @@ describe('Search', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Preferences' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Tasks' })).toBeInTheDocument()
-    expect(screen.getByText('Gene Hively')).toBeInTheDocument()
-    expect(screen.getByText('also known as Gene')).toBeInTheDocument()
+    expect(screen.getByText('Jordan Blake')).toBeInTheDocument()
+    expect(screen.getByText('also known as Jordan')).toBeInTheDocument()
     expect(screen.getByText('coffee')).toBeInTheDocument()
     expect(screen.getByText('black, no sugar')).toBeInTheDocument()
     expect(screen.getByText('Repair living room outlet')).toBeInTheDocument()
@@ -325,7 +325,7 @@ describe('Search', () => {
         {
           id: 'audit_01',
           requester: 'hermes-personal',
-          user: 'person_gene',
+          user: 'person_jordan',
           client: 'hermes-personal',
           session: null,
           intent: 'place_phone_call',
