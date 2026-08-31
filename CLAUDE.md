@@ -238,6 +238,18 @@ closed most of that second audit's findings — the audit doc's own
 changelog records what changed and when; what follows here is the current,
 much shorter list of what is still genuinely missing.
 
+A fourth audit looks outward rather than in:
+[docs/audits/2026-08-31-grocery-lane-collision.md](docs/audits/2026-08-31-grocery-lane-collision.md).
+LifeOps is not the only shopping automation on its deployment host — the
+sibling repository `ghively/grocery-build` drives Kroger, Walmart, and Publix
+through a browser, and its Hermes skill matches the same plain-English request
+`lifeops-shopping-manager` does. Nothing in either repository says which
+system owns which store, so grocery requests route between them by coin flip
+and neither can finish. Nothing in *this* codebase is broken by it — but three
+things here are shaped by it: the browser provider's `endpoint` placeholder
+names a port another system's Chrome already holds, LifeOps' browser worker
+has no inter-request pacing of its own, and Amazon is claimed by both.
+
 **Every disabled provider now has a working adapter behind it.** Calendar
 (`calendar/caldav.py`), email (`email/imap_smtp.py`), browser
 (`browser/real.py`, Playwright/Chromium), and telephony

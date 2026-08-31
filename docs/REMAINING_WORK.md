@@ -238,6 +238,27 @@ all already built for each. Supplying real credentials is a user action,
 never something this repository should prompt for on its own (CLAUDE.md
 rule 3).
 
+### Who owns which store (the `grocery-build` collision)
+
+`SITE_ADAPTERS` covers Amazon and Instacart. The sibling repository
+`ghively/grocery-build` covers Kroger, Walmart, and Publix through an attended
+browser lane on the same host, and also lists `amazon` among its surfaces.
+Both systems' Hermes skills match the same plain-English shopping request, so
+an errand routes by coin flip; `build_grocery_cart(store="kroger")` then
+raises `_no_site_adapter_error`, correctly, and the agent tries the other
+system instead.
+
+This is a user decision, not an implementation gap — LifeOps building a Kroger
+adapter would duplicate a working lane, and deleting its Amazon adapter would
+throw away a live-verified one. What is needed is a stated boundary: which
+system owns which store, and how a request for the other's store is handed
+off. Both skills then name it and the ambiguity ends.
+
+The open technical items that follow from it are in
+[docs/audits/2026-08-31-grocery-lane-collision.md](audits/2026-08-31-grocery-lane-collision.md)
+— the browser `endpoint` placeholder, the browser worker's missing pacing, and
+the contested Amazon adapter.
+
 ---
 
 ## 5. The 2026-08-18 full-audit backlog

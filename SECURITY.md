@@ -262,6 +262,25 @@ dialable numbers behind a payee-style human confirmation. Recorded by the
 2026-08-18 audit; deliberately not changed unilaterally because either code
 change alters BUILD_SPEC-specified behavior.
 
+### The browser `endpoint` can reach another system's session (dormant)
+
+`core/lifeops/browser/real.py` accepts an optional CDP `endpoint` and, when
+set, calls `playwright.chromium.connect_over_cdp` instead of launching its own
+Chromium. The provider definition's placeholder is `ws://127.0.0.1:9222`.
+
+On the current deployment host that port, and 9223, belong to a separate
+automation (`ghively/grocery-build`) whose Chrome holds the household's
+logged-in retailer sessions. Pointing `endpoint` at either would put LifeOps
+inside a browser it did not profile — which defeats the per-store context
+isolation of section 66 *below* where `_open_context` enforces it, since the
+isolation is a property of the browser LifeOps launches, not of a browser it
+merely attaches to.
+
+The browser provider is disabled, so this is dormant. Before enabling it,
+either leave `endpoint` empty (LifeOps launches its own Chromium, which is the
+isolating path) or point it at a browser nothing else drives. See
+[docs/audits/2026-08-31-grocery-lane-collision.md](docs/audits/2026-08-31-grocery-lane-collision.md).
+
 ### WebSocket events carry no payload beyond the type (accepted)
 
 `/api/v1/events` publishes change notifications (`task_changed`,
