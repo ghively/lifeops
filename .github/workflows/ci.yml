@@ -23,7 +23,7 @@ jobs:
       # A disposable NornicDB, per BUILD_SPEC section 85. Loopback-mapped like
       # every other deployment.
       nornicdb:
-        image: timothyswt/nornicdb-amd64-cpu-bge:1.2.2
+        image: timothyswt/nornicdb-cpu-bge:v1.2.2
         ports:
           - 7474:7474
           - 7687:7687
