@@ -101,7 +101,7 @@ class TestSearch:
         await core.create_person(
             CONSOLE, PersonDraft(display_name="Alex Rivera", aliases=["AR"])
         )
-        results = await core.search(CONSOLE, query="tj")
+        results = await core.search(CONSOLE, query="ar")
         assert [p.display_name for p in results.people] == ["Alex Rivera"]
 
 
