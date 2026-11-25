@@ -72,7 +72,12 @@ jobs:
         run: pytest tests/persistence -q
 
       - name: End-to-end tests (exit criteria and acceptance scenarios)
+        # A hang here used to hold the runner for GitHub's 6-hour default.
+        # The full suite takes about a minute, so 15 minutes fails fast.
+        timeout-minutes: 15
         env:
+          # Stream one line per test so a stuck test is named in the log.
+          PYTHONUNBUFFERED: "1"
           # Exit criterion D needs a way to bounce the database; without this
           # the three restart-durability tests silently skip on every CI run.
           # The service container is plain Docker on the runner, so restart it
@@ -80,7 +85,9 @@ jobs:
           LIFEOPS_NORNIC_RESTART_CMD: >-
             docker restart ${{ job.services.nornicdb.id }} &&
             timeout 120 bash -c 'until wget -qO- http://127.0.0.1:7474/health >/dev/null 2>&1; do sleep 2; done'
-        run: pytest tests/e2e -q
+        # faulthandler_timeout is built into pytest: any test still running
+        # after 180s gets every thread's stack dumped, without killing it.
+        run: pytest tests/e2e -v -o faulthandler_timeout=180
 
       # No credential may be needed to boot, and none may be committed
       # (BUILD_SPEC sections 88 and 104).
